@@ -1,6 +1,6 @@
 //
 //  WebSocketManager.swift
-//  NanoTDFTests
+//  Tests
 //
 //  Created by Paul Flynn on 5/10/24.
 //

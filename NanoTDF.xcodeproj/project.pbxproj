@@ -7,10 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		DA2B7B1B2BF1BB19002F3150 /* NanoTDFTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2B7B162BF1BB19002F3150 /* NanoTDFTests.swift */; };
+		DA2B7B1E2BF1BB19002F3150 /* WebSocketManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2B7B192BF1BB19002F3150 /* WebSocketManager.swift */; };
 		DA3C23F42BE0765100B4B883 /* NanoTDF.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA3C23F32BE0765100B4B883 /* NanoTDF.swift */; };
-		DA3C24042BE0787700B4B883 /* NanoTDFTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA3C24032BE0787700B4B883 /* NanoTDFTests.swift */; };
 		DA3C24052BE0787700B4B883 /* libNanoTDF.a in Frameworks */ = {isa = PBXBuildFile; fileRef = DA3C23F02BE0765100B4B883 /* libNanoTDF.a */; };
-		DA3C240C2BEEDFFA00B4B883 /* WebSocketManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA3C240B2BEEDFFA00B4B883 /* WebSocketManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -36,11 +36,11 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		DA2B7B162BF1BB19002F3150 /* NanoTDFTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = NanoTDFTests.swift; sourceTree = "<group>"; };
+		DA2B7B192BF1BB19002F3150 /* WebSocketManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WebSocketManager.swift; sourceTree = "<group>"; };
 		DA3C23F02BE0765100B4B883 /* libNanoTDF.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libNanoTDF.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		DA3C23F32BE0765100B4B883 /* NanoTDF.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NanoTDF.swift; sourceTree = "<group>"; };
-		DA3C24012BE0787700B4B883 /* NanoTDFTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NanoTDFTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		DA3C24032BE0787700B4B883 /* NanoTDFTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NanoTDFTests.swift; sourceTree = "<group>"; };
-		DA3C240B2BEEDFFA00B4B883 /* WebSocketManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketManager.swift; sourceTree = "<group>"; };
+		DA3C24012BE0787700B4B883 /* Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -62,11 +62,20 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		DA2B7B1A2BF1BB19002F3150 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				DA2B7B162BF1BB19002F3150 /* NanoTDFTests.swift */,
+				DA2B7B192BF1BB19002F3150 /* WebSocketManager.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
 		DA3C23E72BE0765100B4B883 = {
 			isa = PBXGroup;
 			children = (
+				DA2B7B1A2BF1BB19002F3150 /* Tests */,
 				DA3C23F22BE0765100B4B883 /* NanoTDF */,
-				DA3C24022BE0787700B4B883 /* NanoTDFTests */,
 				DA3C23F12BE0765100B4B883 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -75,7 +84,7 @@
 			isa = PBXGroup;
 			children = (
 				DA3C23F02BE0765100B4B883 /* libNanoTDF.a */,
-				DA3C24012BE0787700B4B883 /* NanoTDFTests.xctest */,
+				DA3C24012BE0787700B4B883 /* Tests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -86,15 +95,6 @@
 				DA3C23F32BE0765100B4B883 /* NanoTDF.swift */,
 			);
 			path = NanoTDF;
-			sourceTree = "<group>";
-		};
-		DA3C24022BE0787700B4B883 /* NanoTDFTests */ = {
-			isa = PBXGroup;
-			children = (
-				DA3C24032BE0787700B4B883 /* NanoTDFTests.swift */,
-				DA3C240B2BEEDFFA00B4B883 /* WebSocketManager.swift */,
-			);
-			path = NanoTDFTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -117,9 +117,9 @@
 			productReference = DA3C23F02BE0765100B4B883 /* libNanoTDF.a */;
 			productType = "com.apple.product-type.library.static";
 		};
-		DA3C24002BE0787700B4B883 /* NanoTDFTests */ = {
+		DA3C24002BE0787700B4B883 /* Tests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = DA3C24082BE0787700B4B883 /* Build configuration list for PBXNativeTarget "NanoTDFTests" */;
+			buildConfigurationList = DA3C24082BE0787700B4B883 /* Build configuration list for PBXNativeTarget "Tests" */;
 			buildPhases = (
 				DA3C23FD2BE0787700B4B883 /* Sources */,
 				DA3C23FE2BE0787700B4B883 /* Frameworks */,
@@ -130,9 +130,9 @@
 			dependencies = (
 				DA3C24072BE0787700B4B883 /* PBXTargetDependency */,
 			);
-			name = NanoTDFTests;
+			name = Tests;
 			productName = NanoTDFTests;
-			productReference = DA3C24012BE0787700B4B883 /* NanoTDFTests.xctest */;
+			productReference = DA3C24012BE0787700B4B883 /* Tests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
@@ -150,6 +150,7 @@
 					};
 					DA3C24002BE0787700B4B883 = {
 						CreatedOnToolsVersion = 15.3;
+						LastSwiftMigration = 1530;
 					};
 				};
 			};
@@ -167,7 +168,7 @@
 			projectRoot = "";
 			targets = (
 				DA3C23EF2BE0765100B4B883 /* NanoTDF */,
-				DA3C24002BE0787700B4B883 /* NanoTDFTests */,
+				DA3C24002BE0787700B4B883 /* Tests */,
 			);
 		};
 /* End PBXProject section */
@@ -195,8 +196,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				DA3C24042BE0787700B4B883 /* NanoTDFTests.swift in Sources */,
-				DA3C240C2BEEDFFA00B4B883 /* WebSocketManager.swift in Sources */,
+				DA2B7B1B2BF1BB19002F3150 /* NanoTDFTests.swift in Sources */,
+				DA2B7B1E2BF1BB19002F3150 /* WebSocketManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -359,6 +360,7 @@
 		DA3C24092BE0787700B4B883 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 496RA8CKPQ;
@@ -367,6 +369,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = org.arkavo.NanoTDFTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -375,6 +378,7 @@
 		DA3C240A2BE0787700B4B883 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 496RA8CKPQ;
@@ -409,7 +413,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		DA3C24082BE0787700B4B883 /* Build configuration list for PBXNativeTarget "NanoTDFTests" */ = {
+		DA3C24082BE0787700B4B883 /* Build configuration list for PBXNativeTarget "Tests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				DA3C24092BE0787700B4B883 /* Debug */,
