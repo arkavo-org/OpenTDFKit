@@ -9,7 +9,7 @@ import Foundation
 import CryptoKit
 
 struct PublicKeyMessage: Codable {
-    // TODO add Message type, value 0x01 
+    let messageType: Data
     let publicKey: Data
 }
 
@@ -67,7 +67,7 @@ class WebSocketManager {
     }
 
     func sendPublicKey() {
-        let publicKeyMessage = PublicKeyMessage(publicKey: myPublicKey.rawRepresentation)
+        let publicKeyMessage = PublicKeyMessage(messageType: Data(), publicKey: myPublicKey.rawRepresentation)
 //        let data : Data = publicKeyMessage.public_key
         let data = URLSessionWebSocketTask.Message.data(publicKeyMessage.publicKey)
         print("Sending data: \(data)")

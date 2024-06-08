@@ -173,7 +173,7 @@ final class NanoTDFTests: XCTestCase {
             compareHexString = """
             17 52 26 8e 03
             """.replacingOccurrences(of: "\n", with: " ")
-            if payloadCiphertextHexString == payloadCiphertextHexString {
+            if payloadCiphertextHexString == compareHexString {
                 print("Payload Ciphertext equals comparison string.")
             } else {
                 XCTFail("Payload Ciphertext does not equal comparison string.")

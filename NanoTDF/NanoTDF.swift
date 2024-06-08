@@ -428,7 +428,7 @@ class BinaryParser {
         let signatureLength: Int
         print("config.signatureECCMode", config)
         switch config.signatureECCMode {
-        case .secp256r1:
+        case .secp256r1, .secp256k1:
             publicKeyLength = 33
             signatureLength = 64
         case .secp384r1:
@@ -437,9 +437,6 @@ class BinaryParser {
         case .secp521r1:
             publicKeyLength = 67
             signatureLength = 132
-        case .secp256k1:
-            publicKeyLength = 33
-            signatureLength = 64
         case .none:
             print("signatureECCMode not found")
             throw ParsingError.invalidFormat
