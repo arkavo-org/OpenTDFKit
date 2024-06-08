@@ -83,8 +83,50 @@ final class NanoTDFTests: XCTestCase {
         do {
             let parser = BinaryParser(data: binaryData!)
             let header = try parser.parseHeader()
-            let payload = try parser.parsePayload(data: binaryData!)
-            let _ = NanoTDF(header: header, payload: payload)
+            // EccMode
+            let serializedEccMode = header.eccMode.toData()
+            let serializedEccModeHexString = serializedEccMode.map { String(format: "%02x", $0) }.joined(separator: " ")
+            var compareHexString = """
+            80
+            """.replacingOccurrences(of: "\n", with: " ")
+            if serializedEccModeHexString == compareHexString {
+                print("EccMode equals comparison string.")
+            } else {
+                print(serializedEccModeHexString)
+                XCTFail("EccMode does not equal comparison string.")
+            }
+            let payload = try parser.parsePayload(config: header.payloadSigMode)
+            let serializedPayloadMacHexString = payload.mac.map { String(format: "%02x", $0) }.joined(separator: " ")
+            compareHexString = """
+            f9 fd 80 14 af 7c cb 06
+            """.replacingOccurrences(of: "\n", with: " ")
+            if serializedPayloadMacHexString == compareHexString {
+                print("MAC equals comparison string.")
+            } else {
+                print(serializedPayloadMacHexString)
+                XCTFail("MAC does not equal comparison string.")
+            }
+            let signature = try parser.parseSignature(config: header.payloadSigMode)
+            let nano = NanoTDF(header: header, payload: payload, signature: signature)
+            let serializedNanoTDF = nano.toData()
+            var counter = 0
+            let serializedNanoTDFHexString = serializedNanoTDF.map { byte -> String in
+                counter += 1
+                let newline = counter % 20 == 0 ? "\n" : " "
+                return String(format: "%02x", byte) + newline
+            }.joined()
+            print("Actual:")
+            print(serializedNanoTDFHexString)
+            if serializedNanoTDF == binaryData {
+                print("NanoTDF equals comparison string.")
+            } else {
+                XCTFail("NanoTDF does not equal comparison string.")
+            }
+            // back again
+            let bparser = BinaryParser(data: serializedNanoTDF)
+            let bheader = try bparser.parseHeader()
+            _ = try bparser.parsePayload(config: bheader.payloadSigMode)
+            _ = try bparser.parseSignature(config: bheader.payloadSigMode)
         } catch {
             XCTFail("Failed to parse data: \(error)")
         }
@@ -115,10 +157,10 @@ final class NanoTDFTests: XCTestCase {
             let ephemeralKeyHexString = header.ephemeralKey.map { String(format: "%02x", $0) }.joined(separator: " ")
             print("Ephemeral Key:", ephemeralKeyHexString)
             // Parse payload
-            let payload = try parser.parsePayload(data: binaryData!)
+            let payload = try parser.parsePayload(config: header.payloadSigMode)
             let payloadIvHexString = payload.iv.map { String(format: "%02x", $0) }.joined(separator: " ")
             print("Payload IV:", payloadIvHexString)
-            let compareHexString = """
+            var compareHexString = """
             9e bd 09
             """.replacingOccurrences(of: "\n", with: " ")
             if payloadIvHexString == compareHexString {
@@ -126,11 +168,21 @@ final class NanoTDFTests: XCTestCase {
             } else {
                 XCTFail("Payload IV does not equal comparison string.")
             }
+            let payloadCiphertextHexString = payload.ciphertext.map { String(format: "%02x", $0) }.joined(separator: " ")
+            print("Payload Ciphertext:", payloadCiphertextHexString)
+            compareHexString = """
+            17 52 26 8e 03
+            """.replacingOccurrences(of: "\n", with: " ")
+            if payloadCiphertextHexString == payloadCiphertextHexString {
+                print("Payload Ciphertext equals comparison string.")
+            } else {
+                XCTFail("Payload Ciphertext does not equal comparison string.")
+            }
             // Create the symmetric key
             _ = SymmetricKey(size: .bits256)
             
             // Combine the IV-nonce, ciphertext, and MAC-tag
-            let _ = payload.iv + payload.ciphertext + payload.payloadMAC
+            let _ = payload.iv + payload.ciphertext + payload.mac
             
             // Decrypt the payload
 //            let sealedBox = try AES.GCM.SealedBox(combined: combinedData)

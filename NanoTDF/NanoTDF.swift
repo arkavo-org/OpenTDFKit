@@ -4,6 +4,17 @@ import Foundation
 struct NanoTDF {
     let header: Header
     let payload: Payload
+    let signature: Signature?
+
+    func toData() -> Data {
+        var data = Data()
+        data.append(header.toData())
+        data.append(payload.toData())
+        if let signature = signature {
+            data.append(signature.toData())
+        }
+        return data
+    }
 }
 
 struct Header {
@@ -14,24 +25,69 @@ struct Header {
     let payloadSigMode: SymmetricAndPayloadConfig
     let policy: Policy
     let ephemeralKey: Data
+
+    func toData() -> Data {
+        var data = Data()
+        data.append(magicNumber)
+        data.append(version)
+        data.append(kas.toData())
+        data.append(eccMode.toData())
+        data.append(payloadSigMode.toData())
+        data.append(policy.toData())
+        data.append(ephemeralKey)
+        return data
+    }
 }
 
 struct Payload {
     let length: UInt32
     let iv: Data
     let ciphertext: Data
-    let payloadMAC: Data
+    let mac: Data
+    
+    func toData() -> Data {
+        var data = Data()
+        let lengthBytes = withUnsafeBytes(of: length.bigEndian) { Array($0) }
+        data.append(contentsOf: lengthBytes[1...3]) // Append the last 3 bytes to represent a 3-byte length
+        data.append(iv)
+        data.append(ciphertext)
+        data.append(mac)
+        return data
+    }
 }
 
 struct ECCAndBindingMode {
     var useECDSABinding: Bool
     var ephemeralECCParamsEnum: ECDSAParams
+    
+    func toData() -> Data {
+        var byte: UInt8 = 0
+        if useECDSABinding {
+            byte |= 0b10000000 // Set the USE_ECDSA_BINDING bit (bit 7)
+        }
+        byte |= (ephemeralECCParamsEnum.rawValue & 0b00000111) // Set the Ephemeral ECC Params Enum bits (bits 0-2)
+        return Data([byte])
+    }
 }
 
 struct SymmetricAndPayloadConfig {
     let hasSignature: Bool
     let signatureECCMode: ECDSAParams?
     let symmetricCipherEnum: SymmetricCiphers?
+    
+    func toData() -> Data {
+        var byte: UInt8 = 0
+        if hasSignature {
+            byte |= 0b10000000 // Set the HAS_SIGNATURE bit (bit 7)
+        }
+        if let signatureECCMode = signatureECCMode {
+            byte |= (signatureECCMode.rawValue & 0b00000111) << 4 // Set the Signature ECC Mode bits (bits 4-6)
+        }
+        if let symmetricCipherEnum = symmetricCipherEnum {
+            byte |= (symmetricCipherEnum.rawValue & 0b00001111) // Set the Symmetric Cipher Enum bits (bits 0-3)
+        }
+        return Data([byte])
+    }
 }
 
 enum ProtocolEnum: UInt8, Codable {
@@ -56,21 +112,54 @@ struct ResourceLocator: Codable {
 }
 
 struct Policy {
-    enum PolicyType {
-        case remote
-        case embedded
+    enum PolicyType: UInt8 {
+        case remote = 0x00
+        case embeddedPlaintext = 0x01
+        case embeddedEncrypted = 0x02
+        case embeddedEncryptedWithPolicyKeyAccess = 0x03
     }
 
     let type: PolicyType
     let body: Data?
     let remote: ResourceLocator?
     let binding: Data?
+    
+    func toData() -> Data {
+        var data = Data()
+        data.append(type.rawValue)
+        switch type {
+        case .remote:
+            if let remote = remote {
+                data.append(remote.toData())
+            }
+        case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
+            if let body = body {
+                data.append(body)
+            }
+        }
+        if let binding = binding {
+            data.append(binding)
+        }
+        return data
+    }
 }
 
 struct EmbeddedPolicyBody {
     let contentLength: UInt16
     let plaintextCiphertext: Data?
     let policyKeyAccess: Data?
+}
+
+struct Signature {
+    let publicKey: Data
+    let signature: Data
+
+    func toData() -> Data {
+        var data = Data()
+        data.append(publicKey)
+        data.append(signature)
+        return data
+    }
 }
 
 enum ECDSAParams: UInt8 {
@@ -158,7 +247,7 @@ class BinaryParser {
                 print("Failed to read Remote Policy binding")
                 return nil
             }
-            return Policy(type: .embedded, body: policyData?.plaintextCiphertext, remote: nil, binding: binding)
+            return Policy(type: .embeddedPlaintext, body: policyData?.plaintextCiphertext, remote: nil, binding: binding)
         default:
             print("Unknown Policy Type Enum value")
             return nil
@@ -261,20 +350,32 @@ class BinaryParser {
         guard let magicNumber = read(length: FieldSize.magicNumberSize),
               let version = read(length: FieldSize.versionSize),
               let kas = readResourceLocator(),
-//              let eccMode = read(length: HeaderField.eccModeSize),
               let eccMode = readEccAndBindingMode(),
-              let payloadSigMode = readSymmetricAndPayloadConfig(), // read(length: HeaderField.payloadSigModeSize),
-              let policy = readPolicyField(),
-              // Read length based on key type, FIXME reading min for now
-              let ephemeralKey = read(length: FieldSize.minEphemeralKeySize)
+              let payloadSigMode = readSymmetricAndPayloadConfig(),
+              let policy = readPolicyField()
         else {
             throw ParsingError.invalidFormat
         }
 
+        let ephemeralKeySize: Int
+        switch eccMode.ephemeralECCParamsEnum {
+        case .secp256r1:
+            ephemeralKeySize = 33
+        case .secp384r1:
+            ephemeralKeySize = 49
+        case .secp521r1:
+            ephemeralKeySize = 67
+        case .secp256k1:
+            ephemeralKeySize = 33
+        }
+        guard let ephemeralKey = read(length: ephemeralKeySize) else {
+            throw ParsingError.invalidFormat
+        }
+        
         return Header(magicNumber: magicNumber, version: version, kas: kas, eccMode: eccMode, payloadSigMode: payloadSigMode, policy: policy, ephemeralKey: ephemeralKey)
     }
 
-    func parsePayload(data: Data) throws -> Payload {
+    func parsePayload(config: SymmetricAndPayloadConfig) throws -> Payload {
         guard let lengthData = read(length: FieldSize.payloadCipherTextSize)
         else {
             throw ParsingError.invalidFormat
@@ -284,19 +385,73 @@ class BinaryParser {
         for i in 0..<count {
             length += UInt32(lengthData[i]) << (8 * (count - 1 - i))
         }
+        // IV nonce
         guard let iv = read(length: FieldSize.payloadIvSize)
         else {
             throw ParsingError.invalidFormat
         }
-        // FIXME calculate MAC size
-        let cipherTextLength = Int(length) - FieldSize.minPayloadMacSize
+        // MAC Auth tag
+        let payloadMACSize: Int
+        switch config.symmetricCipherEnum {
+        case .GCM_64:
+            payloadMACSize = 8
+        case .GCM_96:
+            payloadMACSize = 12
+        case .GCM_104:
+            payloadMACSize = 13
+        case .GCM_112:
+            payloadMACSize = 14
+        case .GCM_120:
+            payloadMACSize = 15
+        case .GCM_128:
+            payloadMACSize = 16
+        case .none:
+            throw ParsingError.invalidFormat
+        }
+        // cipherText
+        let cipherTextLength = Int(length) - payloadMACSize - FieldSize.payloadIvSize
+        print("cipherTextLength", cipherTextLength)
         guard let ciphertext = read(length: cipherTextLength),
             let payloadMAC = read(length: FieldSize.minPayloadMacSize)
         else {
             throw ParsingError.invalidFormat
         }
-        let payload = Payload(length: length, iv: iv, ciphertext: ciphertext, payloadMAC: payloadMAC)
+        let payload = Payload(length: length, iv: iv, ciphertext: ciphertext, mac: payloadMAC)
         return payload
+    }
+    
+    func parseSignature(config: SymmetricAndPayloadConfig) throws -> Signature? {
+        if !config.hasSignature {
+            return nil
+        }
+        let publicKeyLength: Int
+        let signatureLength: Int
+        print("config.signatureECCMode", config)
+        switch config.signatureECCMode {
+        case .secp256r1:
+            publicKeyLength = 33
+            signatureLength = 64
+        case .secp384r1:
+            publicKeyLength = 49
+            signatureLength = 96
+        case .secp521r1:
+            publicKeyLength = 67
+            signatureLength = 132
+        case .secp256k1:
+            publicKeyLength = 33
+            signatureLength = 64
+        case .none:
+            print("signatureECCMode not found")
+            throw ParsingError.invalidFormat
+        }
+        print("publicKeyLength", publicKeyLength)
+        print("signatureLength", signatureLength)
+        guard let publicKey = read(length: publicKeyLength),
+              let signature = read(length: signatureLength) else {
+            print("publicKey or signatureLength read error")
+            throw ParsingError.invalidFormat
+        }
+        return Signature(publicKey: publicKey, signature: signature)
     }
 }
 
