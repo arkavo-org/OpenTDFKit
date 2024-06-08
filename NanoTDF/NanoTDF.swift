@@ -1,17 +1,22 @@
 import CryptoKit
 import Foundation
 
-struct NanoTDFHeader: Codable {
-    var magicNumber: UInt16
-    var version: UInt8
-    var kas: ResourceLocator
-    var eccMode: UInt8
-    var payloadSigMode: UInt8
-    var policy: Data
-    var ephemeralKey: Data
+struct NanoTDF {
+    let header: Header
+    let payload: Payload
+    let signature: Signature?
+
+    func toData() -> Data {
+        var data = Data()
+        data.append(header.toData())
+        data.append(payload.toData())
+        if let signature = signature {
+            data.append(signature.toData())
+        }
+        return data
+    }
 }
 
-// replace with NanoTDFHeader
 struct Header {
     let magicNumber: Data
     let version: Data
@@ -20,17 +25,69 @@ struct Header {
     let payloadSigMode: SymmetricAndPayloadConfig
     let policy: Policy
     let ephemeralKey: Data
+
+    func toData() -> Data {
+        var data = Data()
+        data.append(magicNumber)
+        data.append(version)
+        data.append(kas.toData())
+        data.append(eccMode.toData())
+        data.append(payloadSigMode.toData())
+        data.append(policy.toData())
+        data.append(ephemeralKey)
+        return data
+    }
+}
+
+struct Payload {
+    let length: UInt32
+    let iv: Data
+    let ciphertext: Data
+    let mac: Data
+    
+    func toData() -> Data {
+        var data = Data()
+        let lengthBytes = withUnsafeBytes(of: length.bigEndian) { Array($0) }
+        data.append(contentsOf: lengthBytes[1...3]) // Append the last 3 bytes to represent a 3-byte length
+        data.append(iv)
+        data.append(ciphertext)
+        data.append(mac)
+        return data
+    }
 }
 
 struct ECCAndBindingMode {
     var useECDSABinding: Bool
     var ephemeralECCParamsEnum: ECDSAParams
+    
+    func toData() -> Data {
+        var byte: UInt8 = 0
+        if useECDSABinding {
+            byte |= 0b10000000 // Set the USE_ECDSA_BINDING bit (bit 7)
+        }
+        byte |= (ephemeralECCParamsEnum.rawValue & 0b00000111) // Set the Ephemeral ECC Params Enum bits (bits 0-2)
+        return Data([byte])
+    }
 }
 
 struct SymmetricAndPayloadConfig {
     let hasSignature: Bool
     let signatureECCMode: ECDSAParams?
     let symmetricCipherEnum: SymmetricCiphers?
+    
+    func toData() -> Data {
+        var byte: UInt8 = 0
+        if hasSignature {
+            byte |= 0b10000000 // Set the HAS_SIGNATURE bit (bit 7)
+        }
+        if let signatureECCMode = signatureECCMode {
+            byte |= (signatureECCMode.rawValue & 0b00000111) << 4 // Set the Signature ECC Mode bits (bits 4-6)
+        }
+        if let symmetricCipherEnum = symmetricCipherEnum {
+            byte |= (symmetricCipherEnum.rawValue & 0b00001111) // Set the Symmetric Cipher Enum bits (bits 0-3)
+        }
+        return Data([byte])
+    }
 }
 
 enum ProtocolEnum: UInt8, Codable {
@@ -43,24 +100,66 @@ enum ProtocolEnum: UInt8, Codable {
 struct ResourceLocator: Codable {
     let protocolEnum: ProtocolEnum
     let body: String
+    func toData() -> Data {
+        var data = Data()
+        data.append(protocolEnum.rawValue)
+        if let bodyData = body.data(using: .utf8) {
+            data.append(UInt8(bodyData.count))
+            data.append(bodyData)
+        }
+        return data
+    }
 }
 
 struct Policy {
-    enum PolicyType {
-        case remote
-        case embedded
+    enum PolicyType: UInt8 {
+        case remote = 0x00
+        case embeddedPlaintext = 0x01
+        case embeddedEncrypted = 0x02
+        case embeddedEncryptedWithPolicyKeyAccess = 0x03
     }
 
     let type: PolicyType
     let body: Data?
     let remote: ResourceLocator?
     let binding: Data?
+    
+    func toData() -> Data {
+        var data = Data()
+        data.append(type.rawValue)
+        switch type {
+        case .remote:
+            if let remote = remote {
+                data.append(remote.toData())
+            }
+        case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
+            if let body = body {
+                data.append(body)
+            }
+        }
+        if let binding = binding {
+            data.append(binding)
+        }
+        return data
+    }
 }
 
 struct EmbeddedPolicyBody {
     let contentLength: UInt16
     let plaintextCiphertext: Data?
     let policyKeyAccess: Data?
+}
+
+struct Signature {
+    let publicKey: Data
+    let signature: Data
+
+    func toData() -> Data {
+        var data = Data()
+        data.append(publicKey)
+        data.append(signature)
+        return data
+    }
 }
 
 enum ECDSAParams: UInt8 {
@@ -79,19 +178,6 @@ enum SymmetricCiphers: UInt8 {
     case GCM_128 = 0x05
 }
 
-struct NanoTDFPayload: Codable {
-    var data: Data
-}
-
-func encrypt(data: Data, using key: SymmetricKey) -> Data? {
-    try? AES.GCM.seal(data, using: key).combined
-}
-
-func decrypt(data: Data, using key: SymmetricKey) -> Data? {
-    guard let sealedBox = try? AES.GCM.SealedBox(combined: data) else { return nil }
-    return try? AES.GCM.open(sealedBox, using: key)
-}
-
 class BinaryParser {
     var data: Data
     var cursor: Int = 0
@@ -106,20 +192,6 @@ class BinaryParser {
         let range = cursor ..< (cursor + length)
         cursor += length
         return data.subdata(in: range)
-    }
-
-    private func readVariableLengthField(minSize: Int, maxSize: Int) -> Data? {
-        print("minSize: \(minSize) maxSize: \(maxSize)")
-        // Read the length of the variable field first
-        guard let lengthData = read(length: 1),
-              let length = lengthData.first,
-              length >= minSize, length <= maxSize,
-              let fieldData = read(length: Int(length))
-        else {
-            return nil
-        }
-
-        return fieldData
     }
 
     private func readResourceLocator() -> ResourceLocator? {
@@ -175,7 +247,7 @@ class BinaryParser {
                 print("Failed to read Remote Policy binding")
                 return nil
             }
-            return Policy(type: .embedded, body: policyData?.plaintextCiphertext, remote: nil, binding: binding)
+            return Policy(type: .embeddedPlaintext, body: policyData?.plaintextCiphertext, remote: nil, binding: binding)
         default:
             print("Unknown Policy Type Enum value")
             return nil
@@ -201,7 +273,7 @@ class BinaryParser {
         if contentLength == 0 {
             return EmbeddedPolicyBody(contentLength: contentLength, plaintextCiphertext: nil, policyKeyAccess: nil)
         }
-        
+
         guard let plaintextCiphertext = read(length: Int(contentLength)) else {
             print("Failed to read Embedded Policy plaintext / ciphertext")
             return nil
@@ -264,36 +336,124 @@ class BinaryParser {
 
     func readPolicyBinding() -> Data? {
         // The length should be determined based on the ECC and Binding Mode described
-        let bindingLength = determinePolicyBindingLength()  // This function needs to be implemented based on ECC and Binding Mode
+        let bindingLength = determinePolicyBindingLength() // This function needs to be implemented based on ECC and Binding Mode
         return read(length: bindingLength)
     }
 
     private func determinePolicyBindingLength() -> Int {
         // This should return the correct length based on ECC and Binding Mode
         // Placeholder: returning a typical length for an ECDSA signature
-        return 64  // Example length, adjust based on actual application requirements
+        return 64 // Example length, adjust based on actual application requirements
     }
 
-    func parse() throws -> Header {
-        guard let magicNumber = read(length: HeaderField.magicNumberSize),
-              let version = read(length: HeaderField.versionSize),
+    func parseHeader() throws -> Header {
+        guard let magicNumber = read(length: FieldSize.magicNumberSize),
+              let version = read(length: FieldSize.versionSize),
               let kas = readResourceLocator(),
-//              let eccMode = read(length: HeaderField.eccModeSize),
               let eccMode = readEccAndBindingMode(),
-              let payloadSigMode = readSymmetricAndPayloadConfig(), // read(length: HeaderField.payloadSigModeSize),
-              let policy = readPolicyField(),
-              // Read length based on key type, FIXME reading min for now
-              let ephemeralKey = read(length: HeaderField.minEphemeralKeySize)
+              let payloadSigMode = readSymmetricAndPayloadConfig(),
+              let policy = readPolicyField()
         else {
             throw ParsingError.invalidFormat
         }
 
+        let ephemeralKeySize: Int
+        switch eccMode.ephemeralECCParamsEnum {
+        case .secp256r1:
+            ephemeralKeySize = 33
+        case .secp384r1:
+            ephemeralKeySize = 49
+        case .secp521r1:
+            ephemeralKeySize = 67
+        case .secp256k1:
+            ephemeralKeySize = 33
+        }
+        guard let ephemeralKey = read(length: ephemeralKeySize) else {
+            throw ParsingError.invalidFormat
+        }
+        
         return Header(magicNumber: magicNumber, version: version, kas: kas, eccMode: eccMode, payloadSigMode: payloadSigMode, policy: policy, ephemeralKey: ephemeralKey)
+    }
+
+    func parsePayload(config: SymmetricAndPayloadConfig) throws -> Payload {
+        guard let lengthData = read(length: FieldSize.payloadCipherTextSize)
+        else {
+            throw ParsingError.invalidFormat
+        }
+        var length: UInt32 = 0
+        let count = lengthData.count
+        for i in 0..<count {
+            length += UInt32(lengthData[i]) << (8 * (count - 1 - i))
+        }
+        // IV nonce
+        guard let iv = read(length: FieldSize.payloadIvSize)
+        else {
+            throw ParsingError.invalidFormat
+        }
+        // MAC Auth tag
+        let payloadMACSize: Int
+        switch config.symmetricCipherEnum {
+        case .GCM_64:
+            payloadMACSize = 8
+        case .GCM_96:
+            payloadMACSize = 12
+        case .GCM_104:
+            payloadMACSize = 13
+        case .GCM_112:
+            payloadMACSize = 14
+        case .GCM_120:
+            payloadMACSize = 15
+        case .GCM_128:
+            payloadMACSize = 16
+        case .none:
+            throw ParsingError.invalidFormat
+        }
+        // cipherText
+        let cipherTextLength = Int(length) - payloadMACSize - FieldSize.payloadIvSize
+        print("cipherTextLength", cipherTextLength)
+        guard let ciphertext = read(length: cipherTextLength),
+            let payloadMAC = read(length: FieldSize.minPayloadMacSize)
+        else {
+            throw ParsingError.invalidFormat
+        }
+        let payload = Payload(length: length, iv: iv, ciphertext: ciphertext, mac: payloadMAC)
+        return payload
+    }
+    
+    func parseSignature(config: SymmetricAndPayloadConfig) throws -> Signature? {
+        if !config.hasSignature {
+            return nil
+        }
+        let publicKeyLength: Int
+        let signatureLength: Int
+        print("config.signatureECCMode", config)
+        switch config.signatureECCMode {
+        case .secp256r1, .secp256k1:
+            publicKeyLength = 33
+            signatureLength = 64
+        case .secp384r1:
+            publicKeyLength = 49
+            signatureLength = 96
+        case .secp521r1:
+            publicKeyLength = 67
+            signatureLength = 132
+        case .none:
+            print("signatureECCMode not found")
+            throw ParsingError.invalidFormat
+        }
+        print("publicKeyLength", publicKeyLength)
+        print("signatureLength", signatureLength)
+        guard let publicKey = read(length: publicKeyLength),
+              let signature = read(length: signatureLength) else {
+            print("publicKey or signatureLength read error")
+            throw ParsingError.invalidFormat
+        }
+        return Signature(publicKey: publicKey, signature: signature)
     }
 }
 
-// see https://github.com/opentdf/spec/tree/2a95f6f434ae241df1d2371b33c2b3c564e5ee67/schema/nanotdf
-enum HeaderField {
+// see https://github.com/opentdf/spec/tree/main/schema/nanotdf
+enum FieldSize {
     static let magicNumberSize = 2
     static let versionSize = 1
     static let minKASSize = 3
@@ -304,6 +464,10 @@ enum HeaderField {
     static let maxPolicySize = 257
     static let minEphemeralKeySize = 33
     static let maxEphemeralKeySize = 133
+    static let payloadCipherTextSize = 3
+    static let payloadIvSize = 3
+    static let minPayloadMacSize = 8
+    static let maxPayloadMacSize = 32
 }
 
 enum ParsingError: Error {
@@ -315,4 +479,5 @@ enum ParsingError: Error {
     case invalidPayloadSigMode
     case invalidPolicy
     case invalidEphemeralKey
+    case invalidPayload
 }
