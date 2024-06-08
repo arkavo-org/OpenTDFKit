@@ -6,12 +6,23 @@
 //
 
 import Foundation
+import CryptoKit
+
+struct PublicKeyMessage: Codable {
+    // TODO add Message type, value 0x01 
+    let public_key: Data
+}
 
 class WebSocketManager {
     private var webSocketTask: URLSessionWebSocketTask?
     private let urlSession: URLSession
+    private var myPrivateKey: P256.KeyAgreement.PrivateKey!
+    var myPublicKey: P256.KeyAgreement.PublicKey!
 
     init() {
+        // create key
+        myPrivateKey = P256.KeyAgreement.PrivateKey()
+        myPublicKey = myPrivateKey.publicKey
         // Initialize a URLSession with a default configuration
         urlSession = URLSession(configuration: .default)
     }
@@ -21,7 +32,6 @@ class WebSocketManager {
         let url = URL(string: "ws://localhost:8080")!
         webSocketTask = urlSession.webSocketTask(with: url)
         webSocketTask?.resume()
-
         // Start receiving messages
         receiveMessage()
     }
@@ -56,6 +66,18 @@ class WebSocketManager {
         }
     }
 
+    func sendPublicKey() {
+        let publicKeyMessage = PublicKeyMessage(public_key: myPublicKey.rawRepresentation)
+//        let data : Data = publicKeyMessage.public_key
+        let data = URLSessionWebSocketTask.Message.data(publicKeyMessage.public_key)
+        print("Sending data: \(data)")
+        webSocketTask?.send(data) { error in
+            if let error = error {
+                print("WebSocket sending error: \(error)")
+            }
+        }
+    }
+    
     func disconnect() {
         // Close the WebSocket connection
         webSocketTask?.cancel(with: .goingAway, reason: nil)
