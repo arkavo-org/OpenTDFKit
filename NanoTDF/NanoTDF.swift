@@ -2,9 +2,9 @@ import CryptoKit
 import Foundation
 
 struct NanoTDF {
-    let header: Header
-    let payload: Payload
-    let signature: Signature?
+    var header: Header
+    var payload: Payload
+    var signature: Signature?
 
     func toData() -> Data {
         var data = Data()
@@ -22,7 +22,7 @@ struct Header {
     let version: Data
     let kas: ResourceLocator
     let eccMode: ECCAndBindingMode
-    let payloadSigMode: SymmetricAndPayloadConfig
+    var payloadSigMode: SymmetricAndPayloadConfig
     let policy: Policy
     let ephemeralKey: Data
 
@@ -56,6 +56,18 @@ struct Payload {
     }
 }
 
+struct Signature {
+    let publicKey: Data
+    let signature: Data
+
+    func toData() -> Data {
+        var data = Data()
+        data.append(publicKey)
+        data.append(signature)
+        return data
+    }
+}
+
 struct ECCAndBindingMode {
     var useECDSABinding: Bool
     var ephemeralECCParamsEnum: ECDSAParams
@@ -71,8 +83,8 @@ struct ECCAndBindingMode {
 }
 
 struct SymmetricAndPayloadConfig {
-    let hasSignature: Bool
-    let signatureECCMode: ECDSAParams?
+    var hasSignature: Bool
+    var signatureECCMode: ECDSAParams?
     let symmetricCipherEnum: SymmetricCiphers?
     
     func toData() -> Data {
@@ -86,18 +98,19 @@ struct SymmetricAndPayloadConfig {
         if let symmetricCipherEnum = symmetricCipherEnum {
             byte |= (symmetricCipherEnum.rawValue & 0b00001111) // Set the Symmetric Cipher Enum bits (bits 0-3)
         }
+        print("SymmetricAndPayloadConfig write serialized data:", Data([byte]).map { String($0, radix: 16) })
         return Data([byte])
     }
 }
 
-enum ProtocolEnum: UInt8, Codable {
+enum ProtocolEnum: UInt8 {
     case http = 0x00
     case https = 0x01
     case unreserved = 0x02
     case sharedResourceDirectory = 0xFF
 }
 
-struct ResourceLocator: Codable {
+struct ResourceLocator {
     let protocolEnum: ProtocolEnum
     let body: String
     func toData() -> Data {
@@ -123,6 +136,7 @@ struct Policy {
     let body: Data?
     let remote: ResourceLocator?
     let binding: Data?
+    let keyAccess: PolicyKeyAccess?
     
     func toData() -> Data {
         var data = Data()
@@ -136,6 +150,9 @@ struct Policy {
             if let body = body {
                 data.append(body)
             }
+            if let keyAccess = keyAccess {
+                data.append(keyAccess.toData())
+            }
         }
         if let binding = binding {
             data.append(binding)
@@ -147,17 +164,17 @@ struct Policy {
 struct EmbeddedPolicyBody {
     let contentLength: UInt16
     let plaintextCiphertext: Data?
-    let policyKeyAccess: Data?
+    let policyKeyAccess: PolicyKeyAccess?
 }
 
-struct Signature {
-    let publicKey: Data
-    let signature: Data
-
+struct PolicyKeyAccess {
+    let resourceLocator: ResourceLocator
+    let ephemeralPublicKey: Data
+    
     func toData() -> Data {
         var data = Data()
-        data.append(publicKey)
-        data.append(signature)
+        data.append(resourceLocator.toData())
+        data.append(ephemeralPublicKey)
         return data
     }
 }
@@ -187,7 +204,6 @@ class BinaryParser {
     }
 
     func read(length: Int) -> Data? {
-        print("Length: \(length)")
         guard cursor + length <= data.count else { return nil }
         let range = cursor ..< (cursor + length)
         cursor += length
@@ -205,8 +221,6 @@ class BinaryParser {
         else {
             return nil
         }
-        let protocolHex = String(format: "%02x", protocolEnum)
-        print("Protocol Hex:", protocolHex)
         let bodyLengthlHex = String(format: "%02x", bodyLength)
         print("Body Length Hex:", bodyLengthlHex)
         let bodyHexString = body.map { String(format: "%02x", $0) }.joined(separator: " ")
@@ -215,47 +229,36 @@ class BinaryParser {
         return ResourceLocator(protocolEnum: protocolEnumValue, body: bodyString)
     }
 
-    private func readPolicyField() -> Policy? {
-        print("readPolicyField")
-        guard let typeEnum = read(length: 1),
-              let type = typeEnum.first
-        else {
-            print("Failed to read Type Enum")
+    private func readPolicyField(bindingMode: ECCAndBindingMode) -> Policy? {
+        guard let policyTypeData = read(length: 1),
+              let policyType = Policy.PolicyType(rawValue: policyTypeData[0]) else {
             return nil
         }
 
-        switch type {
-        case 0x00:
-            // Remote Policy
-            print("Remote Policy")
+        switch policyType {
+        case .remote:
             guard let resourceLocator = readResourceLocator() else {
                 print("Failed to read Remote Policy resource locator")
                 return nil
             }
             // Binding
-            guard let binding = readPolicyBinding() else {
+            guard let binding = readPolicyBinding(bindingMode: bindingMode) else {
                 print("Failed to read Remote Policy binding")
                 return nil
             }
-            return Policy(type: .remote, body: nil, remote: resourceLocator, binding: binding)
-
-        case 0x01, 0x02, 0x03:
-            // Embedded Policy (Plaintext or Encrypted)
-            let policyData = readEmbeddedPolicyBody()
+            return Policy(type: .remote, body: nil, remote: resourceLocator, binding: binding, keyAccess: nil)
+        case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
+            let policyData = readEmbeddedPolicyBody(policyType: policyType, bindingMode: bindingMode)
             // Binding
-            guard let binding = readPolicyBinding() else {
+            guard let binding = readPolicyBinding(bindingMode: bindingMode) else {
                 print("Failed to read Remote Policy binding")
                 return nil
             }
-            return Policy(type: .embeddedPlaintext, body: policyData?.plaintextCiphertext, remote: nil, binding: binding)
-        default:
-            print("Unknown Policy Type Enum value")
-            return nil
+            return Policy(type: .embeddedPlaintext, body: policyData?.plaintextCiphertext, remote: nil, binding: binding, keyAccess: policyData?.policyKeyAccess)
         }
     }
 
-    private func readEmbeddedPolicyBody() -> EmbeddedPolicyBody? {
-        print("readEmbeddedPolicyBody")
+    private func readEmbeddedPolicyBody(policyType: Policy.PolicyType, bindingMode: ECCAndBindingMode) -> EmbeddedPolicyBody? {
         guard let contentLengthData = read(length: 2)
         else {
             print("Failed to read Embedded Policy content length")
@@ -278,17 +281,12 @@ class BinaryParser {
             print("Failed to read Embedded Policy plaintext / ciphertext")
             return nil
         }
+        let keyAccess = policyType == .embeddedEncryptedWithPolicyKeyAccess ? readPolicyKeyAccess(bindingMode: bindingMode) : nil
 
-        var policyKeyAccess: Data?
-        if cursor < data.count {
-            policyKeyAccess = read(length: data.count - cursor)
-        }
-
-        return EmbeddedPolicyBody(contentLength: contentLength, plaintextCiphertext: plaintextCiphertext, policyKeyAccess: policyKeyAccess)
+        return EmbeddedPolicyBody(contentLength: contentLength, plaintextCiphertext: plaintextCiphertext, policyKeyAccess: keyAccess)
     }
 
     func readEccAndBindingMode() -> ECCAndBindingMode? {
-        print("readEccAndBindingMode")
         guard let eccAndBindingModeData = read(length: 1),
               let eccAndBindingMode = eccAndBindingModeData.first
         else {
@@ -312,47 +310,75 @@ class BinaryParser {
     }
 
     func readSymmetricAndPayloadConfig() -> SymmetricAndPayloadConfig? {
-        print("readSymmetricAndPayloadConfig")
-        guard let symmetricAndPayloadConfigData = read(length: 1),
-              let symmetricAndPayloadConfig = symmetricAndPayloadConfigData.first
+        guard let data = read(length: 1)
         else {
-            print("Failed to read Symmetric and Payload Config")
             return nil
         }
-        let symmetricAndPayloadConfigHex = String(format: "%02x", symmetricAndPayloadConfig)
-        print("Symmetric And Payload Config Hex:", symmetricAndPayloadConfigHex)
-        let hasSignature = (symmetricAndPayloadConfig & 0x80) >> 7 != 0
-        let signatureECCModeEnum = ECDSAParams(rawValue: (symmetricAndPayloadConfig & 0x70) >> 4)
-        let symmetricCipherEnum = SymmetricCiphers(rawValue: symmetricAndPayloadConfig & 0x0F)
+        print("SymmetricAndPayloadConfig read serialized data:", data.map { String($0, radix: 16) })
+        guard data.count == 1 else { return nil }
+        let byte = data[0]
+        let hasSignature = (byte & 0b10000000) != 0
+        let signatureECCMode = ECDSAParams(rawValue: (byte & 0b01110000) >> 4)
+        let symmetricCipherEnum = SymmetricCiphers(rawValue: byte & 0b00001111)
+      
+        guard let signatureMode = signatureECCMode, let symmetricCipher = symmetricCipherEnum else {
+            return nil
+        }
 
-        print("hasSignature: \(hasSignature)")
-        print("signatureECCModeEnum: \(String(describing: signatureECCModeEnum))")
-        print("symmetricCipherEnum: \(String(describing: symmetricCipherEnum))")
-
-        return SymmetricAndPayloadConfig(hasSignature: hasSignature,
-                                         signatureECCMode: signatureECCModeEnum,
-                                         symmetricCipherEnum: symmetricCipherEnum)
+        return SymmetricAndPayloadConfig(hasSignature: hasSignature, signatureECCMode: signatureMode, symmetricCipherEnum: symmetricCipher)
     }
 
-    func readPolicyBinding() -> Data? {
-        // The length should be determined based on the ECC and Binding Mode described
-        let bindingLength = determinePolicyBindingLength() // This function needs to be implemented based on ECC and Binding Mode
-        return read(length: bindingLength)
+    func readPolicyBinding(bindingMode: ECCAndBindingMode) -> Data? {
+        var bindingSize: Int
+        print("bindingMode", bindingMode)
+        if bindingMode.useECDSABinding {
+            bindingSize = 64
+        }
+        else {
+            switch bindingMode.ephemeralECCParamsEnum {
+            case .secp256r1, .secp256k1:
+                bindingSize = 64
+            case .secp384r1:
+                bindingSize = 96
+            case .secp521r1:
+                bindingSize = 132
+            }
+        }
+        print("bindingSize", bindingSize)
+        if bindingMode.useECDSABinding {
+            bindingSize = 64
+        }
+        return read(length: bindingSize)
     }
 
-    private func determinePolicyBindingLength() -> Int {
-        // This should return the correct length based on ECC and Binding Mode
-        // Placeholder: returning a typical length for an ECDSA signature
-        return 64 // Example length, adjust based on actual application requirements
-    }
+    func readPolicyKeyAccess(bindingMode: ECCAndBindingMode) -> PolicyKeyAccess? {
+        let keySize: Int
+        switch bindingMode.ephemeralECCParamsEnum {
+        case .secp256r1:
+            keySize = 65
+        case .secp384r1:
+            keySize = 97
+        case .secp521r1:
+            keySize = 133
+        case .secp256k1:
+            keySize = 65
+        }
 
+        guard let resourceLocator = readResourceLocator(),
+              let ephemeralPublicKey = read(length: keySize) else {
+            return nil
+        }
+
+        return PolicyKeyAccess(resourceLocator: resourceLocator, ephemeralPublicKey: ephemeralPublicKey)
+    }
+    
     func parseHeader() throws -> Header {
         guard let magicNumber = read(length: FieldSize.magicNumberSize),
               let version = read(length: FieldSize.versionSize),
               let kas = readResourceLocator(),
               let eccMode = readEccAndBindingMode(),
               let payloadSigMode = readSymmetricAndPayloadConfig(),
-              let policy = readPolicyField()
+              let policy = readPolicyField(bindingMode: eccMode)
         else {
             throw ParsingError.invalidFormat
         }
@@ -412,7 +438,7 @@ class BinaryParser {
         let cipherTextLength = Int(length) - payloadMACSize - FieldSize.payloadIvSize
         print("cipherTextLength", cipherTextLength)
         guard let ciphertext = read(length: cipherTextLength),
-            let payloadMAC = read(length: FieldSize.minPayloadMacSize)
+            let payloadMAC = read(length: payloadMACSize)
         else {
             throw ParsingError.invalidFormat
         }
@@ -480,4 +506,102 @@ enum ParsingError: Error {
     case invalidPolicy
     case invalidEphemeralKey
     case invalidPayload
+    case invalidPublicKeyLength
+    case invalidSignatureLength
+    case invalidSigning
+}
+
+// Helper function to extract r and s values from DER-encoded ECDSA signature
+func extractRawECDSASignature(from derSignature: Data) -> Data? {
+    var r: Data?
+    var s: Data?
+
+    // Decode DER signature
+    // DER structure: 0x30 (SEQUENCE) + length + 0x02 (INTEGER) + r length + r + 0x02 (INTEGER) + s length + s
+    guard derSignature.count > 8 else { return nil }
+    
+    var index = 0
+    guard derSignature[index] == 0x30 else { return nil }
+    index += 1
+
+    let _ = derSignature[index] // length of the sequence
+    index += 1
+
+    guard derSignature[index] == 0x02 else { return nil }
+    index += 1
+
+    let rLength = Int(derSignature[index])
+    index += 1
+
+    r = derSignature[index..<(index + rLength)]
+    index += rLength
+
+    guard derSignature[index] == 0x02 else { return nil }
+    index += 1
+
+    let sLength = Int(derSignature[index])
+    index += 1
+
+    s = derSignature[index..<(index + sLength)]
+
+    // Ensure r and s are present and have correct lengths
+    guard let rData = r, let sData = s else { return nil }
+
+    // Remove leading zero if present
+    let rTrimmed = rData.count == 33 ? rData.dropFirst() : rData
+    let sTrimmed = sData.count == 33 ? sData.dropFirst() : sData
+
+    // Ensure r and s have correct lengths
+    guard rTrimmed.count == 32, sTrimmed.count == 32 else { return nil }
+
+    return rTrimmed + sTrimmed
+}
+
+// Helper function to generate ECDSA signature
+func generateECDSASignature(privateKey: P256.Signing.PrivateKey, message: Data) throws -> Data? {
+    let derSignature = try privateKey.signature(for: message).derRepresentation
+    return extractRawECDSASignature(from: derSignature)
+}
+
+// Function to add a signature to a NanoTDF
+func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signing.PrivateKey, config: SymmetricAndPayloadConfig) throws {
+    let message = nanoTDF.header.toData() + nanoTDF.payload.toData()
+    guard let signatureData = try generateECDSASignature(privateKey: privateKey, message: message) else {
+        throw ParsingError.invalidSigning
+    }
+    print("signatureData", signatureData.count)
+    let publicKeyData = privateKey.publicKey.compressedRepresentation // Using compressedRepresentation for the compressed key format
+    print("publicKeyData", publicKeyData.count)
+    // Determine lengths based on ECC mode
+    let publicKeyLength: Int
+    let signatureLength: Int
+
+    print("config.signatureECCMode", config.signatureECCMode as Any)
+    switch config.signatureECCMode {
+    case .secp256r1, .secp256k1:
+        publicKeyLength = 33
+        signatureLength = 64
+    case .secp384r1:
+        publicKeyLength = 49
+        signatureLength = 96
+    case .secp521r1:
+        publicKeyLength = 67
+        signatureLength = 132
+    case .none:
+        print("signatureECCMode not found")
+        throw ParsingError.invalidFormat
+    }
+
+    // Check lengths
+    guard publicKeyData.count == publicKeyLength else {
+        throw ParsingError.invalidPublicKeyLength
+    }
+    guard signatureData.count == signatureLength else {
+        throw ParsingError.invalidSignatureLength
+    }
+
+    let signature = Signature(publicKey: publicKeyData, signature: signatureData)
+    nanoTDF.signature = signature
+    nanoTDF.header.payloadSigMode.hasSignature = true
+    nanoTDF.header.payloadSigMode.signatureECCMode = config.signatureECCMode // Use the provided config
 }

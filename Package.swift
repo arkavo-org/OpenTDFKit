@@ -1,10 +1,13 @@
-// swift-tools-version:5.1
+// swift-tools-version:5.8
 import PackageDescription
 
 let package = Package(
     name: "NanoTDF",
     platforms: [
-        .macOS(.v10_15)
+        .macOS(.v13), // Update to the latest macOS version
+        .iOS(.v16), // Update to the latest iOS version
+        .tvOS(.v16), // Update to the latest tvOS version
+        .watchOS(.v9) // Update to the latest watchOS version
     ],
     products: [
         .library(
@@ -16,9 +19,9 @@ let package = Package(
     ],
     targets: [
         .target(
-        name: "NanoTDF",
-        dependencies: [],
-        path: "NanoTDF"),
+            name: "NanoTDF",
+            dependencies: [],
+            path: "NanoTDF"),
         .testTarget(
             name: "Tests",
             dependencies: ["NanoTDF"],
