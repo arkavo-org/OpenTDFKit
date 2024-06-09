@@ -64,4 +64,56 @@ enum CryptoHelper {
         let sealedBox = try AES.GCM.seal(plaintext, using: symmetricKey, nonce: AES.GCM.Nonce(data: nonce))
         return (sealedBox.ciphertext, sealedBox.tag)
     }
+    
+    // Helper function to generate ECDSA signature
+    static func generateECDSASignature(privateKey: P256.Signing.PrivateKey, message: Data) throws -> Data? {
+        let derSignature = try privateKey.signature(for: message).derRepresentation
+        return extractRawECDSASignature(from: derSignature)
+    }
+    
+    // Helper function to extract r and s values from DER-encoded ECDSA signature
+    static func extractRawECDSASignature(from derSignature: Data) -> Data? {
+        var r: Data?
+        var s: Data?
+
+        // Decode DER signature
+        // DER structure: 0x30 (SEQUENCE) + length + 0x02 (INTEGER) + r length + r + 0x02 (INTEGER) + s length + s
+        guard derSignature.count > 8 else { return nil }
+
+        var index = 0
+        guard derSignature[index] == 0x30 else { return nil }
+        index += 1
+
+        _ = derSignature[index] // length of the sequence
+        index += 1
+
+        guard derSignature[index] == 0x02 else { return nil }
+        index += 1
+
+        let rLength = Int(derSignature[index])
+        index += 1
+
+        r = derSignature[index ..< (index + rLength)]
+        index += rLength
+
+        guard derSignature[index] == 0x02 else { return nil }
+        index += 1
+
+        let sLength = Int(derSignature[index])
+        index += 1
+
+        s = derSignature[index ..< (index + sLength)]
+
+        // Ensure r and s are present and have correct lengths
+        guard let rData = r, let sData = s else { return nil }
+
+        // Remove leading zero if present
+        let rTrimmed = rData.count == 33 ? rData.dropFirst() : rData
+        let sTrimmed = sData.count == 33 ? sData.dropFirst() : sData
+
+        // Ensure r and s have correct lengths
+        guard rTrimmed.count == 32, sTrimmed.count == 32 else { return nil }
+
+        return rTrimmed + sTrimmed
+    }
 }

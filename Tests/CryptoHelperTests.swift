@@ -15,7 +15,7 @@ final class CryptoHelperTests: XCTestCase {
         // Assume we have recipient's public key
         let recipientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: recipientDER)
         // Generate ephemeral key pair for P256
-        if let (ephemeralPrivateKey, ephemeralPublicKey) = CryptoHelper.generateEphemeralKeyPair(curveType: .secp256r1) {
+        if let (ephemeralPrivateKey, _) = CryptoHelper.generateEphemeralKeyPair(curveType: .secp256r1) {
             // Step 3: Derive shared secret
             if let sharedSecret = try CryptoHelper.deriveSharedSecret(curveType: .secp256r1, ephemeralPrivateKey: ephemeralPrivateKey, recipientPublicKey: recipientPublicKey) {
                 print("Shared Secret: \(sharedSecret)")
