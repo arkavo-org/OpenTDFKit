@@ -325,9 +325,6 @@ class BinaryParser {
             return nil
         }
 
-//        if !hasSignature {
-//            return SymmetricAndPayloadConfig(hasSignature: hasSignature, signatureECCMode: nil, symmetricCipherEnum: symmetricCipher)
-//        }
         return SymmetricAndPayloadConfig(hasSignature: hasSignature, signatureECCMode: signatureMode, symmetricCipherEnum: symmetricCipher)
     }
 
@@ -546,7 +543,6 @@ func extractRawECDSASignature(from derSignature: Data) -> Data? {
     index += 1
 
     s = derSignature[index..<(index + sLength)]
-    index += sLength
 
     // Ensure r and s are present and have correct lengths
     guard let rData = r, let sData = s else { return nil }
@@ -562,15 +558,15 @@ func extractRawECDSASignature(from derSignature: Data) -> Data? {
 }
 
 // Helper function to generate ECDSA signature
-func generateECDSASignature(privateKey: P256.Signing.PrivateKey, message: Data) -> Data? {
-    let derSignature = try! privateKey.signature(for: message).derRepresentation
+func generateECDSASignature(privateKey: P256.Signing.PrivateKey, message: Data) throws -> Data? {
+    let derSignature = try privateKey.signature(for: message).derRepresentation
     return extractRawECDSASignature(from: derSignature)
 }
 
 // Function to add a signature to a NanoTDF
 func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signing.PrivateKey, config: SymmetricAndPayloadConfig) throws {
     let message = nanoTDF.header.toData() + nanoTDF.payload.toData()
-    guard let signatureData = generateECDSASignature(privateKey: privateKey, message: message) else {
+    guard let signatureData = try generateECDSASignature(privateKey: privateKey, message: message) else {
         throw ParsingError.invalidSigning
     }
     print("signatureData", signatureData.count)
