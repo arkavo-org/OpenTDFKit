@@ -7,10 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		DA07A6952C165A83003DC210 /* CryptoHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA07A6942C165A83003DC210 /* CryptoHelper.swift */; };
+		DA07A6972C165ABB003DC210 /* CryptoHelperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA07A6962C165ABB003DC210 /* CryptoHelperTests.swift */; };
 		DA2B7B1B2BF1BB19002F3150 /* NanoTDFTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2B7B162BF1BB19002F3150 /* NanoTDFTests.swift */; };
 		DA2B7B1E2BF1BB19002F3150 /* WebSocketManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2B7B192BF1BB19002F3150 /* WebSocketManager.swift */; };
 		DA3C23F42BE0765100B4B883 /* NanoTDF.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA3C23F32BE0765100B4B883 /* NanoTDF.swift */; };
 		DA3C24052BE0787700B4B883 /* libNanoTDF.a in Frameworks */ = {isa = PBXBuildFile; fileRef = DA3C23F02BE0765100B4B883 /* libNanoTDF.a */; };
+		DABEB4202C160B61004540E6 /* InitializationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DABEB41F2C160B61004540E6 /* InitializationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -36,11 +39,14 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		DA07A6942C165A83003DC210 /* CryptoHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoHelper.swift; sourceTree = "<group>"; };
+		DA07A6962C165ABB003DC210 /* CryptoHelperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoHelperTests.swift; sourceTree = "<group>"; };
 		DA2B7B162BF1BB19002F3150 /* NanoTDFTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = NanoTDFTests.swift; sourceTree = "<group>"; };
 		DA2B7B192BF1BB19002F3150 /* WebSocketManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WebSocketManager.swift; sourceTree = "<group>"; };
 		DA3C23F02BE0765100B4B883 /* libNanoTDF.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libNanoTDF.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		DA3C23F32BE0765100B4B883 /* NanoTDF.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NanoTDF.swift; sourceTree = "<group>"; };
 		DA3C24012BE0787700B4B883 /* Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		DABEB41F2C160B61004540E6 /* InitializationTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = InitializationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -66,7 +72,9 @@
 			isa = PBXGroup;
 			children = (
 				DA2B7B162BF1BB19002F3150 /* NanoTDFTests.swift */,
+				DABEB41F2C160B61004540E6 /* InitializationTests.swift */,
 				DA2B7B192BF1BB19002F3150 /* WebSocketManager.swift */,
+				DA07A6962C165ABB003DC210 /* CryptoHelperTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -92,6 +100,7 @@
 		DA3C23F22BE0765100B4B883 /* NanoTDF */ = {
 			isa = PBXGroup;
 			children = (
+				DA07A6942C165A83003DC210 /* CryptoHelper.swift */,
 				DA3C23F32BE0765100B4B883 /* NanoTDF.swift */,
 			);
 			path = NanoTDF;
@@ -188,6 +197,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DA07A6952C165A83003DC210 /* CryptoHelper.swift in Sources */,
 				DA3C23F42BE0765100B4B883 /* NanoTDF.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -197,6 +207,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				DA2B7B1B2BF1BB19002F3150 /* NanoTDFTests.swift in Sources */,
+				DABEB4202C160B61004540E6 /* InitializationTests.swift in Sources */,
+				DA07A6972C165ABB003DC210 /* CryptoHelperTests.swift in Sources */,
 				DA2B7B1E2BF1BB19002F3150 /* WebSocketManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

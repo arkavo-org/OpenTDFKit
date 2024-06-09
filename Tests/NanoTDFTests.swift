@@ -42,16 +42,16 @@ final class NanoTDFTests: XCTestCase {
             print("Parsed Header:", header)
             // KAS
             print("KAS:", header.kas.body)
-            if "kas.virtru.com" != header.kas.body {
+            if header.kas.body != "kas.virtru.com" {
                 XCTFail("")
             }
             // Ephemeral Key
-            let ephemeralKeyHexString = header.ephemeralKey.map { String(format: "%02x", $0) }.joined(separator: " ")
+            let ephemeralKeyHexString = header.ephemeralPublicKey.map { String(format: "%02x", $0) }.joined(separator: " ")
             print("Ephemeral Key:", ephemeralKeyHexString)
             let compareHexString = """
-        02 f7 7f ba e5 26 09 da c5 e8 eb f7 86 e1 1b 7a ed d7 0f 89
-        80 f9 48 0c 7e 67 1c ba ab 8e 24 50 92
-        """.replacingOccurrences(of: "\n", with: " ")
+            02 f7 7f ba e5 26 09 da c5 e8 eb f7 86 e1 1b 7a ed d7 0f 89
+            80 f9 48 0c 7e 67 1c ba ab 8e 24 50 92
+            """.replacingOccurrences(of: "\n", with: " ")
             if ephemeralKeyHexString == compareHexString {
                 print("Ephemeral Key equals comparison string.")
             } else {
@@ -84,7 +84,7 @@ final class NanoTDFTests: XCTestCase {
             let parser = BinaryParser(data: binaryData!)
             let header = try parser.parseHeader()
             // EccMode
-            let serializedEccMode = header.eccMode.toData()
+            let serializedEccMode = header.policyBindingConfig.toData()
             let serializedEccModeHexString = serializedEccMode.map { String(format: "%02x", $0) }.joined(separator: " ")
             var compareHexString = """
             80
@@ -95,7 +95,7 @@ final class NanoTDFTests: XCTestCase {
                 print(serializedEccModeHexString)
                 XCTFail("EccMode does not equal comparison string.")
             }
-            let payload = try parser.parsePayload(config: header.payloadSigMode)
+            let payload = try parser.parsePayload(config: header.payloadSignatureConfig)
             let serializedPayloadMacHexString = payload.mac.map { String(format: "%02x", $0) }.joined(separator: " ")
             compareHexString = """
             f9 fd 80 14 af 7c cb 06
@@ -106,7 +106,7 @@ final class NanoTDFTests: XCTestCase {
                 print(serializedPayloadMacHexString)
                 XCTFail("MAC does not equal comparison string.")
             }
-            let signature = try parser.parseSignature(config: header.payloadSigMode)
+            let signature = try parser.parseSignature(config: header.payloadSignatureConfig)
             let nano = NanoTDF(header: header, payload: payload, signature: signature)
             let serializedNanoTDF = nano.toData()
             var counter = 0
@@ -125,13 +125,13 @@ final class NanoTDFTests: XCTestCase {
             // back again
             let bparser = BinaryParser(data: serializedNanoTDF)
             let bheader = try bparser.parseHeader()
-            _ = try bparser.parsePayload(config: bheader.payloadSigMode)
-            _ = try bparser.parseSignature(config: bheader.payloadSigMode)
+            _ = try bparser.parsePayload(config: bheader.payloadSignatureConfig)
+            _ = try bparser.parseSignature(config: bheader.payloadSignatureConfig)
         } catch {
             XCTFail("Failed to parse data: \(error)")
         }
     }
-    
+
     // 6.1.5 nanotdf
     func testSpecExampleDecryptPayload() {
         let hexString = """
@@ -154,10 +154,10 @@ final class NanoTDFTests: XCTestCase {
         do {
             let header = try parser.parseHeader()
             // Ephemeral Key
-            let ephemeralKeyHexString = header.ephemeralKey.map { String(format: "%02x", $0) }.joined(separator: " ")
+            let ephemeralKeyHexString = header.ephemeralPublicKey.map { String(format: "%02x", $0) }.joined(separator: " ")
             print("Ephemeral Key:", ephemeralKeyHexString)
             // Parse payload
-            let payload = try parser.parsePayload(config: header.payloadSigMode)
+            let payload = try parser.parsePayload(config: header.payloadSignatureConfig)
             let payloadIvHexString = payload.iv.map { String(format: "%02x", $0) }.joined(separator: " ")
             print("Payload IV:", payloadIvHexString)
             var compareHexString = """
@@ -180,14 +180,14 @@ final class NanoTDFTests: XCTestCase {
             }
             // Create the symmetric key
             _ = SymmetricKey(size: .bits256)
-            
+
             // Combine the IV-nonce, ciphertext, and MAC-tag
             let _ = payload.iv + payload.ciphertext + payload.mac
-            
+
             // Decrypt the payload
 //            let sealedBox = try AES.GCM.SealedBox(combined: combinedData)
 //            let decryptedData = try AES.GCM.open(sealedBox, using: symmetricKey)
-//            
+//
 //            // Assert the decrypted data is as expected
 //            let expectedDecryptedData = "DON'T"
 //            XCTAssertEqual(decryptedData, decryptedData)
@@ -195,7 +195,7 @@ final class NanoTDFTests: XCTestCase {
             XCTFail("Decryption failed: \(error)")
         }
     }
-    
+
     // 6.2 No Signature Example
     func testNoSignatureSpecExampleBinaryParser() throws {
         let hexString = """
@@ -223,19 +223,19 @@ final class NanoTDFTests: XCTestCase {
             print("Version Hex:", versionHexString)
             // KAS
             print("KAS:", header.kas.body)
-            if "kas.example.com" != header.kas.body {
+            if header.kas.body != "kas.example.com" {
                 XCTFail("KAS incorrect")
             }
-            if "kas.example.com/policy/abcdef" != header.policy.remote?.body {
+            if header.policy.remote?.body != "kas.example.com/policy/abcdef" {
                 XCTFail("Policy Body incorrect")
             }
             // Ephemeral Key
-            let ephemeralKeyHexString = header.ephemeralKey.map { String(format: "%02x", $0) }.joined(separator: " ")
+            let ephemeralKeyHexString = header.ephemeralPublicKey.map { String(format: "%02x", $0) }.joined(separator: " ")
             print("Ephemeral Key:", ephemeralKeyHexString)
             let compareHexString = """
-        03 e8 b3 3f 44 9a 73 92 77 13 d4 a4 a2 b4 e5 e9 45 2e 2f 05
-        34 33 9d 35 91 1b df a1 5e e1 8b 3a db
-        """.replacingOccurrences(of: "\n", with: " ")
+            03 e8 b3 3f 44 9a 73 92 77 13 d4 a4 a2 b4 e5 e9 45 2e 2f 05
+            34 33 9d 35 91 1b df a1 5e e1 8b 3a db
+            """.replacingOccurrences(of: "\n", with: " ")
             print("Compare Key:", compareHexString)
             if ephemeralKeyHexString == compareHexString {
                 print("Ephemeral Key equals comparison string.")
@@ -243,24 +243,24 @@ final class NanoTDFTests: XCTestCase {
                 XCTFail("Ephemeral Key does not equal comparison string.")
             }
             // ECC and Binding Mode
-            if header.eccMode.toData() == Data([0x80]) {
+            if header.policyBindingConfig.toData() == Data([0x80]) {
                 print("EccMode equals comparison.")
             } else {
                 XCTFail("EccMode does not equal comparison.")
             }
             // Symmetric and Payload Config
-            if header.payloadSigMode.toData() == Data([0x35]) {
+            if header.payloadSignatureConfig.toData() == Data([0x35]) {
                 print("SigMode equals comparison.")
             } else {
                 XCTFail("SigMode does not equal comparison.")
             }
             // Signature
-            XCTAssertFalse(header.payloadSigMode.hasSignature)
+            XCTAssertFalse(header.payloadSignatureConfig.signed)
         } catch {
             XCTFail("Failed to parse data: \(error)")
         }
     }
-    
+
     func testNoPolicyBinaryParser() throws {
         let stringWithSpaces = """
         4c 31 4c 01 1a 70 6c 61 74 66 6f 72 6d 2e 76 69 72 74 72 75
@@ -306,13 +306,13 @@ final class NanoTDFTests: XCTestCase {
         let parser = BinaryParser(data: binaryData!)
         do {
             let header = try parser.parseHeader()
-            let payload = try parser.parsePayload(config: header.payloadSigMode)
+            let payload = try parser.parsePayload(config: header.payloadSignatureConfig)
             var nanoTDF = NanoTDF(header: header, payload: payload, signature: nil)
             // Generate an ECDSA private key
             let privateKey = P256.Signing.PrivateKey()
             // Add the signature to the NanoTDF
             print("Adding signature")
-            try addSignatureToNanoTDF(nanoTDF: &nanoTDF, privateKey: privateKey, config: header.payloadSigMode)
+            try addSignatureToNanoTDF(nanoTDF: &nanoTDF, privateKey: privateKey, config: header.payloadSignatureConfig)
             // Print the updated NanoTDF
             print(nanoTDF)
             var serializedSignature = nanoTDF.signature?.toData()
@@ -330,8 +330,8 @@ final class NanoTDFTests: XCTestCase {
             // round trip - parse
             let sparser = BinaryParser(data: serializedWithSignature)
             let sheader = try sparser.parseHeader()
-            let spayload = try sparser.parsePayload(config: sheader.payloadSigMode)
-            let ssignature = try sparser.parseSignature(config: sheader.payloadSigMode)
+            let spayload = try sparser.parsePayload(config: sheader.payloadSignatureConfig)
+            let ssignature = try sparser.parseSignature(config: sheader.payloadSignatureConfig)
             let snanoTDF = NanoTDF(header: sheader, payload: spayload, signature: ssignature)
             // Print final the signature NanoTDF
             print(snanoTDF)
@@ -355,19 +355,19 @@ final class NanoTDFTests: XCTestCase {
             XCTFail("Failed to parse data: \(error)")
         }
     }
-    
+
     func testCreateAddVerifySignature() throws {
         throw XCTSkip("revise during creation feature")
         // Create a NanoTDF without a signature
-        let header = Header(magicNumber: Data([0x00, 0x01]), version: Data([0x01]), kas: ResourceLocator(protocolEnum: .https, body: "example.com"), eccMode: ECCAndBindingMode(useECDSABinding: true, ephemeralECCParamsEnum: .secp256r1), payloadSigMode: SymmetricAndPayloadConfig(hasSignature: false, signatureECCMode: .secp256r1, symmetricCipherEnum: .GCM_128), policy: Policy(type: .embeddedPlaintext, body: Data([0x01, 0x02, 0x03]), remote: nil, binding: Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]), keyAccess: nil), ephemeralKey: Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20]))
+        let header = Header(magicNumber: Data([0x00, 0x01]), version: Data([0x01]), kas: ResourceLocator(protocolEnum: .https, body: "example.com")!, eccMode: PolicyBindingConfig(ecdsaBinding: true, curve: .secp256r1), payloadSigMode: SignatureAndPayloadConfig(signed: false, signatureCurve: .secp256r1, payloadCipher: .aes256GCM128), policy: Policy(type: .embeddedPlaintext, body: Data([0x01, 0x02, 0x03]), remote: nil, binding: Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]), keyAccess: nil), ephemeralKey: Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20]))
         let payload = Payload(length: 123, iv: Data([0x01, 0x02, 0x03]), ciphertext: Data([0x01, 0x02, 0x03, 0x04, 0x05]), mac: Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10]))
-        var nanoTDF = NanoTDF(header: header, payload: payload, signature: nil)
+        var nanoTDF = NanoTDF(header: header!, payload: payload, signature: nil)
 
         // Generate an ECDSA private key
         let privateKey = P256.Signing.PrivateKey()
 
         // Add the signature to the NanoTDF
-        try addSignatureToNanoTDF(nanoTDF: &nanoTDF, privateKey: privateKey, config: header.payloadSigMode)
+        try addSignatureToNanoTDF(nanoTDF: &nanoTDF, privateKey: privateKey, config: header!.payloadSignatureConfig)
 
         // Serialize the NanoTDF
         let serializedData = nanoTDF.toData()
@@ -375,17 +375,17 @@ final class NanoTDFTests: XCTestCase {
         // Parse the NanoTDF
         let parser = BinaryParser(data: serializedData)
         let parsedHeader = try parser.parseHeader()
-        _ = try parser.parsePayload(config: parsedHeader.payloadSigMode)
-        let signature = try parser.parseSignature(config: parsedHeader.payloadSigMode)
-        
+        _ = try parser.parsePayload(config: parsedHeader.payloadSignatureConfig)
+        let signature = try parser.parseSignature(config: parsedHeader.payloadSignatureConfig)
+
         // Verify the parsed NanoTDF
-        XCTAssertEqual(parsedHeader.payloadSigMode.hasSignature, true)
-        XCTAssertEqual(parsedHeader.payloadSigMode.signatureECCMode, .secp256r1)
-        XCTAssertEqual(parsedHeader.payloadSigMode.symmetricCipherEnum, .GCM_128)
+        XCTAssertEqual(parsedHeader.payloadSignatureConfig.signed, true)
+        XCTAssertEqual(parsedHeader.payloadSignatureConfig.signatureCurve, .secp256r1)
+        XCTAssertEqual(parsedHeader.payloadSignatureConfig.payloadCipher, .aes256GCM128)
         XCTAssertEqual(signature?.publicKey, privateKey.publicKey.rawRepresentation)
         XCTAssertEqual(signature?.signature, nanoTDF.signature?.signature)
     }
-   
+
     func testPerformanceExample() throws {
         // This is an example of a performance test case.
         measure {
@@ -403,7 +403,7 @@ final class NanoTDFTests: XCTestCase {
         // wait
         Thread.sleep(forTimeInterval: 2.0)
         // Optionally, disconnect when done or needed
-         webSocketManager.disconnect()
+        webSocketManager.disconnect()
     }
 }
 
@@ -426,78 +426,76 @@ extension Data {
 }
 
 class SymmetricAndPayloadConfigTests: XCTestCase {
-
     func testToDataWithSignature() {
-        let config = SymmetricAndPayloadConfig(hasSignature: true, signatureECCMode: .secp256r1, symmetricCipherEnum: .GCM_128)
+        let config = SignatureAndPayloadConfig(signed: true, signatureCurve: .secp256r1, payloadCipher: .aes256GCM128)
         let data = config.toData()
         XCTAssertEqual(data.count, 1)
-        XCTAssertEqual(data[0], 0b10000101) // 0b10000000 (HAS_SIGNATURE) | 0b00000000 (Signature ECC Mode secp256r1) | 0b00000101 (Symmetric Cipher Enum GCM_128)
+        XCTAssertEqual(data[0], 0b1000_0101) // 0b10000000 (HAS_SIGNATURE) | 0b00000000 (Signature ECC Mode secp256r1) | 0b00000101 (Symmetric Cipher Enum GCM_128)
     }
 
     func testToDataWithoutSignature() {
-        let config = SymmetricAndPayloadConfig(hasSignature: false, signatureECCMode: nil, symmetricCipherEnum: .GCM_128)
+        let config = SignatureAndPayloadConfig(signed: false, signatureCurve: nil, payloadCipher: .aes256GCM128)
         let data = config.toData()
         XCTAssertEqual(data.count, 1)
-        XCTAssertEqual(data[0], 0b00000101) // 0b00000101 (Symmetric Cipher Enum GCM_128)
+        XCTAssertEqual(data[0], 0b0000_0101) // 0b00000101 (Symmetric Cipher Enum GCM_128)
     }
 
     func testParseWithSignature() {
-        let data = Data([0b10000101])
-        let config = SymmetricAndPayloadConfig.parse(from: data)
+        let data = Data([0b1000_0101])
+        let config = SignatureAndPayloadConfig.parse(from: data)
         XCTAssertNotNil(config)
-        XCTAssertEqual(config?.hasSignature, true)
-        XCTAssertEqual(config?.signatureECCMode, .secp256r1)
-        XCTAssertEqual(config?.symmetricCipherEnum, .GCM_128)
+        XCTAssertEqual(config?.signed, true)
+        XCTAssertEqual(config?.signatureCurve, .secp256r1)
+        XCTAssertEqual(config?.payloadCipher, .aes256GCM128)
     }
 
     func testParseWithoutSignature() {
-        let data = Data([0b00000101])
-        let config = SymmetricAndPayloadConfig.parse(from: data)
+        let data = Data([0b0000_0101])
+        let config = SignatureAndPayloadConfig.parse(from: data)
         XCTAssertNotNil(config)
-        XCTAssertEqual(config?.hasSignature, false)
-        XCTAssertNil(config?.signatureECCMode)
-        XCTAssertEqual(config?.symmetricCipherEnum, .GCM_128)
+        XCTAssertEqual(config?.signed, false)
+        XCTAssertNil(config?.signatureCurve)
+        XCTAssertEqual(config?.payloadCipher, .aes256GCM128)
     }
 
     func testParseInvalidData() {
-        let data = Data([0b11111111]) // Invalid combination
-        let config = SymmetricAndPayloadConfig.parse(from: data)
+        let data = Data([0b1111_1111]) // Invalid combination
+        let config = SignatureAndPayloadConfig.parse(from: data)
         XCTAssertNil(config)
     }
 }
 
 // Extend SymmetricAndPayloadConfig to include a parsing method
-extension SymmetricAndPayloadConfig {
-    static func parse(from data: Data) -> SymmetricAndPayloadConfig? {
+extension SignatureAndPayloadConfig {
+    static func parse(from data: Data) -> SignatureAndPayloadConfig? {
         guard data.count == 1 else { return nil }
 
         let byte = data[0]
-        let hasSignature = (byte & 0b10000000) != 0
-        let signatureECCMode = ECDSAParams(rawValue: (byte & 0b01110000) >> 4)
-        let symmetricCipherEnum = SymmetricCiphers(rawValue: byte & 0b00001111)
-      
+        let signed = (byte & 0b1000_0000) != 0
+        let signatureECCMode = Curve(rawValue: (byte & 0b0111_0000) >> 4)
+        let symmetricCipherEnum = Cipher(rawValue: byte & 0b0000_1111)
+
         guard let signatureMode = signatureECCMode, let symmetricCipher = symmetricCipherEnum else {
             return nil
         }
 
-        if !hasSignature {
-            return SymmetricAndPayloadConfig(hasSignature: hasSignature, signatureECCMode: nil, symmetricCipherEnum: symmetricCipher)
+        if !signed {
+            return SignatureAndPayloadConfig(signed: signed, signatureCurve: nil, payloadCipher: symmetricCipher)
         }
-        return SymmetricAndPayloadConfig(hasSignature: hasSignature, signatureECCMode: signatureMode, symmetricCipherEnum: symmetricCipher)
+        return SignatureAndPayloadConfig(signed: signed, signatureCurve: signatureMode, payloadCipher: symmetricCipher)
     }
 }
 
 class PayloadTests: XCTestCase {
-
     func testToData() {
         let payload = Payload(length: 12345, iv: Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C]), ciphertext: Data([0x0D, 0x0E, 0x0F, 0x10]), mac: Data([0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20]))
         let data = payload.toData()
-        
+
         let expectedData = Data([0x00, 0x30, 0x39]) +
-                           Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C]) +
-                           Data([0x0D, 0x0E, 0x0F, 0x10]) +
-                           Data([0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20])
-        
+            Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C]) +
+            Data([0x0D, 0x0E, 0x0F, 0x10]) +
+            Data([0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20])
+
         XCTAssertEqual(data, expectedData)
     }
 
@@ -518,7 +516,7 @@ class PayloadTests: XCTestCase {
         let parser = BinaryParser(data: binaryData!)
         do {
             let header = try parser.parseHeader()
-            let payload = try parser.parsePayload(config: header.payloadSigMode)
+            let payload = try parser.parsePayload(config: header.payloadSignatureConfig)
             XCTAssertEqual(payload.iv.count, 3)
             XCTAssertEqual(payload.mac.count, 16)
         } catch {
@@ -544,7 +542,7 @@ class PayloadTests: XCTestCase {
         let parser = BinaryParser(data: binaryData!)
         do {
             let header = try parser.parseHeader()
-            let payload = try parser.parsePayload(config: header.payloadSigMode)
+            let payload = try parser.parsePayload(config: header.payloadSignatureConfig)
             print(payload)
             XCTFail("Negative should have failed")
         } catch {

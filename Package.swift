@@ -7,12 +7,13 @@ let package = Package(
         .macOS(.v13), // Update to the latest macOS version
         .iOS(.v16), // Update to the latest iOS version
         .tvOS(.v16), // Update to the latest tvOS version
-        .watchOS(.v9) // Update to the latest watchOS version
+        .watchOS(.v9), // Update to the latest watchOS version
     ],
     products: [
         .library(
             name: "NanoTDF",
-            targets: ["NanoTDF"]),
+            targets: ["NanoTDF"]
+        ),
     ],
     dependencies: [
         // Dependencies
@@ -21,10 +22,12 @@ let package = Package(
         .target(
             name: "NanoTDF",
             dependencies: [],
-            path: "NanoTDF"),
+            path: "NanoTDF"
+        ),
         .testTarget(
             name: "Tests",
             dependencies: ["NanoTDF"],
-            path: "Tests")
+            path: "Tests"
+        ),
     ]
 )
