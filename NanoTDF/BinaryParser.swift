@@ -87,9 +87,10 @@ class BinaryParser {
             print("Failed to read Embedded Policy plaintext / ciphertext")
             return nil
         }
-//        let keyAccess = policyType == .embeddedEncryptedWithPolicyKeyAccess ? readPolicyKeyAccess(bindingMode: bindingMode) : nil
+        // Policy Key Access
+        let keyAccess = policyType == .embeddedEncryptedWithPolicyKeyAccess ? readPolicyKeyAccess(bindingMode: bindingMode) : nil
 
-        return EmbeddedPolicyBody(length: plaintextCiphertext.count, body: plaintextCiphertext, keyAccess: nil)
+        return EmbeddedPolicyBody(length: plaintextCiphertext.count, body: plaintextCiphertext, keyAccess: keyAccess)
     }
 
     func readEccAndBindingMode() -> PolicyBindingConfig? {

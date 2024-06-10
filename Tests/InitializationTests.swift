@@ -17,7 +17,7 @@ final class InitializationTests: XCTestCase {
         // Put teardown code here. This method is called after the invocation of each test method in the class.
     }
 
-    func testInitializeSmallNanoTDF_Positive() throws {
+    func testInitializeSmallNanoTDFPositive() throws {
         let locator = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
         XCTAssertNotNil(locator)
         let nanoTDF = initializeSmallNanoTDF(kasResourceLocator: locator!)
@@ -33,7 +33,7 @@ final class InitializationTests: XCTestCase {
         XCTAssertNil(nanoTDF.signature)
     }
 
-    func testInitializeSmallNanoTDF_Negative() throws {
+    func testInitializeSmallNanoTDFNegative() throws {
         // out of spec - too small
         var locator = ResourceLocator(protocolEnum: .http, body: "")
         XCTAssertNil(locator)
@@ -58,17 +58,16 @@ final class InitializationTests: XCTestCase {
         XCTAssertNil(header)
     }
 
-    func testSmallNanoTDF_Size() throws {
+    func testSmallNanoTDFSize() throws {
         let locator = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
         XCTAssertNotNil(locator)
         let nanoTDF = initializeSmallNanoTDF(kasResourceLocator: locator!)
         let data = nanoTDF.toData()
-        // TODO: use NanoTDFDecorator
         print("data.count", data.count)
         XCTAssertLessThan(data.count, 240)
     }
 
-    func testSmallNanoTDF_Performance() throws {
+    func testSmallNanoTDFPerformance() throws {
         // This is an example of a performance test case.
         measure {
             // Put the code you want to measure the time of here.

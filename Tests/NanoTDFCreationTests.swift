@@ -63,8 +63,4 @@ class NanoTDFCreationTests: XCTestCase {
         print(snanoTDF)
         XCTAssertEqual(payload.length, 43)
     }
-
-    func testCreateNanoTDFWithInvalidKasMetadata() {
-
-    }
 }

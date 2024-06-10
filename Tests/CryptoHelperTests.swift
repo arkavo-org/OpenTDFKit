@@ -5,7 +5,7 @@ import XCTest
 @testable import NanoTDF
 
 final class CryptoHelperTests: XCTestCase {
-    func testInitializeSmallNanoTDF_Positive() throws {
+    func testInitializeSmallNanoTDFPositive() throws {
         // Step 1: Initial Key Exchange
         // Recipient Compressed Public Key
         let recipientBase64 = "A2ifhGOpE0DjR4R0FPXvZ6YBOrcjayIpxwtxeXTudOts"
