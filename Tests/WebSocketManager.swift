@@ -5,8 +5,8 @@
 //  Created by Paul Flynn on 5/10/24.
 //
 
-import Foundation
 import CryptoKit
+import Foundation
 
 struct PublicKeyMessage: Codable {
     let messageType: Data
@@ -39,13 +39,13 @@ class WebSocketManager {
     private func receiveMessage() {
         webSocketTask?.receive { [weak self] result in
             switch result {
-            case .failure(let error):
+            case let .failure(error):
                 print("Failed to receive message: \(error)")
-            case .success(let message):
+            case let .success(message):
                 switch message {
-                case .string(let text):
+                case let .string(text):
                     print("Received string: \(text)")
-                case .data(let data):
+                case let .data(data):
                     print("Received data: \(data)")
                 @unknown default:
                     fatalError()
@@ -77,10 +77,9 @@ class WebSocketManager {
             }
         }
     }
-    
+
     func disconnect() {
         // Close the WebSocket connection
         webSocketTask?.cancel(with: .goingAway, reason: nil)
     }
 }
-
