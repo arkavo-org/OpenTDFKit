@@ -373,7 +373,7 @@ func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) thro
     let curve: Curve = .secp256r1
     var ephemeralPublicKeyData: Data = Data()
     if let ephemeralPublicKey = ephemeralPublicKey as? P256.KeyAgreement.PublicKey {
-        ephemeralPublicKeyData = ephemeralPublicKey.x963Representation
+        ephemeralPublicKeyData = ephemeralPublicKey.compressedRepresentation
     }
     print("ephemeralPublicKeyData.count", ephemeralPublicKeyData.count)
     let header = Header(magicNumber: magicNumber,

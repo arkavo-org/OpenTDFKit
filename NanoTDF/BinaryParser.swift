@@ -87,7 +87,7 @@ class BinaryParser {
             print("Failed to read Embedded Policy plaintext / ciphertext")
             return nil
         }
-        let keyAccess = policyType == .embeddedEncryptedWithPolicyKeyAccess ? readPolicyKeyAccess(bindingMode: bindingMode) : nil
+//        let keyAccess = policyType == .embeddedEncryptedWithPolicyKeyAccess ? readPolicyKeyAccess(bindingMode: bindingMode) : nil
 
         return EmbeddedPolicyBody(length: plaintextCiphertext.count, body: plaintextCiphertext, keyAccess: nil)
     }
@@ -138,8 +138,6 @@ class BinaryParser {
         var bindingSize: Int
         print("bindingMode", bindingMode)
         if bindingMode.ecdsaBinding {
-            bindingSize = 64
-        } else {
             switch bindingMode.curve {
             case .secp256r1, .xsecp256k1:
                 bindingSize = 64
@@ -148,11 +146,11 @@ class BinaryParser {
             case .secp521r1:
                 bindingSize = 132
             }
+        } else {
+            // GMAC Tag Binding
+            bindingSize = 16
         }
         print("bindingSize", bindingSize)
-        if bindingMode.ecdsaBinding {
-            bindingSize = 64
-        }
         return read(length: bindingSize)
     }
 

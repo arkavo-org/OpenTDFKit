@@ -22,6 +22,7 @@ class NanoTDFCreationTests: XCTestCase {
         XCTAssertNotNil(nanoTDF, "NanoTDF should not be nil")
         XCTAssertNotNil(nanoTDF.header, "Header should not be nil")
         XCTAssertNotNil(nanoTDF.header.policy.remote, "Policy body should not be nil")
+        XCTAssertNotNil(nanoTDF.header.ephemeralPublicKey, "Ephemeral PublicKey should not be nil")
         XCTAssertNotNil(nanoTDF.payload, "Payload should not be nil")
         XCTAssertNotNil(nanoTDF.payload.iv, "Payload nonce should not be nil")
         XCTAssertNotNil(nanoTDF.payload.ciphertext, "Payload ciphertext should not be nil")
@@ -56,11 +57,11 @@ class NanoTDFCreationTests: XCTestCase {
         // Ephemeral Key
         let ephemeralKeyHexString = header.ephemeralPublicKey.map { String(format: "%02x", $0) }.joined(separator: " ")
         print("Ephemeral Key:", ephemeralKeyHexString)
-        // FIXME payload length is incorrect
-//        let payload = try parser.parsePayload(config: header.payloadSignatureConfig)
-//        let snanoTDF = NanoTDF(header: header, payload: payload, signature: nil)
-//        // Print final the signature NanoTDF
-//        print(snanoTDF)
+        let payload = try parser.parsePayload(config: header.payloadSignatureConfig)
+        let snanoTDF = NanoTDF(header: header, payload: payload, signature: nil)
+        // Print final the signature NanoTDF
+        print(snanoTDF)
+        XCTAssertEqual(payload.length, 43)
     }
 
     func testCreateNanoTDFWithInvalidKasMetadata() {
