@@ -52,6 +52,12 @@ enum CryptoHelper {
         return symmetricKey
     }
 
+    // Generate GMAC tag for the policy body
+    static func createGMACBinding(policyBody: Data, symmetricKey: SymmetricKey) throws -> Data {
+        let gmac = try AES.GCM.seal(policyBody, using: symmetricKey)
+        return gmac.tag
+    }
+    
     // Step 5: Generate nonce (IV)
     static func generateNonce(length: Int = 12) -> Data {
         var nonce = Data(count: length)
@@ -59,6 +65,19 @@ enum CryptoHelper {
         return nonce
     }
 
+    // Pad or trim nonce (IV) to the required length
+    static func adjustNonce(_ nonce: Data, to length: Int) -> Data {
+        if nonce.count == length {
+            return nonce
+        } else if nonce.count > length {
+            return nonce.prefix(length)
+        } else {
+            var paddedNonce = nonce
+            paddedNonce.append(contentsOf: [UInt8](repeating: 0, count: length - nonce.count))
+            return paddedNonce
+        }
+    }
+    
     // Step 6: Encrypt payload using symmetric key and nonce (IV)
     static func encryptPayload(plaintext: Data, symmetricKey: SymmetricKey, nonce: Data) throws -> (ciphertext: Data, tag: Data) {
         let sealedBox = try AES.GCM.seal(plaintext, using: symmetricKey, nonce: AES.GCM.Nonce(data: nonce))

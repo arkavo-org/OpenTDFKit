@@ -10,6 +10,7 @@
 		DA07A6952C165A83003DC210 /* CryptoHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA07A6942C165A83003DC210 /* CryptoHelper.swift */; };
 		DA07A6972C165ABB003DC210 /* CryptoHelperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA07A6962C165ABB003DC210 /* CryptoHelperTests.swift */; };
 		DA07A6992C166E7E003DC210 /* BinaryParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA07A6982C166E7E003DC210 /* BinaryParser.swift */; };
+		DA07A69B2C167904003DC210 /* NanoTDFCreationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA07A69A2C167904003DC210 /* NanoTDFCreationTests.swift */; };
 		DA2B7B1B2BF1BB19002F3150 /* NanoTDFTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2B7B162BF1BB19002F3150 /* NanoTDFTests.swift */; };
 		DA2B7B1E2BF1BB19002F3150 /* WebSocketManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2B7B192BF1BB19002F3150 /* WebSocketManager.swift */; };
 		DA3C23F42BE0765100B4B883 /* NanoTDF.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA3C23F32BE0765100B4B883 /* NanoTDF.swift */; };
@@ -43,6 +44,7 @@
 		DA07A6942C165A83003DC210 /* CryptoHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoHelper.swift; sourceTree = "<group>"; };
 		DA07A6962C165ABB003DC210 /* CryptoHelperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoHelperTests.swift; sourceTree = "<group>"; };
 		DA07A6982C166E7E003DC210 /* BinaryParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinaryParser.swift; sourceTree = "<group>"; };
+		DA07A69A2C167904003DC210 /* NanoTDFCreationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NanoTDFCreationTests.swift; sourceTree = "<group>"; };
 		DA2B7B162BF1BB19002F3150 /* NanoTDFTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = NanoTDFTests.swift; sourceTree = "<group>"; };
 		DA2B7B192BF1BB19002F3150 /* WebSocketManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WebSocketManager.swift; sourceTree = "<group>"; };
 		DA3C23F02BE0765100B4B883 /* libNanoTDF.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libNanoTDF.a; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -77,6 +79,7 @@
 				DABEB41F2C160B61004540E6 /* InitializationTests.swift */,
 				DA2B7B192BF1BB19002F3150 /* WebSocketManager.swift */,
 				DA07A6962C165ABB003DC210 /* CryptoHelperTests.swift */,
+				DA07A69A2C167904003DC210 /* NanoTDFCreationTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -213,6 +216,7 @@
 				DA2B7B1B2BF1BB19002F3150 /* NanoTDFTests.swift in Sources */,
 				DABEB4202C160B61004540E6 /* InitializationTests.swift in Sources */,
 				DA07A6972C165ABB003DC210 /* CryptoHelperTests.swift in Sources */,
+				DA07A69B2C167904003DC210 /* NanoTDFCreationTests.swift in Sources */,
 				DA2B7B1E2BF1BB19002F3150 /* WebSocketManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

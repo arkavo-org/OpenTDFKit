@@ -22,6 +22,10 @@ final class CryptoHelperTests: XCTestCase {
                 // Step 4: Derive symmetric key
                 let symmetricKey = CryptoHelper.deriveSymmetricKey(sharedSecret: sharedSecret)
                 print("Symmetric Key: \(symmetricKey)")
+                // Create GMAC binding for the policy body
+                let policyBody = "classification:secret".data(using: .utf8)!
+                let gmacTag = try CryptoHelper.createGMACBinding(policyBody: policyBody, symmetricKey: symmetricKey)
+                print("GMAC Tag: \(gmacTag.base64EncodedString())")
                 // Step 5: Generate nonce (IV)
                 let nonce = CryptoHelper.generateNonce()
                 print("Nonce (IV): \(nonce)")

@@ -52,7 +52,7 @@ class BinaryParser {
                 print("Failed to read Remote Policy binding")
                 return nil
             }
-            return Policy(type: .remote, body: nil, remote: resourceLocator, binding: binding, keyAccess: nil)
+            return Policy(type: .remote, body: nil, remote: resourceLocator, binding: binding)
         case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
             let policyData = readEmbeddedPolicyBody(policyType: policyType, bindingMode: bindingMode)
             // Binding
@@ -60,7 +60,7 @@ class BinaryParser {
                 print("Failed to read Remote Policy binding")
                 return nil
             }
-            return Policy(type: .embeddedPlaintext, body: policyData?.plaintextCiphertext, remote: nil, binding: binding, keyAccess: policyData?.policyKeyAccess)
+            return Policy(type: .embeddedPlaintext, body: policyData, remote: nil, binding: binding)
         }
     }
 
@@ -80,7 +80,7 @@ class BinaryParser {
         // if no policy added then no read
         // Note 3.4.2.3.2 Body for Embedded Policy states Minimum Length is 1
         if contentLength == 0 {
-            return EmbeddedPolicyBody(contentLength: contentLength, plaintextCiphertext: nil, policyKeyAccess: nil)
+            return EmbeddedPolicyBody(length: 1, body: Data([0x00]), keyAccess: nil)
         }
 
         guard let plaintextCiphertext = read(length: Int(contentLength)) else {
@@ -89,7 +89,7 @@ class BinaryParser {
         }
         let keyAccess = policyType == .embeddedEncryptedWithPolicyKeyAccess ? readPolicyKeyAccess(bindingMode: bindingMode) : nil
 
-        return EmbeddedPolicyBody(contentLength: contentLength, plaintextCiphertext: plaintextCiphertext, policyKeyAccess: keyAccess)
+        return EmbeddedPolicyBody(length: plaintextCiphertext.count, body: plaintextCiphertext, keyAccess: nil)
     }
 
     func readEccAndBindingMode() -> PolicyBindingConfig? {
@@ -101,7 +101,7 @@ class BinaryParser {
         }
         let eccModeHex = String(format: "%02x", eccAndBindingMode)
         print("ECC Mode Hex:", eccModeHex)
-        let bound = (eccAndBindingMode & (1 << 7)) != 0
+        let ecdsaBinding = (eccAndBindingMode & (1 << 7)) != 0
         let ephemeralECCParamsEnumValue = Curve(rawValue: eccAndBindingMode & 0x7)
 
         guard let ephemeralECCParamsEnum = ephemeralECCParamsEnumValue else {
@@ -109,10 +109,10 @@ class BinaryParser {
             return nil
         }
 
-        print("bound: \(bound)")
+        print("ecdsaBinding: \(ecdsaBinding)")
         print("ephemeralECCParamsEnum: \(ephemeralECCParamsEnum)")
 
-        return PolicyBindingConfig(ecdsaBinding: bound, curve: ephemeralECCParamsEnum)
+        return PolicyBindingConfig(ecdsaBinding: ecdsaBinding, curve: ephemeralECCParamsEnum)
     }
 
     func readSymmetricAndPayloadConfig() -> SignatureAndPayloadConfig? {
@@ -211,15 +211,15 @@ class BinaryParser {
     }
 
     func parsePayload(config: SignatureAndPayloadConfig) throws -> Payload {
-        guard let lengthData = read(length: FieldSize.payloadCipherTextSize)
+        guard let lengthData = read(length: FieldSize.payloadLengthSize)
         else {
             throw ParsingError.invalidFormat
         }
-        var length: UInt32 = 0
-        let count = lengthData.count
-        for i in 0 ..< count {
-            length += UInt32(lengthData[i]) << (8 * (count - 1 - i))
-        }
+        let byte1 = UInt32(lengthData[0]) << 16
+        let byte2 = UInt32(lengthData[1]) << 8
+        let byte3 = UInt32(lengthData[2])
+        let length: UInt32 =  byte1 | byte2 | byte3
+        print("parsePayload length", length)
         // IV nonce
         guard let iv = read(length: FieldSize.payloadIvSize)
         else {
@@ -249,7 +249,7 @@ class BinaryParser {
         guard let ciphertext = read(length: cipherTextLength),
               let payloadMAC = read(length: payloadMACSize)
         else {
-            throw ParsingError.invalidFormat
+            throw ParsingError.invalidPayload
         }
         let payload = Payload(length: length, iv: iv, ciphertext: ciphertext, mac: payloadMAC)
         return payload
@@ -300,7 +300,7 @@ enum FieldSize {
     static let maxPolicySize = 257
     static let minEphemeralKeySize = 33
     static let maxEphemeralKeySize = 133
-    static let payloadCipherTextSize = 3
+    static let payloadLengthSize = 3
     static let payloadIvSize = 3
     static let minPayloadMacSize = 8
     static let maxPayloadMacSize = 32

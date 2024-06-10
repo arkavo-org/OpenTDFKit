@@ -27,7 +27,7 @@ final class InitializationTests: XCTestCase {
         XCTAssertEqual(nanoTDF.header.kas.protocolEnum, locator!.protocolEnum)
         XCTAssertEqual(nanoTDF.header.kas.body, locator!.body)
         // Validate the Payload
-        XCTAssertEqual(nanoTDF.payload.length, 1)
+        XCTAssertEqual(nanoTDF.payload.length, 7)
         XCTAssertEqual(nanoTDF.payload.iv, Data([0x07, 0x08, 0x09]))
         // As there signature is nil in this scenario
         XCTAssertNil(nanoTDF.signature)
@@ -53,8 +53,7 @@ final class InitializationTests: XCTestCase {
                             policy: Policy(type: .embeddedPlaintext,
                                            body: nil,
                                            remote: nil,
-                                           binding: nil,
-                                           keyAccess: nil),
+                                           binding: nil),
                             ephemeralKey: Data([0x04, 0x05, 0x06]))
         XCTAssertNil(header)
     }
