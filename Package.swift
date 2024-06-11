@@ -1,13 +1,13 @@
-// swift-tools-version:5.8
+// swift-tools-version:6.0
 import PackageDescription
 
 let package = Package(
     name: "NanoTDF",
     platforms: [
-        .macOS(.v13), // Update to the latest macOS version
-        .iOS(.v16), // Update to the latest iOS version
-        .tvOS(.v16), // Update to the latest tvOS version
-        .watchOS(.v9), // Update to the latest watchOS version
+        .macOS(.v15),
+        .iOS(.v18),
+        .tvOS(.v18),
+        .watchOS(.v11),
     ],
     products: [
         .library(
