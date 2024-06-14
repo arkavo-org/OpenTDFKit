@@ -18,9 +18,11 @@ let package = Package(
     targets: [
         .target(
             name: "OpenTDFKit",
-            dependencies: []),
+            dependencies: [],
+            path: "OpenTDFKit"),
         .testTarget(
             name: "OpenTDFKitTests",
-            dependencies: ["OpenTDFKit"]),
+            dependencies: ["OpenTDFKit"],
+            path: "OpenTDFKitTests")
     ]
 )
