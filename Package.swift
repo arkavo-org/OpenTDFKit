@@ -20,10 +20,8 @@ let package = Package(
         .target(
             name: "OpenTDFKit",
             dependencies: ["BinaryParser", "CryptoHelper", "KASWebSocket", "NanoTDF"]),
-            path: "OpenTDFKit",
         .testTarget(
             name: "OpenTDFKitTests",
             dependencies: ["OpenTDFKit"]),
-            path: "OpenTDFKitTests",
     ]
 )
