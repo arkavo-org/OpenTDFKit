@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 import XCTest
 
-@testable import NanoTDF
+@testable import OpenTDFKit
 
 final class CryptoHelperTests: XCTestCase {
     func testInitializeSmallNanoTDFPositive() throws {

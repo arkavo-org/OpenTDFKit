@@ -1,12 +1,5 @@
-//
-//  NanoTDFTests.swift
-//  Tests
-//
-//  Created by Paul Flynn on 4/29/24.
-//
-
+@testable import OpenTDFKit
 import CryptoKit
-@testable import NanoTDF
 import XCTest
 
 final class NanoTDFTests: XCTestCase {
@@ -357,33 +350,30 @@ final class NanoTDFTests: XCTestCase {
     }
 
     func testCreateAddVerifySignature() throws {
-        throw XCTSkip("revise during creation feature")
-        // Create a NanoTDF without a signature
-        let header = Header(magicNumber: Data([0x00, 0x01]), version: Data([0x01]), kas: ResourceLocator(protocolEnum: .https, body: "example.com")!, eccMode: PolicyBindingConfig(ecdsaBinding: true, curve: .secp256r1), payloadSigMode: SignatureAndPayloadConfig(signed: false, signatureCurve: .secp256r1, payloadCipher: .aes256GCM128), policy: Policy(type: .embeddedPlaintext, body: nil, remote: nil, binding: Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08])), ephemeralKey: Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20]))
-        let payload = Payload(length: 123, iv: Data([0x01, 0x02, 0x03]), ciphertext: Data([0x01, 0x02, 0x03, 0x04, 0x05]), mac: Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10]))
-        var nanoTDF = NanoTDF(header: header!, payload: payload, signature: nil)
-
+        let locator = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
+        XCTAssertNotNil(locator)
+        var nanoTDF = initializeSmallNanoTDF(kasResourceLocator: locator!)
         // Generate an ECDSA private key
         let privateKey = P256.Signing.PrivateKey()
 
         // Add the signature to the NanoTDF
-        try addSignatureToNanoTDF(nanoTDF: &nanoTDF, privateKey: privateKey, config: header!.payloadSignatureConfig)
-
-        // Serialize the NanoTDF
-        let serializedData = nanoTDF.toData()
-
-        // Parse the NanoTDF
-        let parser = BinaryParser(data: serializedData)
-        let parsedHeader = try parser.parseHeader()
-        _ = try parser.parsePayload(config: parsedHeader.payloadSignatureConfig)
-        let signature = try parser.parseSignature(config: parsedHeader.payloadSignatureConfig)
-
-        // Verify the parsed NanoTDF
-        XCTAssertEqual(parsedHeader.payloadSignatureConfig.signed, true)
-        XCTAssertEqual(parsedHeader.payloadSignatureConfig.signatureCurve, .secp256r1)
-        XCTAssertEqual(parsedHeader.payloadSignatureConfig.payloadCipher, .aes256GCM128)
-        XCTAssertEqual(signature?.publicKey, privateKey.publicKey.rawRepresentation)
-        XCTAssertEqual(signature?.signature, nanoTDF.signature?.signature)
+        try addSignatureToNanoTDF(nanoTDF: &nanoTDF, privateKey: privateKey, config: nanoTDF.header.payloadSignatureConfig)
+        XCTAssertEqual(64, nanoTDF.signature?.signature.count)
+//        // Serialize the NanoTDF
+//        let serializedData = nanoTDF.toData()
+//
+//        // Parse the NanoTDF
+//        let parser = BinaryParser(data: serializedData)
+//        let parsedHeader = try parser.parseHeader()
+//        _ = try parser.parsePayload(config: parsedHeader.payloadSignatureConfig)
+//        let signature = try parser.parseSignature(config: parsedHeader.payloadSignatureConfig)
+//
+//        // Verify the parsed NanoTDF
+//        XCTAssertEqual(parsedHeader.payloadSignatureConfig.signed, true)
+//        XCTAssertEqual(parsedHeader.payloadSignatureConfig.signatureCurve, .secp256r1)
+//        XCTAssertEqual(parsedHeader.payloadSignatureConfig.payloadCipher, .aes256GCM128)
+//        XCTAssertEqual(signature?.publicKey, privateKey.publicKey.rawRepresentation)
+//        XCTAssertEqual(signature?.signature, nanoTDF.signature?.signature)
     }
 
     func testPerformanceExample() throws {
@@ -391,19 +381,6 @@ final class NanoTDFTests: XCTestCase {
         measure {
             // Put the code you want to measure the time of here.
         }
-    }
-
-    func testWebSocket() throws {
-        throw XCTSkip("for testing backend")
-        let webSocketManager = WebSocketManager()
-        // Connect to the WebSocket server
-        webSocketManager.connect()
-        // Send a message
-        webSocketManager.sendPublicKey()
-        // wait
-        Thread.sleep(forTimeInterval: 2.0)
-        // Optionally, disconnect when done or needed
-        webSocketManager.disconnect()
     }
 }
 

@@ -1,11 +1,4 @@
-//
-//  InitializationTests.swift
-//  Tests
-//
-//  Created by Paul Flynn on 6/9/24.
-//
-
-@testable import NanoTDF
+@testable import OpenTDFKit
 import XCTest
 
 final class InitializationTests: XCTestCase {

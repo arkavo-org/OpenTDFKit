@@ -1,0 +1,547 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		DA77AD292C17FBD500FE7E7E /* KASRest.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA77AD282C17FBCD00FE7E7E /* KASRest.swift */; };
+		DAAF18302C18EEBF00F3A22E /* CryptoHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAAF182F2C18EEBF00F3A22E /* CryptoHelper.swift */; };
+		DAAF18322C18EED800F3A22E /* NanoTDF.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAAF18312C18EED800F3A22E /* NanoTDF.swift */; };
+		DAAF18342C18F58700F3A22E /* BinaryParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAAF18332C18F58700F3A22E /* BinaryParser.swift */; };
+		DAAF18362C18F6EA00F3A22E /* KASWebSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAAF18352C18F6EA00F3A22E /* KASWebSocket.swift */; };
+		DAAF18382C18F87800F3A22E /* CryptoHelperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAAF18372C18F87800F3A22E /* CryptoHelperTests.swift */; };
+		DAAF183A2C18FA6B00F3A22E /* NanoTDFCreationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAAF18392C18FA6B00F3A22E /* NanoTDFCreationTests.swift */; };
+		DAAF183C2C18FAC600F3A22E /* InitializationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAAF183B2C18FAC600F3A22E /* InitializationTests.swift */; };
+		DAAF183E2C18FB7800F3A22E /* NanoTDFTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAAF183D2C18FB7800F3A22E /* NanoTDFTests.swift */; };
+		DAAF18402C18FBCA00F3A22E /* KASWebsocketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAAF183F2C18FBCA00F3A22E /* KASWebsocketTests.swift */; };
+		DADB7CDD2C17F1CE000B110D /* OpenTDFKit.docc in Sources */ = {isa = PBXBuildFile; fileRef = DADB7CDC2C17F1CE000B110D /* OpenTDFKit.docc */; };
+		DADB7CE32C17F1CE000B110D /* OpenTDFKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DADB7CD82C17F1CE000B110D /* OpenTDFKit.framework */; };
+		DADB7CE82C17F1CE000B110D /* OpenTDFKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DADB7CE72C17F1CE000B110D /* OpenTDFKitTests.swift */; };
+		DADB7CE92C17F1CE000B110D /* OpenTDFKit.h in Headers */ = {isa = PBXBuildFile; fileRef = DADB7CDB2C17F1CE000B110D /* OpenTDFKit.h */; settings = {ATTRIBUTES = (Public, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		DADB7CE42C17F1CE000B110D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = DADB7CCF2C17F1CE000B110D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DADB7CD72C17F1CE000B110D;
+			remoteInfo = OpenTDFKit;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		DA77AD282C17FBCD00FE7E7E /* KASRest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KASRest.swift; sourceTree = "<group>"; };
+		DAAF182E2C18ECC000F3A22E /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		DAAF182F2C18EEBF00F3A22E /* CryptoHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoHelper.swift; sourceTree = "<group>"; };
+		DAAF18312C18EED800F3A22E /* NanoTDF.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NanoTDF.swift; sourceTree = "<group>"; };
+		DAAF18332C18F58700F3A22E /* BinaryParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinaryParser.swift; sourceTree = "<group>"; };
+		DAAF18352C18F6EA00F3A22E /* KASWebSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KASWebSocket.swift; sourceTree = "<group>"; };
+		DAAF18372C18F87800F3A22E /* CryptoHelperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoHelperTests.swift; sourceTree = "<group>"; };
+		DAAF18392C18FA6B00F3A22E /* NanoTDFCreationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NanoTDFCreationTests.swift; sourceTree = "<group>"; };
+		DAAF183B2C18FAC600F3A22E /* InitializationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InitializationTests.swift; sourceTree = "<group>"; };
+		DAAF183D2C18FB7800F3A22E /* NanoTDFTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NanoTDFTests.swift; sourceTree = "<group>"; };
+		DAAF183F2C18FBCA00F3A22E /* KASWebsocketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KASWebsocketTests.swift; sourceTree = "<group>"; };
+		DADB7CD82C17F1CE000B110D /* OpenTDFKit.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = OpenTDFKit.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		DADB7CDB2C17F1CE000B110D /* OpenTDFKit.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = OpenTDFKit.h; sourceTree = "<group>"; };
+		DADB7CDC2C17F1CE000B110D /* OpenTDFKit.docc */ = {isa = PBXFileReference; lastKnownFileType = folder.documentationcatalog; path = OpenTDFKit.docc; sourceTree = "<group>"; };
+		DADB7CE22C17F1CE000B110D /* OpenTDFKitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OpenTDFKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		DADB7CE72C17F1CE000B110D /* OpenTDFKitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenTDFKitTests.swift; sourceTree = "<group>"; };
+		DADB7CF22C17F220000B110D /* Package.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Package.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		DADB7CD52C17F1CE000B110D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DADB7CDF2C17F1CE000B110D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DADB7CE32C17F1CE000B110D /* OpenTDFKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		DADB7CCE2C17F1CE000B110D = {
+			isa = PBXGroup;
+			children = (
+				DAAF182E2C18ECC000F3A22E /* README.md */,
+				DADB7CF22C17F220000B110D /* Package.swift */,
+				DADB7CDA2C17F1CE000B110D /* OpenTDFKit */,
+				DADB7CE62C17F1CE000B110D /* OpenTDFKitTests */,
+				DADB7CD92C17F1CE000B110D /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		DADB7CD92C17F1CE000B110D /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				DADB7CD82C17F1CE000B110D /* OpenTDFKit.framework */,
+				DADB7CE22C17F1CE000B110D /* OpenTDFKitTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		DADB7CDA2C17F1CE000B110D /* OpenTDFKit */ = {
+			isa = PBXGroup;
+			children = (
+				DAAF18312C18EED800F3A22E /* NanoTDF.swift */,
+				DAAF18332C18F58700F3A22E /* BinaryParser.swift */,
+				DAAF182F2C18EEBF00F3A22E /* CryptoHelper.swift */,
+				DA77AD282C17FBCD00FE7E7E /* KASRest.swift */,
+				DAAF18352C18F6EA00F3A22E /* KASWebSocket.swift */,
+				DADB7CDB2C17F1CE000B110D /* OpenTDFKit.h */,
+				DADB7CDC2C17F1CE000B110D /* OpenTDFKit.docc */,
+			);
+			path = OpenTDFKit;
+			sourceTree = "<group>";
+		};
+		DADB7CE62C17F1CE000B110D /* OpenTDFKitTests */ = {
+			isa = PBXGroup;
+			children = (
+				DADB7CE72C17F1CE000B110D /* OpenTDFKitTests.swift */,
+				DAAF18372C18F87800F3A22E /* CryptoHelperTests.swift */,
+				DAAF183B2C18FAC600F3A22E /* InitializationTests.swift */,
+				DAAF183F2C18FBCA00F3A22E /* KASWebsocketTests.swift */,
+				DAAF183D2C18FB7800F3A22E /* NanoTDFTests.swift */,
+				DAAF18392C18FA6B00F3A22E /* NanoTDFCreationTests.swift */,
+			);
+			path = OpenTDFKitTests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXHeadersBuildPhase section */
+		DADB7CD32C17F1CE000B110D /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DADB7CE92C17F1CE000B110D /* OpenTDFKit.h in Headers */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXHeadersBuildPhase section */
+
+/* Begin PBXNativeTarget section */
+		DADB7CD72C17F1CE000B110D /* OpenTDFKit */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DADB7CEC2C17F1CE000B110D /* Build configuration list for PBXNativeTarget "OpenTDFKit" */;
+			buildPhases = (
+				DADB7CD32C17F1CE000B110D /* Headers */,
+				DADB7CD42C17F1CE000B110D /* Sources */,
+				DADB7CD52C17F1CE000B110D /* Frameworks */,
+				DADB7CD62C17F1CE000B110D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OpenTDFKit;
+			productName = OpenTDFKit;
+			productReference = DADB7CD82C17F1CE000B110D /* OpenTDFKit.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+		DADB7CE12C17F1CE000B110D /* OpenTDFKitTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DADB7CEF2C17F1CE000B110D /* Build configuration list for PBXNativeTarget "OpenTDFKitTests" */;
+			buildPhases = (
+				DADB7CDE2C17F1CE000B110D /* Sources */,
+				DADB7CDF2C17F1CE000B110D /* Frameworks */,
+				DADB7CE02C17F1CE000B110D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				DADB7CE52C17F1CE000B110D /* PBXTargetDependency */,
+			);
+			name = OpenTDFKitTests;
+			productName = OpenTDFKitTests;
+			productReference = DADB7CE22C17F1CE000B110D /* OpenTDFKitTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		DADB7CCF2C17F1CE000B110D /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					DADB7CD72C17F1CE000B110D = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					DADB7CE12C17F1CE000B110D = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = DADB7CD22C17F1CE000B110D /* Build configuration list for PBXProject "OpenTDFKit" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = DADB7CCE2C17F1CE000B110D;
+			productRefGroup = DADB7CD92C17F1CE000B110D /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				DADB7CD72C17F1CE000B110D /* OpenTDFKit */,
+				DADB7CE12C17F1CE000B110D /* OpenTDFKitTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		DADB7CD62C17F1CE000B110D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DADB7CE02C17F1CE000B110D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		DADB7CD42C17F1CE000B110D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DA77AD292C17FBD500FE7E7E /* KASRest.swift in Sources */,
+				DADB7CDD2C17F1CE000B110D /* OpenTDFKit.docc in Sources */,
+				DAAF18342C18F58700F3A22E /* BinaryParser.swift in Sources */,
+				DAAF18322C18EED800F3A22E /* NanoTDF.swift in Sources */,
+				DAAF18302C18EEBF00F3A22E /* CryptoHelper.swift in Sources */,
+				DAAF18362C18F6EA00F3A22E /* KASWebSocket.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DADB7CDE2C17F1CE000B110D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DAAF183A2C18FA6B00F3A22E /* NanoTDFCreationTests.swift in Sources */,
+				DAAF18402C18FBCA00F3A22E /* KASWebsocketTests.swift in Sources */,
+				DAAF18382C18F87800F3A22E /* CryptoHelperTests.swift in Sources */,
+				DAAF183E2C18FB7800F3A22E /* NanoTDFTests.swift in Sources */,
+				DADB7CE82C17F1CE000B110D /* OpenTDFKitTests.swift in Sources */,
+				DAAF183C2C18FAC600F3A22E /* InitializationTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		DADB7CE52C17F1CE000B110D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = DADB7CD72C17F1CE000B110D /* OpenTDFKit */;
+			targetProxy = DADB7CE42C17F1CE000B110D /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		DADB7CEA2C17F1CE000B110D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_PREFIX = "";
+			};
+			name = Debug;
+		};
+		DADB7CEB2C17F1CE000B110D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 6.0;
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_PREFIX = "";
+			};
+			name = Release;
+		};
+		DADB7CED2C17F1CE000B110D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALLOW_TARGET_PLATFORM_SPECIALIZATION = YES;
+				BUILD_LIBRARY_FOR_DISTRIBUTION = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DEVELOPMENT_TEAM = 496RA8CKPQ;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				ENABLE_MODULE_VERIFIER = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
+					"@executable_path/../Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
+				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
+				PRODUCT_BUNDLE_IDENTIFIER = org.arkavo.OpenTDFKit;
+				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INSTALL_OBJC_HEADER = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 2.0;
+			};
+			name = Debug;
+		};
+		DADB7CEE2C17F1CE000B110D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALLOW_TARGET_PLATFORM_SPECIALIZATION = YES;
+				BUILD_LIBRARY_FOR_DISTRIBUTION = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DEVELOPMENT_TEAM = 496RA8CKPQ;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				ENABLE_MODULE_VERIFIER = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
+					"@executable_path/../Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
+				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
+				PRODUCT_BUNDLE_IDENTIFIER = org.arkavo.OpenTDFKit;
+				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INSTALL_OBJC_HEADER = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 2.0;
+			};
+			name = Release;
+		};
+		DADB7CF02C17F1CE000B110D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALLOW_TARGET_PLATFORM_SPECIALIZATION = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 496RA8CKPQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.arkavo.OpenTDFKitTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 2.0;
+			};
+			name = Debug;
+		};
+		DADB7CF12C17F1CE000B110D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALLOW_TARGET_PLATFORM_SPECIALIZATION = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 496RA8CKPQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.arkavo.OpenTDFKitTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 2.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		DADB7CD22C17F1CE000B110D /* Build configuration list for PBXProject "OpenTDFKit" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DADB7CEA2C17F1CE000B110D /* Debug */,
+				DADB7CEB2C17F1CE000B110D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		DADB7CEC2C17F1CE000B110D /* Build configuration list for PBXNativeTarget "OpenTDFKit" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DADB7CED2C17F1CE000B110D /* Debug */,
+				DADB7CEE2C17F1CE000B110D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		DADB7CEF2C17F1CE000B110D /* Build configuration list for PBXNativeTarget "OpenTDFKitTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DADB7CF02C17F1CE000B110D /* Debug */,
+				DADB7CF12C17F1CE000B110D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = DADB7CCF2C17F1CE000B110D /* Project object */;
+}

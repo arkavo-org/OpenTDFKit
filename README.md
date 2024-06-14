@@ -1,6 +1,14 @@
-Implementation of the [OpenTDF nanotdf specification](https://github.com/opentdf/spec/tree/main/schema/nanotdf)
+# OpenTDFKit
 
-## NanoTDF creation sequence
+Swift toolkit for OpenTDF (unofficial)
+
+## Feature
+
+- [OpenTDF nanotdf specification](https://github.com/opentdf/spec/tree/main/schema/nanotdf)
+- WebSocket rewrap
+
+## NanoTDF creation
+
 ```mermaid
 sequenceDiagram
     participant App
@@ -53,3 +61,74 @@ sequenceDiagram
     TDFBuilder->>TDFBuilder: Combine header, encrypted payload, and signature
     TDFBuilder-->>App: Return NanoTDF
 ```
+
+## Recommended Authentication
+
+### Sign up
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant ClientApp
+    participant Authenticator
+    participant RegistrationServer
+    participant iCloudKeychain
+
+    User->>ClientApp: Initiate Registration
+    ClientApp->>RegistrationServer: Request Registration Challenge
+    RegistrationServer-->>ClientApp: Registration Challenge
+    ClientApp->>Authenticator: Initiate WebAuthn with Challenge
+    Authenticator-->>ClientApp: Public Key Credential Source
+    Note right of Authenticator: Generate Passkey Pair (Public & Private Keys)
+    
+    Note over ClientApp, iCloudKeychain: Steps for Account's Signing Key
+    ClientApp->>iCloudKeychain: Store Signing Private Key
+    iCloudKeychain-->>ClientApp: Confirmation of Storage
+    ClientApp->>RegistrationServer: Send Public Key Credential Source (Public Key)
+    RegistrationServer-->>ClientApp: Registration Success
+    ClientApp->>User: Registration Complete
+```
+
+This sequence diagram represents the following steps:
+
+    1.    Initiate Registration: The user initiates the registration process on the client application.
+    2.    Request Registration Challenge: The client application requests a registration challenge from the registration server.
+    3.    Receive Registration Challenge: The registration server responds with a registration challenge.
+    4.    Initiate WebAuthn with Challenge: The client application initiates the WebAuthn process with the received challenge using the authenticator (device’s built-in secure enclave).
+    5.    Create Public Key Credential Source: The authenticator generates a new key pair (public and private keys). The private key is stored securely, and the public key is returned to the client application.
+    6.    Store Private Key in iCloud Keychain: The client application stores the private key in iCloud Keychain for synchronization across the user’s devices.
+    7.    Confirmation of Storage: The iCloud Keychain confirms that the private key has been stored securely.
+    8.    Send Public Key to Registration Server: The client application sends the public key credential source (which includes the public key) to the registration server.
+    9.    Registration Success: The registration server acknowledges successful registration.
+    10.    Registration Complete: The client application informs the user that the registration process is complete.
+
+### Sign in
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant ClientApp
+    participant Authenticator
+    participant RegistrationServer
+
+    User->>ClientApp: Initiate Registration
+    ClientApp->>RegistrationServer: Request Registration Challenge
+    RegistrationServer-->>ClientApp: Send Registration Challenge
+    ClientApp->>Authenticator: Initiate WebAuthn with Challenge
+    Authenticator-->>ClientApp: Return Public Key Credential Source
+    ClientApp->>RegistrationServer: Send Public Key Credential Source (Public Key)
+    RegistrationServer-->>ClientApp: Registration Success
+    ClientApp->>User: Registration Complete
+```
+
+This diagram represents the basic WebAuthn passkey registration steps:
+
+    1.    Initiate Registration: The user initiates the registration process on the client application.
+    2.    Request Registration Challenge: The client application requests a registration challenge from the registration server.
+    3.    Send Registration Challenge: The registration server responds with a registration challenge.
+    4.    Initiate WebAuthn with Challenge: The client application initiates the WebAuthn process with the received challenge using the authenticator (device’s built-in secure enclave).
+    5.    Return Public Key Credential Source: The authenticator generates a new key pair (public and private keys). The private key is stored securely, and the public key is returned to the client application.
+    6.    Send Public Key Credential Source (Public Key): The client application sends the public key credential source (which includes the public key) to the registration server.
+    7.    Registration Success: The registration server acknowledges successful registration.
+    8.    Registration Complete: The client application informs the user that the registration process is complete.
+

@@ -244,11 +244,20 @@ enum Cipher: UInt8 {
     case aes256GCM128 = 0x05
 }
 
+enum SignatureError: Error {
+    case invalidSigning
+    case invalidKey
+    case invalidMessage
+    case invalidSignatureLength
+    case invalidPublicKeyLength
+    case invalidCurve
+}
+
 // Function to add a signature to a NanoTDF
 func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signing.PrivateKey, config: SignatureAndPayloadConfig) throws {
     let message = nanoTDF.header.toData() + nanoTDF.payload.toData()
     guard let signatureData = try CryptoHelper.generateECDSASignature(privateKey: privateKey, message: message) else {
-        throw ParsingError.invalidSigning
+        throw SignatureError.invalidSigning
     }
     print("signatureData", signatureData.count)
     let publicKeyData = privateKey.publicKey.compressedRepresentation // Using compressedRepresentation for the compressed key format
@@ -270,21 +279,21 @@ func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signing.Priv
         signatureLength = 132
     case .none:
         print("signatureECCMode not found")
-        throw ParsingError.invalidFormat
+        throw SignatureError.invalidCurve
     }
 
     // Check lengths
     guard publicKeyData.count == publicKeyLength else {
-        throw ParsingError.invalidPublicKeyLength
+        throw SignatureError.invalidPublicKeyLength
     }
     guard signatureData.count == signatureLength else {
-        throw ParsingError.invalidSignatureLength
+        throw SignatureError.invalidSignatureLength
     }
 
     let signature = Signature(publicKey: publicKeyData, signature: signatureData)
     nanoTDF.signature = signature
     nanoTDF.header.payloadSignatureConfig.signed = true
-    nanoTDF.header.payloadSignatureConfig.signatureCurve = config.signatureCurve // Use the provided config
+    nanoTDF.header.payloadSignatureConfig.signatureCurve = config.signatureCurve
 }
 
 // Initialize a NanoTDF small
@@ -298,11 +307,11 @@ func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoTDF {
                         eccMode: PolicyBindingConfig(ecdsaBinding: false,
                                                      curve: curve),
                         payloadSigMode: SignatureAndPayloadConfig(signed: false,
-                                                                  signatureCurve: nil,
+                                                                  signatureCurve: curve,
                                                                   payloadCipher: .aes256GCM128),
-                        policy: Policy(type: .embeddedPlaintext,
+                        policy: Policy(type: .remote,
                                        body: nil,
-                                       remote: nil,
+                                       remote: kasResourceLocator,
                                        binding: nil),
                         ephemeralKey: Data([0x04, 0x05, 0x06]))
 
