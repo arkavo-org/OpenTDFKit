@@ -14,12 +14,11 @@ let package = Package(
             name: "OpenTDFKit",
             targets: ["OpenTDFKit"]),
     ],
-    dependencies: [
-    ],
+    dependencies: [],
     targets: [
         .target(
             name: "OpenTDFKit",
-            dependencies: ["BinaryParser", "CryptoHelper", "KASWebSocket", "NanoTDF"]),
+            dependencies: []),
         .testTarget(
             name: "OpenTDFKitTests",
             dependencies: ["OpenTDFKit"]),
