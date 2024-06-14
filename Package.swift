@@ -1,26 +1,29 @@
-// swift-tools-version:6.0
+// swift-tools-version:5.10
 import PackageDescription
 
 let package = Package(
     name: "OpenTDFKit",
     platforms: [
-        .iOS(.v17),
+        .iOS(.v16),
         .macOS(.v14),
-        .iPadOS(.v17)
+        .tvOS(.v16),
+        .watchOS(.v9),
     ],
     products: [
         .library(
             name: "OpenTDFKit",
-            targets: ["KASClient"]),
+            targets: ["OpenTDFKit"]),
     ],
     dependencies: [
     ],
     targets: [
         .target(
             name: "OpenTDFKit",
-            dependencies: []),
+            dependencies: ["BinaryParser", "CryptoHelper", "KASWebSocket", "NanoTDF"]),
+            path: "OpenTDFKit",
         .testTarget(
             name: "OpenTDFKitTests",
-            dependencies: ["KASClient"]),
+            dependencies: ["OpenTDFKit"]),
+            path: "OpenTDFKitTests",
     ]
 )
