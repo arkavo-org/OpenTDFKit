@@ -48,13 +48,11 @@ struct RewrappedKeyMessage {
 class KASWebSocket {
     private var webSocketTask: URLSessionWebSocketTask?
     private let urlSession: URLSession
-    private var myPrivateKey: P256.KeyAgreement.PrivateKey!
-    var myPublicKey: P256.KeyAgreement.PublicKey!
+    private var myPrivateKey: Curve25519.KeyAgreement.PrivateKey!
 
     init() {
         // create key
-        myPrivateKey = P256.KeyAgreement.PrivateKey()
-        myPublicKey = myPrivateKey.publicKey
+        myPrivateKey = Curve25519.KeyAgreement.PrivateKey()
         // Initialize a URLSession with a default configuration
         urlSession = URLSession(configuration: .default)
     }
@@ -105,18 +103,26 @@ class KASWebSocket {
     }
     
     private func handlePublicKeyMessage(data: Data) {
-        print("Public key bytes: \(data)")
-        
+        print("Compressed Server PublicKey bytes: \(data)")
+        let dataHex = data.withUnsafeBytes { buffer in
+            buffer.map { String(format: "%02x", $0) }.joined()
+        }
+        print("Compressed Server PublicKey: \(dataHex)")
+        guard data.count == 32 else {
+            print("Error: PublicKey data is not 32 bytes long")
+            return
+        }
         do {
-            let receivedPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: data)
+            // FIXME update to Curve25519 instead of P256
+            let receivedPublicKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: data)
             let sharedSecret = try myPrivateKey.sharedSecretFromKeyAgreement(with: receivedPublicKey)
             // Convert the symmetric key to a hex string
             let sharedSecretHex = sharedSecret.withUnsafeBytes { buffer in
                 buffer.map { String(format: "%02x", $0) }.joined()
             }
+            print("Shared Secret +++++++++++++")
             print("Shared Secret: \(sharedSecretHex)")
-            
-            
+            print("Shared Secret +++++++++++++")
             // Derive a symmetric key from the shared secret
             let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
                 using: SHA256.self,
@@ -124,26 +130,24 @@ class KASWebSocket {
                 sharedInfo: Data(),
                 outputByteCount: 32
             )
-            
             // Convert the symmetric key to a hex string
             let symmetricKeyHex = symmetricKey.withUnsafeBytes { buffer in
                 buffer.map { String(format: "%02x", $0) }.joined()
             }
             print("Symmetric Key: \(symmetricKeyHex)")
-            
-            // Handle further steps with the shared secret if necessary
-            
         } catch {
-            print("Error handling PublicKeyMessage: \(error)")
+            print("Error handling PublicKeyMessage: \(error) \(data)")
+            let dataHex = data.withUnsafeBytes { buffer in
+                buffer.map { String(format: "%02x", $0) }.joined()
+            }
+            print("Bad PublicKeyMessage: \(dataHex)")
         }
     }
 
     private func handleKASKeyMessage(data: Data) {
         print("KAS key bytes: \(data)")
-        // Implement the specific logic for handling the KASKeyMessage here
-        
-        // Example: Log or process the message as needed
-        // In a real scenario, you would likely take further action based on the message content
+        // TODO parse into public key
+        // add member and getter for KAS public key
     }
     
     private func handleRewrappedKeyMessage(data: Data) {
@@ -155,11 +159,12 @@ class KASWebSocket {
     }
     
     func sendPublicKey() {
-        let publicKeyMessage = PublicKeyMessage(publicKey: myPublicKey.compressedRepresentation)
-        let data = URLSessionWebSocketTask.Message.data(publicKeyMessage.toData())
-        print("Sending data: \(data)")
-        let hexData = myPublicKey.compressedRepresentation.map { String(format: "%02x", $0) }.joined()
+        let myPublicKey = myPrivateKey.publicKey
+        let hexData = myPublicKey.rawRepresentation.map { String(format: "%02x", $0) }.joined()
         print("Client Public Key: \(hexData)")
+        let publicKeyMessage = PublicKeyMessage(publicKey: myPublicKey.rawRepresentation)
+                let data = URLSessionWebSocketTask.Message.data(publicKeyMessage.toData())
+        print("Sending data: \(data)")
         webSocketTask?.send(data) { error in
             if let error = error {
                 print("WebSocket sending error: \(error)")

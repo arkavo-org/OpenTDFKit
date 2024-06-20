@@ -6,14 +6,16 @@ final class KASWebsocketTests: XCTestCase {
         let webSocket = KASWebSocket()
         // Connect to the WebSocket server
         webSocket.connect()
-        // Send a message
+        // Decrypt
+        // Send a client public key for decrypt
         webSocket.sendPublicKey()
-        // Send a message
-        webSocket.sendKASKeyMessage()
-        // send a nano header
-        webSocket.sendRewrapMessage(header: getHeader())
+        // send a nano header for decrypting
+//        webSocket.sendRewrapMessage(header: getHeader())
+        // Encrypt
+        // Send a request for KAS key for encrypt
+//        webSocket.sendKASKeyMessage()
         // wait
-        Thread.sleep(forTimeInterval: 2.0)
+        Thread.sleep(forTimeInterval: 1.0)
         // Optionally, disconnect when done or needed
         webSocket.disconnect()
     }
