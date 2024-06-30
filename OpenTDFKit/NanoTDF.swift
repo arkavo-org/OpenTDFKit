@@ -5,7 +5,9 @@ struct NanoTDF {
     var header: Header
     var payload: Payload
     var signature: Signature?
-
+#if DEBUG
+    var storedKey: SymmetricKey?
+#endif
     func toData() -> Data {
         var data = Data()
         data.append(header.toData())
@@ -15,12 +17,14 @@ struct NanoTDF {
         }
         return data
     }
-}
-
-protocol NanoTDFDecorator {
-    func compressNanoTDF() -> NanoTDF
-    func encryptNanoTDF() -> NanoTDF
-    func signAndBindNanoTDF() -> NanoTDF
+    func getPayloadPlaintext(symmetricKey: SymmetricKey) throws -> Data {
+        let paddedIV = CryptoHelper.adjustNonce(payload.iv, to: 12)
+        let sealedBox = try AES.GCM.SealedBox(nonce: try AES.GCM.Nonce(data: paddedIV),
+                                              ciphertext: payload.ciphertext,
+                                              tag: payload.mac)
+        let decryptedData = try AES.GCM.open(sealedBox, using: symmetricKey)
+        return decryptedData
+    }
 }
 
 struct Header {
@@ -343,7 +347,9 @@ func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) thro
     }
     
     // Step 3: Derive symmetric key
-    let symmetricKey = CryptoHelper.deriveSymmetricKey(sharedSecret: sharedSecret)
+    let tdfSymmetricKey = CryptoHelper.deriveSymmetricKey(sharedSecret: sharedSecret, salt: "L1L".data(using: .utf8)!, info: "encryption".data(using: .utf8)!, outputByteCount: 32)
+    
+    // Policy
     var policyBody: Data
     switch policy.type {
     case .remote:
@@ -351,7 +357,7 @@ func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) thro
     case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
         policyBody = policy.body!.toData()
     }
-    let gmacTag = try CryptoHelper.createGMACBinding(policyBody: policyBody, symmetricKey: symmetricKey)
+    let gmacTag = try CryptoHelper.createGMACBinding(policyBody: policyBody, symmetricKey: tdfSymmetricKey)
     policy.binding = gmacTag
     // Step 4: Generate nonce (IV)
     // 3.3.2.2 IV + Ciphertext + MAClength 3
@@ -359,8 +365,9 @@ func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) thro
     let nonce12 = CryptoHelper.adjustNonce(nonce3, to: 12)
     
     // Step 5: Encrypt payload
-    let (ciphertext, tag) = try CryptoHelper.encryptPayload(plaintext: plaintext, symmetricKey: symmetricKey, nonce: nonce12)
-    
+    let (ciphertext, tag) = try CryptoHelper.encryptPayload(plaintext: plaintext, symmetricKey: tdfSymmetricKey, nonce: nonce12)
+    print("Ciphertext length: \(ciphertext.count)")
+    print("Auth tag: \(tag.hexEncodedString())")
     // Step 6: Create Policy Key Access structure
 //    let policyKeyAccessEphemeralKeyPair = CryptoHelper.generateEphemeralKeyPair(curveType: kas.curve)!
 //    let policyKeyAccess = PolicyKeyAccess(
@@ -395,6 +402,12 @@ func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) thro
                                                                   payloadCipher: .aes256GCM128),
                         policy: policy,
                         ephemeralKey: ephemeralPublicKeyData)
+#if DEBUG
+    return NanoTDF(header: header!,
+                   payload: payload,
+                   signature: nil,
+                   storedKey: tdfSymmetricKey)
+#endif
     return NanoTDF(header: header!,
                    payload: payload,
                    signature: nil)

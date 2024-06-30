@@ -48,15 +48,26 @@ struct RewrappedKeyMessage {
 class KASWebSocket {
     private var webSocketTask: URLSessionWebSocketTask?
     private let urlSession: URLSession
-    private var myPrivateKey: Curve25519.KeyAgreement.PrivateKey!
+    private let myPrivateKey: P256.KeyAgreement.PrivateKey!
+    private var sharedSecret: SharedSecret?
+    private var salt: Data?
+    private var rewrapCallback: ((Data, SymmetricKey?) -> Void)?
+    private var kasPublicKeyCallback: ((P256.KeyAgreement.PublicKey) -> Void)?
 
     init() {
         // create key
-        myPrivateKey = Curve25519.KeyAgreement.PrivateKey()
+        myPrivateKey = P256.KeyAgreement.PrivateKey()
         // Initialize a URLSession with a default configuration
         urlSession = URLSession(configuration: .default)
     }
 
+    func setRewrapCallback(_ callback: @escaping (Data, SymmetricKey?) -> Void) {
+        rewrapCallback = callback
+    }
+    func setKASPublicKeyCallback(_ callback: @escaping (P256.KeyAgreement.PublicKey) -> Void) {
+        kasPublicKeyCallback = callback
+    }
+    
     func connect() {
         // Create the WebSocket task with the specified URL
         let url = URL(string: "ws://localhost:8080")!
@@ -103,38 +114,33 @@ class KASWebSocket {
     }
     
     private func handlePublicKeyMessage(data: Data) {
-        print("Compressed Server PublicKey bytes: \(data)")
+        print("Server PublicKey bytes: \(data)")
         let dataHex = data.withUnsafeBytes { buffer in
             buffer.map { String(format: "%02x", $0) }.joined()
         }
-        print("Compressed Server PublicKey: \(dataHex)")
-        guard data.count == 32 else {
+        print("Server PublicKey: \(dataHex)")
+        guard data.count == 65 else {
             print("Error: PublicKey data is not 32 bytes long")
             return
         }
         do {
-            // FIXME update to Curve25519 instead of P256
-            let receivedPublicKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: data)
-            let sharedSecret = try myPrivateKey.sharedSecretFromKeyAgreement(with: receivedPublicKey)
+            // set session salt
+            salt = data.suffix(32)
+            let publicKeyData = data.prefix(33)
+            let receivedPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: publicKeyData)
+            sharedSecret = try myPrivateKey.sharedSecretFromKeyAgreement(with: receivedPublicKey)
             // Convert the symmetric key to a hex string
-            let sharedSecretHex = sharedSecret.withUnsafeBytes { buffer in
+            let sharedSecretHex = sharedSecret!.withUnsafeBytes { buffer in
                 buffer.map { String(format: "%02x", $0) }.joined()
             }
             print("Shared Secret +++++++++++++")
             print("Shared Secret: \(sharedSecretHex)")
             print("Shared Secret +++++++++++++")
-            // Derive a symmetric key from the shared secret
-            let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
-                using: SHA256.self,
-                salt: Data(),
-                sharedInfo: Data(),
-                outputByteCount: 32
-            )
             // Convert the symmetric key to a hex string
-            let symmetricKeyHex = symmetricKey.withUnsafeBytes { buffer in
+            let saltHex = salt!.withUnsafeBytes { buffer in
                 buffer.map { String(format: "%02x", $0) }.joined()
             }
-            print("Symmetric Key: \(symmetricKeyHex)")
+            print("Session Salt: \(saltHex)")
         } catch {
             print("Error handling PublicKeyMessage: \(error) \(data)")
             let dataHex = data.withUnsafeBytes { buffer in
@@ -146,23 +152,89 @@ class KASWebSocket {
 
     private func handleKASKeyMessage(data: Data) {
         print("KAS key bytes: \(data)")
-        // TODO parse into public key
-        // add member and getter for KAS public key
+        guard data.count == 33 else {
+            print("Error: KAS PublicKey data is not 33 bytes long (expected for compressed key)")
+            return
+        }
+        print("Compressed KAS Public Key: \(data.hexEncodedString())")
+        do {
+            let kasPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: data)
+            print("KAS Public Key: \(kasPublicKey.rawRepresentation.hexEncodedString())")
+            // Call the callback with the parsed KAS public key
+            kasPublicKeyCallback?(kasPublicKey)
+        } catch {
+            print("Error parsing KAS PublicKey: \(error)")
+        }
     }
     
     private func handleRewrappedKeyMessage(data: Data) {
-        print("Rewrapped key bytes: \(data)")
-        // Implement the specific logic for handling the rewrapped key here
-        
-        // Example: Log or process the rewrapped key as needed
-        // In a real scenario, you would likely take further action based on the message content
+        defer {
+            print("END handleRewrappedKeyMessage")
+        }
+        print("BEGIN handleRewrappedKeyMessage")
+        print("wrapped_dek_shared_secret \(data.hexEncodedString())")
+        guard data.count == 93 else {
+            print("Received data is not the expected 93 bytes (33 for identifier + 60 for key)")
+            return
+        }
+        let identifier = data.prefix(33)
+        let keyData = data.suffix(60)
+        // Parse key data components
+        let nonce = keyData.prefix(12)
+        let encryptedKeyLength = keyData.count - 12 - 16 // Total - nonce - tag
+        print("encryptedKeyLength \(encryptedKeyLength)")
+        guard encryptedKeyLength >= 0 else {
+             print("Invalid encrypted key length: \(encryptedKeyLength)")
+             return
+         }
+        let rewrappedKey = keyData.prefix(keyData.count - 16).suffix(encryptedKeyLength)
+        let authTag = keyData.suffix(16)
+        print("Identifier (bytes): \(identifier.hexEncodedString())")
+        print("Nonce (12 bytes): \(nonce.hexEncodedString())")
+        print("Rewrapped Key (\(encryptedKeyLength) bytes): \(rewrappedKey.hexEncodedString())")
+        print("Authentication Tag (16 bytes): \(authTag.hexEncodedString())")
+        // Decrypt the message using AES-GCM
+        do {
+            // Derive a symmetric key from the session shared secret
+//            let sessionSymmetricKey = sharedSecret!.hkdfDerivedSymmetricKey(
+//                using: SHA256.self,
+//                salt: salt!,
+//                sharedInfo: "rewrappedKey".data(using: .utf8)!,
+//                outputByteCount: 32
+//            )
+            let info = Data("rewrappedKey".utf8)
+            let sessionSymmetricKey = CryptoHelper.deriveSymmetricKey(sharedSecret: sharedSecret!, salt: salt!, info: info, outputByteCount: 32)
+            print("Derived Session Key: \(sessionSymmetricKey.withUnsafeBytes { Data($0).hexEncodedString() })")
+            let sealedBox = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: nonce), ciphertext: rewrappedKey, tag: authTag)
+            let decryptedDataSharedSecret = try AES.GCM.open(sealedBox, using: sessionSymmetricKey)
+            print("Decrypted shared secret: \(decryptedDataSharedSecret.hexEncodedString())")
+            // Create a private key from the decrypted data
+            let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: decryptedDataSharedSecret)
+            // Derive the public key
+            let publicKey = privateKey.publicKey
+            // Simulate key agreement (in practice, you'd use the other party's public key)
+            let dataSharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
+            print("Created SharedSecret successfully")
+            // Derive a symmetric key from the TDF shared secret, DEK
+//            let tdfSymmetricKey = dataSharedSecret.hkdfDerivedSymmetricKey(
+//                using: SHA256.self,
+//                salt: "L1L".data(using: .utf8)!,
+//                sharedInfo: "rewrappedKey".data(using: .utf8)!,
+//                outputByteCount: 32
+//            )
+            let tdfSymmetricKey = CryptoHelper.deriveSymmetricKey(sharedSecret: dataSharedSecret, salt: "L1L".data(using: .utf8)!, info: "encryption".data(using: .utf8)!, outputByteCount: 32)
+            // Notify the app with the identifier and derived symmetric key
+            rewrapCallback?(identifier, tdfSymmetricKey)
+        } catch {
+            print("Decryption failed handleRewrappedKeyMessage: \(error)")
+        }
     }
-    
+       
     func sendPublicKey() {
         let myPublicKey = myPrivateKey.publicKey
-        let hexData = myPublicKey.rawRepresentation.map { String(format: "%02x", $0) }.joined()
+        let hexData = myPublicKey.compressedRepresentation.map { String(format: "%02x", $0) }.joined()
         print("Client Public Key: \(hexData)")
-        let publicKeyMessage = PublicKeyMessage(publicKey: myPublicKey.rawRepresentation)
+        let publicKeyMessage = PublicKeyMessage(publicKey: myPublicKey.compressedRepresentation)
                 let data = URLSessionWebSocketTask.Message.data(publicKeyMessage.toData())
         print("Sending data: \(data)")
         webSocketTask?.send(data) { error in
@@ -197,5 +269,12 @@ class KASWebSocket {
     func disconnect() {
         // Close the WebSocket connection
         webSocketTask?.cancel(with: .goingAway, reason: nil)
+    }
+}
+
+// Add this extension to Data for convenient hex string representation
+extension Data {
+    func hexEncodedString() -> String {
+        return map { String(format: "%02hhx", $0) }.joined()
     }
 }
