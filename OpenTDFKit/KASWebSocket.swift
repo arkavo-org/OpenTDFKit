@@ -114,13 +114,8 @@ class KASWebSocket {
     }
     
     private func handlePublicKeyMessage(data: Data) {
-        print("Server PublicKey bytes: \(data)")
-        let dataHex = data.withUnsafeBytes { buffer in
-            buffer.map { String(format: "%02x", $0) }.joined()
-        }
-        print("Server PublicKey: \(dataHex)")
         guard data.count == 65 else {
-            print("Error: PublicKey data is not 32 bytes long")
+            print("Error: PublicKey data + salt is not 33 + 32 bytes long")
             return
         }
         do {
@@ -128,6 +123,7 @@ class KASWebSocket {
             salt = data.suffix(32)
             let publicKeyData = data.prefix(33)
             let receivedPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: publicKeyData)
+            print("Server PublicKey: \(receivedPublicKey.compressedRepresentation.hexEncodedString())")
             sharedSecret = try myPrivateKey.sharedSecretFromKeyAgreement(with: receivedPublicKey)
             // Convert the symmetric key to a hex string
             let sharedSecretHex = sharedSecret!.withUnsafeBytes { buffer in
@@ -151,15 +147,14 @@ class KASWebSocket {
     }
 
     private func handleKASKeyMessage(data: Data) {
-        print("KAS key bytes: \(data)")
+        print("KAS Public Key Size: \(data)")
         guard data.count == 33 else {
             print("Error: KAS PublicKey data is not 33 bytes long (expected for compressed key)")
             return
         }
-        print("Compressed KAS Public Key: \(data.hexEncodedString())")
+        print("KAS Public Key Hex: \(data.hexEncodedString())")
         do {
             let kasPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: data)
-            print("KAS Public Key: \(kasPublicKey.rawRepresentation.hexEncodedString())")
             // Call the callback with the parsed KAS public key
             kasPublicKeyCallback?(kasPublicKey)
         } catch {
@@ -196,33 +191,19 @@ class KASWebSocket {
         // Decrypt the message using AES-GCM
         do {
             // Derive a symmetric key from the session shared secret
-//            let sessionSymmetricKey = sharedSecret!.hkdfDerivedSymmetricKey(
-//                using: SHA256.self,
-//                salt: salt!,
-//                sharedInfo: "rewrappedKey".data(using: .utf8)!,
-//                outputByteCount: 32
-//            )
-            let info = Data("rewrappedKey".utf8)
-            let sessionSymmetricKey = CryptoHelper.deriveSymmetricKey(sharedSecret: sharedSecret!, salt: salt!, info: info, outputByteCount: 32)
+            let sessionSymmetricKey = CryptoHelper.deriveSymmetricKey(sharedSecret: sharedSecret!, salt: salt!, info: Data("rewrappedKey".utf8), outputByteCount: 32)
             print("Derived Session Key: \(sessionSymmetricKey.withUnsafeBytes { Data($0).hexEncodedString() })")
             let sealedBox = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: nonce), ciphertext: rewrappedKey, tag: authTag)
             let decryptedDataSharedSecret = try AES.GCM.open(sealedBox, using: sessionSymmetricKey)
             print("Decrypted shared secret: \(decryptedDataSharedSecret.hexEncodedString())")
-            // Create a private key from the decrypted data
-            let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: decryptedDataSharedSecret)
-            // Derive the public key
-            let publicKey = privateKey.publicKey
-            // Simulate key agreement (in practice, you'd use the other party's public key)
-            let dataSharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
-            print("Created SharedSecret successfully")
-            // Derive a symmetric key from the TDF shared secret, DEK
-//            let tdfSymmetricKey = dataSharedSecret.hkdfDerivedSymmetricKey(
-//                using: SHA256.self,
-//                salt: "L1L".data(using: .utf8)!,
-//                sharedInfo: "rewrappedKey".data(using: .utf8)!,
-//                outputByteCount: 32
-//            )
-            let tdfSymmetricKey = CryptoHelper.deriveSymmetricKey(sharedSecret: dataSharedSecret, salt: "L1L".data(using: .utf8)!, info: "encryption".data(using: .utf8)!, outputByteCount: 32)
+            let sharedSecretKey = SymmetricKey(data: decryptedDataSharedSecret)
+            // Derive a symmetric key from the TDF shared secret (DEK)
+            let tdfSymmetricKey = CryptoHelper.deriveSymmetricKey(
+                sharedSecretKey: sharedSecretKey,
+                salt: Data("L1L".utf8),
+                info: Data("encryption".utf8),
+                outputByteCount: 32
+            )
             // Notify the app with the identifier and derived symmetric key
             rewrapCallback?(identifier, tdfSymmetricKey)
         } catch {

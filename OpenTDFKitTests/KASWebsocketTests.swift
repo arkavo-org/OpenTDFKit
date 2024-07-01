@@ -6,6 +6,7 @@ final class KASWebsocketTests: XCTestCase {
     func testEncryptDecrypt() throws {
         let nanoTDFManager = NanoTDFManager()
         let webSocket = KASWebSocket()
+        let plaintext = "Keep this message secret".data(using: .utf8)!
         webSocket.setRewrapCallback { (identifier, symmetricKey) in
             defer {
                 print("END setRewrapCallback")
@@ -31,10 +32,10 @@ final class KASWebsocketTests: XCTestCase {
                                                   ciphertext: ciphertext!,
                                                   tag: authTag!)
                 print("SealedBox created successfully")
-                let plaintext = try AES.GCM.open(sealedBox, using: symmetricKey!)
-                print("plaintext: \(plaintext)")
+                let dplaintext = try AES.GCM.open(sealedBox, using: symmetricKey!)
+                print("plaintext: \(dplaintext)")
                 print("Decryption successful")
-                print("Plaintext: \(plaintext.hexEncodedString())")
+                XCTAssertEqual(plaintext, dplaintext)
             } catch {
                 print("Error decryption nanoTDF payload: \(error)")
             }
@@ -44,7 +45,7 @@ final class KASWebsocketTests: XCTestCase {
             let kasMetadata = KasMetadata(resourceLocator: kasRL!, publicKey: publicKey, curve: .secp256r1)
             let remotePolicy = ResourceLocator(protocolEnum: .sharedResourceDirectory, body: "localhost/123")
             var policy = Policy(type: .remote, body: nil, remote: remotePolicy, binding: nil)
-            let plaintext = "Keep this message secret".data(using: .utf8)!
+            
             do {
                 // create
                 let nanoTDF = try createNanoTDF(kas: kasMetadata, policy: &policy, plaintext: plaintext)
@@ -59,11 +60,9 @@ final class KASWebsocketTests: XCTestCase {
         }
         webSocket.connect()
         webSocket.sendPublicKey()
-        Thread.sleep(forTimeInterval: 2.0)
         webSocket.sendKASKeyMessage()
-        Thread.sleep(forTimeInterval: 2.0)
         // wait
-        Thread.sleep(forTimeInterval: 2.0)
+        Thread.sleep(forTimeInterval: 1.0)
         // Optionally, disconnect when done or needed
         webSocket.disconnect()
     }
