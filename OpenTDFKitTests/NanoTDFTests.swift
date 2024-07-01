@@ -1,5 +1,5 @@
-@testable import OpenTDFKit
 import CryptoKit
+@testable import OpenTDFKit
 import XCTest
 
 final class NanoTDFTests: XCTestCase {

@@ -1,6 +1,6 @@
-import XCTest
 import CryptoKit
 @testable import OpenTDFKit
+import XCTest
 
 class SymmetricKeyTests: XCTestCase {
     let originalMessage = "This is a secret message for TDF testing."
@@ -33,7 +33,8 @@ class SymmetricKeyTests: XCTestCase {
 
     func decryptAndVerify(originalMessage: String) throws {
         guard let storedKey = Self.storedKey,
-              let nanoTDF = Self.nanoTDF else {
+              let nanoTDF = Self.nanoTDF
+        else {
             XCTFail("Stored key or encrypted data is missing")
             return
         }
@@ -43,49 +44,49 @@ class SymmetricKeyTests: XCTestCase {
 
         XCTAssertEqual(decryptedMessage, originalMessage, "Decrypted message doesn't match the original")
     }
-    
-        func writeNanoTDFToFile() throws -> URL {
-            guard let nanoTDF = Self.nanoTDF else {
-                throw NSError(domain: "TestError", code: 0, userInfo: [NSLocalizedDescriptionKey: "NanoTDF is not available"])
-            }
 
-            let data = nanoTDF.toData()
-            
-            // Create a temporary file URL
-            let tempDir = FileManager.default.temporaryDirectory
-            let fileName = "test_nanotdf_\(UUID().uuidString).tdf"
-            let fileURL = tempDir.appendingPathComponent(fileName)
-            
-            // Write the data to the file
-            try data.write(to: fileURL)
-            
-            print("NanoTDF written to file: \(fileURL.path)")
-            
-            return fileURL
+    func writeNanoTDFToFile() throws -> URL {
+        guard let nanoTDF = Self.nanoTDF else {
+            throw NSError(domain: "TestError", code: 0, userInfo: [NSLocalizedDescriptionKey: "NanoTDF is not available"])
         }
 
-        func testWriteAndReadNanoTDF() throws {
-            // First, ensure we have a NanoTDF object (you might need to create one if not already available)
-            // For this example, I'm assuming testSymmetricKeyEncryptionDecryption has been run
-            try testSymmetricKeyEncryptionDecryption()
-            
-            // Write NanoTDF to file
-            let fileURL = try writeNanoTDFToFile()
-            
-            // Read the file back
-            let readData = try Data(contentsOf: fileURL)
-            
-            // Verify the data
-            XCTAssertEqual(readData, Self.nanoTDF?.toData(), "Data read from file doesn't match original NanoTDF data")
-            
-            let parser = BinaryParser(data: readData)
-            let header = try parser.parseHeader()
-            let payload = try parser.parsePayload(config: header.payloadSignatureConfig)
-            let nanoTDF = NanoTDF(header: header, payload: payload, signature: nil)
-            Self.nanoTDF = nanoTDF
-            // Decrypt in a separate function to simulate decryption in a different context
-            try decryptAndVerify(originalMessage: originalMessage)
-            // Clean up: delete the file
-            try FileManager.default.removeItem(at: fileURL)
+        let data = nanoTDF.toData()
+
+        // Create a temporary file URL
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileName = "test_nanotdf_\(UUID().uuidString).tdf"
+        let fileURL = tempDir.appendingPathComponent(fileName)
+
+        // Write the data to the file
+        try data.write(to: fileURL)
+
+        print("NanoTDF written to file: \(fileURL.path)")
+
+        return fileURL
+    }
+
+    func testWriteAndReadNanoTDF() throws {
+        // First, ensure we have a NanoTDF object (you might need to create one if not already available)
+        // For this example, I'm assuming testSymmetricKeyEncryptionDecryption has been run
+        try testSymmetricKeyEncryptionDecryption()
+
+        // Write NanoTDF to file
+        let fileURL = try writeNanoTDFToFile()
+
+        // Read the file back
+        let readData = try Data(contentsOf: fileURL)
+
+        // Verify the data
+        XCTAssertEqual(readData, Self.nanoTDF?.toData(), "Data read from file doesn't match original NanoTDF data")
+
+        let parser = BinaryParser(data: readData)
+        let header = try parser.parseHeader()
+        let payload = try parser.parsePayload(config: header.payloadSignatureConfig)
+        let nanoTDF = NanoTDF(header: header, payload: payload, signature: nil)
+        Self.nanoTDF = nanoTDF
+        // Decrypt in a separate function to simulate decryption in a different context
+        try decryptAndVerify(originalMessage: originalMessage)
+        // Clean up: delete the file
+        try FileManager.default.removeItem(at: fileURL)
     }
 }

@@ -1,5 +1,5 @@
-@testable import OpenTDFKit
 import CryptoKit
+@testable import OpenTDFKit
 import XCTest
 
 final class KASWebsocketTests: XCTestCase {
@@ -7,7 +7,7 @@ final class KASWebsocketTests: XCTestCase {
         let nanoTDFManager = NanoTDFManager()
         let webSocket = KASWebSocket()
         let plaintext = "Keep this message secret".data(using: .utf8)!
-        webSocket.setRewrapCallback { (identifier, symmetricKey) in
+        webSocket.setRewrapCallback { identifier, symmetricKey in
             defer {
                 print("END setRewrapCallback")
             }
@@ -28,9 +28,9 @@ final class KASWebsocketTests: XCTestCase {
                 print("Padded IV: \(paddedIV.hexEncodedString())")
                 print("Ciphertext length: \(ciphertext!.count)")
                 print("Auth tag: \(authTag!.hexEncodedString())")
-                let sealedBox = try AES.GCM.SealedBox(nonce: try AES.GCM.Nonce(data: paddedIV),
-                                                  ciphertext: ciphertext!,
-                                                  tag: authTag!)
+                let sealedBox = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: paddedIV),
+                                                      ciphertext: ciphertext!,
+                                                      tag: authTag!)
                 print("SealedBox created successfully")
                 let dplaintext = try AES.GCM.open(sealedBox, using: symmetricKey!)
                 print("plaintext: \(dplaintext)")
@@ -40,12 +40,12 @@ final class KASWebsocketTests: XCTestCase {
                 print("Error decryption nanoTDF payload: \(error)")
             }
         }
-        webSocket.setKASPublicKeyCallback{ (publicKey) in
+        webSocket.setKASPublicKeyCallback { publicKey in
             let kasRL = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
             let kasMetadata = KasMetadata(resourceLocator: kasRL!, publicKey: publicKey, curve: .secp256r1)
             let remotePolicy = ResourceLocator(protocolEnum: .sharedResourceDirectory, body: "localhost/123")
             var policy = Policy(type: .remote, body: nil, remote: remotePolicy, binding: nil)
-            
+
             do {
                 // create
                 let nanoTDF = try createNanoTDF(kas: kasMetadata, policy: &policy, plaintext: plaintext)
@@ -66,16 +66,16 @@ final class KASWebsocketTests: XCTestCase {
         // Optionally, disconnect when done or needed
         webSocket.disconnect()
     }
-    
+
     func testWebsocket() throws {
         let webSocket = KASWebSocket()
         let expectation = XCTestExpectation(description: "Receive rewrapped key")
         // Create a 33-byte identifier
-        let testIdentifier = Data((0..<33).map { _ in UInt8.random(in: 0...255) })
-        
-        webSocket.setRewrapCallback { (identifier, symmetricKey) in
+        let testIdentifier = Data((0 ..< 33).map { _ in UInt8.random(in: 0 ... 255) })
+
+        webSocket.setRewrapCallback { identifier, symmetricKey in
             XCTAssertEqual(identifier.count, 33, "Identifier should be 33 bytes")
-            if identifier == testIdentifier && symmetricKey != nil {
+            if identifier == testIdentifier, symmetricKey != nil {
                 print("Received rewrapped key for identifier: \(identifier)")
                 expectation.fulfill()
             }
@@ -102,7 +102,7 @@ final class KASWebsocketTests: XCTestCase {
         // Optionally, disconnect when done or needed
         webSocket.disconnect()
     }
-    
+
     func getHeaderNoSignature() -> Header {
         let hexString = """
         4c 31 4c 01 0f 6b 61 73 2e 65 78 61 6d 70 6c 65 2e 63 6f 6d
@@ -129,7 +129,7 @@ final class KASWebsocketTests: XCTestCase {
         let nanoTDF = initializeSmallNanoTDF(kasResourceLocator: locator!)
         return nanoTDF.header
     }
-    
+
     func getHeaderBasic() -> Header {
         let hexString = """
         4c 31 4c 01 0e 6b 61 73 2e 76 69 72 74 72 75 2e 63 6f 6d 80

@@ -2,17 +2,17 @@ import CryptoKit
 import Foundation
 
 struct KASKeyMessage {
-    let messageType: Data = Data([0x02])
-    
+    let messageType: Data = .init([0x02])
+
     func toData() -> Data {
-        return messageType
+        messageType
     }
 }
 
 struct PublicKeyMessage {
-    let messageType: Data = Data([0x01])
+    let messageType: Data = .init([0x01])
     let publicKey: Data
-    
+
     func toData() -> Data {
         var data = Data()
         data.append(messageType)
@@ -22,9 +22,9 @@ struct PublicKeyMessage {
 }
 
 struct RewrapMessage {
-    let messageType: Data = Data([0x03])
+    let messageType: Data = .init([0x03])
     let header: Header
-    
+
     func toData() -> Data {
         var data = Data()
         data.append(messageType)
@@ -34,9 +34,9 @@ struct RewrapMessage {
 }
 
 struct RewrappedKeyMessage {
-    let messageType: Data = Data([0x04])
+    let messageType: Data = .init([0x04])
     let rewrappedKey: Data
-    
+
     func toData() -> Data {
         var data = Data()
         data.append(messageType)
@@ -64,10 +64,11 @@ class KASWebSocket {
     func setRewrapCallback(_ callback: @escaping (Data, SymmetricKey?) -> Void) {
         rewrapCallback = callback
     }
+
     func setKASPublicKeyCallback(_ callback: @escaping (P256.KeyAgreement.PublicKey) -> Void) {
         kasPublicKeyCallback = callback
     }
-    
+
     func connect() {
         // Create the WebSocket task with the specified URL
         let url = URL(string: "ws://localhost:8080")!
@@ -97,7 +98,7 @@ class KASWebSocket {
             }
         }
     }
-    
+
     private func handleMessage(data: Data) {
         let messageType = data.prefix(1)
         print("Received message with type: \(messageType as NSData)")
@@ -112,7 +113,7 @@ class KASWebSocket {
             print("Unknown message type")
         }
     }
-    
+
     private func handlePublicKeyMessage(data: Data) {
         guard data.count == 65 else {
             print("Error: PublicKey data + salt is not 33 + 32 bytes long")
@@ -161,7 +162,7 @@ class KASWebSocket {
             print("Error parsing KAS PublicKey: \(error)")
         }
     }
-    
+
     private func handleRewrappedKeyMessage(data: Data) {
         defer {
             print("END handleRewrappedKeyMessage")
@@ -179,9 +180,9 @@ class KASWebSocket {
         let encryptedKeyLength = keyData.count - 12 - 16 // Total - nonce - tag
         print("encryptedKeyLength \(encryptedKeyLength)")
         guard encryptedKeyLength >= 0 else {
-             print("Invalid encrypted key length: \(encryptedKeyLength)")
-             return
-         }
+            print("Invalid encrypted key length: \(encryptedKeyLength)")
+            return
+        }
         let rewrappedKey = keyData.prefix(keyData.count - 16).suffix(encryptedKeyLength)
         let authTag = keyData.suffix(16)
         print("Identifier (bytes): \(identifier.hexEncodedString())")
@@ -210,27 +211,27 @@ class KASWebSocket {
             print("Decryption failed handleRewrappedKeyMessage: \(error)")
         }
     }
-       
+
     func sendPublicKey() {
         let myPublicKey = myPrivateKey.publicKey
         let hexData = myPublicKey.compressedRepresentation.map { String(format: "%02x", $0) }.joined()
         print("Client Public Key: \(hexData)")
         let publicKeyMessage = PublicKeyMessage(publicKey: myPublicKey.compressedRepresentation)
-                let data = URLSessionWebSocketTask.Message.data(publicKeyMessage.toData())
+        let data = URLSessionWebSocketTask.Message.data(publicKeyMessage.toData())
         print("Sending data: \(data)")
         webSocketTask?.send(data) { error in
-            if let error = error {
+            if let error {
                 print("WebSocket sending error: \(error)")
             }
         }
     }
-    
+
     func sendKASKeyMessage() {
         let kasKeyMessage = KASKeyMessage()
         let data = URLSessionWebSocketTask.Message.data(kasKeyMessage.toData())
         print("Sending data: \(data)")
         webSocketTask?.send(data) { error in
-            if let error = error {
+            if let error {
                 print("WebSocket sending error: \(error)")
             }
         }
@@ -241,12 +242,12 @@ class KASWebSocket {
         let data = URLSessionWebSocketTask.Message.data(rewrapMessage.toData())
         print("Sending data: \(data)")
         webSocketTask?.send(data) { error in
-            if let error = error {
+            if let error {
                 print("WebSocket sending error: \(error)")
             }
         }
     }
-    
+
     func disconnect() {
         // Close the WebSocket connection
         webSocketTask?.cancel(with: .goingAway, reason: nil)
@@ -256,6 +257,6 @@ class KASWebSocket {
 // Add this extension to Data for convenient hex string representation
 extension Data {
     func hexEncodedString() -> String {
-        return map { String(format: "%02hhx", $0) }.joined()
+        map { String(format: "%02hhx", $0) }.joined()
     }
 }

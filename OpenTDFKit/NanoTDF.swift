@@ -5,21 +5,22 @@ struct NanoTDF {
     var header: Header
     var payload: Payload
     var signature: Signature?
-#if DEBUG
-    var storedKey: SymmetricKey?
-#endif
+    #if DEBUG
+        var storedKey: SymmetricKey?
+    #endif
     func toData() -> Data {
         var data = Data()
         data.append(header.toData())
         data.append(payload.toData())
-        if let signature = signature {
+        if let signature {
             data.append(signature.toData())
         }
         return data
     }
+
     func getPayloadPlaintext(symmetricKey: SymmetricKey) throws -> Data {
         let paddedIV = CryptoHelper.adjustNonce(payload.iv, to: 12)
-        let sealedBox = try AES.GCM.SealedBox(nonce: try AES.GCM.Nonce(data: paddedIV),
+        let sealedBox = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: paddedIV),
                                               ciphertext: payload.ciphertext,
                                               tag: payload.mac)
         let decryptedData = try AES.GCM.open(sealedBox, using: symmetricKey)
@@ -185,15 +186,15 @@ struct Policy {
         data.append(type.rawValue)
         switch type {
         case .remote:
-            if let remote = remote {
+            if let remote {
                 data.append(remote.toData())
             }
         case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
-            if let body = body {
+            if let body {
                 data.append(body.toData())
             }
         }
-        if let binding = binding {
+        if let binding {
             data.append(binding)
         }
         return data
@@ -204,12 +205,12 @@ struct EmbeddedPolicyBody {
     let length: Int
     let body: Data
     let keyAccess: PolicyKeyAccess?
-    
+
     func toData() -> Data {
         var data = Data()
         data.append(UInt8(body.count)) // length
         data.append(body)
-        if let keyAccess = keyAccess {
+        if let keyAccess {
             data.append(keyAccess.toData())
         }
         return data
@@ -350,12 +351,11 @@ func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) thro
     let tdfSymmetricKey = CryptoHelper.deriveSymmetricKey(sharedSecret: sharedSecret, salt: Data("L1L".utf8), info: Data("encryption".utf8), outputByteCount: 32)
     print("TDF Symmetric Key: \(tdfSymmetricKey.withUnsafeBytes { Data($0).hexEncodedString() })")
     // Policy
-    var policyBody: Data
-    switch policy.type {
+    var policyBody: Data = switch policy.type {
     case .remote:
-        policyBody = policy.remote!.toData()
+        policy.remote!.toData()
     case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
-        policyBody = policy.body!.toData()
+        policy.body!.toData()
     }
     let gmacTag = try CryptoHelper.createGMACBinding(policyBody: policyBody, symmetricKey: tdfSymmetricKey)
     policy.binding = gmacTag
@@ -389,7 +389,7 @@ func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) thro
     let magicNumber = Data([0x4C, 0x31]) // 0x4C31 (L1L) - first 18 bits
     let version = Data([0x4C]) // version[0] & 0x3F (12) last 6 bits for version
     let curve: Curve = .secp256r1
-    var ephemeralPublicKeyData: Data = Data()
+    var ephemeralPublicKeyData = Data()
     if let ephemeralPublicKey = ephemeralPublicKey as? P256.KeyAgreement.PublicKey {
         ephemeralPublicKeyData = ephemeralPublicKey.compressedRepresentation
     }
@@ -404,12 +404,12 @@ func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) thro
                                                                   payloadCipher: .aes256GCM128),
                         policy: policy,
                         ephemeralKey: ephemeralPublicKeyData)
-#if DEBUG
-    return NanoTDF(header: header!,
-                   payload: payload,
-                   signature: nil,
-                   storedKey: tdfSymmetricKey)
-#endif
+    #if DEBUG
+        return NanoTDF(header: header!,
+                       payload: payload,
+                       signature: nil,
+                       storedKey: tdfSymmetricKey)
+    #endif
     return NanoTDF(header: header!,
                    payload: payload,
                    signature: nil)

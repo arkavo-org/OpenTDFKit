@@ -49,7 +49,7 @@ enum CryptoHelper {
     // Step 4: Derive symmetric key using HKDF
     static func deriveSymmetricKey(sharedSecret: SharedSecret, salt: Data = Data(), info: Data = Data(), outputByteCount: Int = 32) -> SymmetricKey {
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(using: SHA256.self, salt: salt, sharedInfo: info, outputByteCount: outputByteCount)
-        if info.count < 12  {
+        if info.count < 12 {
             print("dek_shared_secret \(symmetricKey.withUnsafeBytes { Data($0).hexEncodedString() })")
         }
         return symmetricKey
@@ -57,19 +57,19 @@ enum CryptoHelper {
 
     static func deriveSymmetricKey(sharedSecretKey: SymmetricKey, salt: Data = Data(), info: Data = Data(), outputByteCount: Int = 32) -> SymmetricKey {
         let symmetricKey = HKDF<SHA256>.deriveKey(inputKeyMaterial: sharedSecretKey, salt: salt, info: info, outputByteCount: outputByteCount)
-        if info.count < 12  {
+        if info.count < 12 {
             print("Derived key (first 8 bytes): \(symmetricKey.withUnsafeBytes { Data($0.prefix(8)).hexEncodedString() })")
             print("dek_shared_secret \(symmetricKey.withUnsafeBytes { Data($0).hexEncodedString() })")
         }
         return symmetricKey
     }
-    
+
     // Generate GMAC tag for the policy body
     static func createGMACBinding(policyBody: Data, symmetricKey: SymmetricKey) throws -> Data {
         let gmac = try AES.GCM.seal(policyBody, using: symmetricKey)
         return gmac.tag
     }
-    
+
     // Step 5: Generate nonce (IV)
     static func generateNonce(length: Int = 12) -> Data {
         var nonce = Data(count: length)
@@ -89,21 +89,21 @@ enum CryptoHelper {
             return paddedNonce
         }
     }
-    
+
     // Step 6: Encrypt payload using symmetric key and nonce (IV)
     static func encryptPayload(plaintext: Data, symmetricKey: SymmetricKey, nonce: Data) throws -> (ciphertext: Data, tag: Data) {
         print("Symmetric key: \(symmetricKey.withUnsafeBytes { Data($0).hexEncodedString() })")
-         print("Padded IV: \(nonce.hexEncodedString())")
+        print("Padded IV: \(nonce.hexEncodedString())")
         let sealedBox = try AES.GCM.seal(plaintext, using: symmetricKey, nonce: AES.GCM.Nonce(data: nonce))
         return (sealedBox.ciphertext, sealedBox.tag)
     }
-    
+
     // Helper function to generate ECDSA signature
     static func generateECDSASignature(privateKey: P256.Signing.PrivateKey, message: Data) throws -> Data? {
         let derSignature = try privateKey.signature(for: message).derRepresentation
         return extractRawECDSASignature(from: derSignature)
     }
-    
+
     // Helper function to extract r and s values from DER-encoded ECDSA signature
     static func extractRawECDSASignature(from derSignature: Data) -> Data? {
         var r: Data?

@@ -28,7 +28,7 @@ public class KASRest {
         request.httpBody = httpBody
 
         let task = URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
+            if let error {
                 completion(.failure(error))
                 return
             }
@@ -38,20 +38,21 @@ public class KASRest {
                 return
             }
 
-            guard (200...299).contains(httpResponse.statusCode) else {
+            guard (200 ... 299).contains(httpResponse.statusCode) else {
                 let error = NSError(domain: "KASClient", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Server returned status code \(httpResponse.statusCode)"])
                 completion(.failure(error))
                 return
             }
 
-            guard let data = data else {
+            guard let data else {
                 completion(.failure(NSError(domain: "KASClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "No data received"])))
                 return
             }
 
             do {
                 if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-                   let rewrappedKey = json["rewrappedKey"] as? String {
+                   let rewrappedKey = json["rewrappedKey"] as? String
+                {
                     completion(.success(rewrappedKey))
                 } else {
                     let error = NSError(domain: "KASClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"])

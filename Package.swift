@@ -12,17 +12,20 @@ let package = Package(
     products: [
         .library(
             name: "OpenTDFKit",
-            targets: ["OpenTDFKit"]),
+            targets: ["OpenTDFKit"]
+        ),
     ],
     dependencies: [],
     targets: [
         .target(
             name: "OpenTDFKit",
             dependencies: [],
-            path: "OpenTDFKit"),
+            path: "OpenTDFKit"
+        ),
         .testTarget(
             name: "OpenTDFKitTests",
             dependencies: ["OpenTDFKit"],
-            path: "OpenTDFKitTests")
+            path: "OpenTDFKitTests"
+        ),
     ]
 )
