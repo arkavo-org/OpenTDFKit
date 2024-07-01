@@ -351,7 +351,7 @@ func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) thro
     let tdfSymmetricKey = CryptoHelper.deriveSymmetricKey(sharedSecret: sharedSecret, salt: Data("L1L".utf8), info: Data("encryption".utf8), outputByteCount: 32)
     print("TDF Symmetric Key: \(tdfSymmetricKey.withUnsafeBytes { Data($0).hexEncodedString() })")
     // Policy
-    var policyBody: Data = switch policy.type {
+    let policyBody: Data = switch policy.type {
     case .remote:
         policy.remote!.toData()
     case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
