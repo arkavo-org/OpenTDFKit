@@ -22,4 +22,4 @@ jobs:
     - name: Test
       run: swift test --enable-code-coverage -v
     - name: Benchmark
-      run: swift OpenTDFKitTests/Benchmark.swift
+      run: swift Benchmarks/Benchmark.swift
