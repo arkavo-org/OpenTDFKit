@@ -1,6 +1,6 @@
-import XCTest
 import CryptoKit
 @testable import OpenTDFKit
+import XCTest
 
 class NanoTDFCreationTests: XCTestCase {
     func testCreateNanoTDF() throws {

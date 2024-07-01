@@ -156,16 +156,15 @@ class BinaryParser {
     }
 
     func readPolicyKeyAccess(bindingMode: PolicyBindingConfig) -> PolicyKeyAccess? {
-        let keySize: Int
-        switch bindingMode.curve {
+        let keySize = switch bindingMode.curve {
         case .secp256r1:
-            keySize = 65
+            65
         case .secp384r1:
-            keySize = 97
+            97
         case .secp521r1:
-            keySize = 133
+            133
         case .xsecp256k1:
-            keySize = 65
+            65
         }
 
         guard let resourceLocator = readResourceLocator(),
@@ -188,16 +187,15 @@ class BinaryParser {
             throw ParsingError.invalidFormat
         }
 
-        let ephemeralKeySize: Int
-        switch eccMode.curve {
+        let ephemeralKeySize = switch eccMode.curve {
         case .secp256r1:
-            ephemeralKeySize = 33
+            33
         case .secp384r1:
-            ephemeralKeySize = 49
+            49
         case .secp521r1:
-            ephemeralKeySize = 67
+            67
         case .xsecp256k1:
-            ephemeralKeySize = 33
+            33
         }
         guard let ephemeralKey = read(length: ephemeralKeySize) else {
             throw ParsingError.invalidFormat
@@ -217,7 +215,7 @@ class BinaryParser {
         let byte1 = UInt32(lengthData[0]) << 16
         let byte2 = UInt32(lengthData[1]) << 8
         let byte3 = UInt32(lengthData[2])
-        let length: UInt32 =  byte1 | byte2 | byte3
+        let length: UInt32 = byte1 | byte2 | byte3
         print("parsePayload length", length)
         // IV nonce
         guard let iv = read(length: FieldSize.payloadIvSize)
