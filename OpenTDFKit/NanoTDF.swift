@@ -147,7 +147,7 @@ public struct ResourceLocator {
     let protocolEnum: ProtocolEnum
     let body: String
 
-    init?(protocolEnum: ProtocolEnum, body: String) {
+    public init?(protocolEnum: ProtocolEnum, body: String) {
         guard body.utf8.count >= 1, body.utf8.count <= 255 else {
             print(body.utf8.count)
             return nil
