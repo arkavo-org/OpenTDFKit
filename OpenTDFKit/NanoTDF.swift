@@ -334,6 +334,11 @@ public struct KasMetadata {
     public let resourceLocator: ResourceLocator
     public let publicKey: Any
     public let curve: Curve
+    public init(resourceLocator: ResourceLocator, publicKey: Any, curve: Curve) {
+        self.resourceLocator = resourceLocator
+        self.publicKey = publicKey
+        self.curve = curve
+    }
 }
 
 public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) throws -> NanoTDF {
