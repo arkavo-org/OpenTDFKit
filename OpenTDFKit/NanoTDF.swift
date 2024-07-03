@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 public struct NanoTDF {
-    var header: Header
+    public var header: Header
     var payload: Payload
     var signature: Signature?
     #if DEBUG
