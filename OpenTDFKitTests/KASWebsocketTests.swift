@@ -4,67 +4,80 @@ import XCTest
 
 final class KASWebsocketTests: XCTestCase {
     func testEncryptDecrypt() throws {
-        let nanoTDFManager = NanoTDFManager()
-        let webSocket = KASWebSocket()
-        let plaintext = "Keep this message secret".data(using: .utf8)!
-        webSocket.setRewrapCallback { identifier, symmetricKey in
-            defer {
-                print("END setRewrapCallback")
+        measure(metrics: [XCTCPUMetric()]) {
+            let nanoTDFManager = NanoTDFManager()
+            let webSocket = KASWebSocket()
+            let plaintext = "Keep this message secret".data(using: .utf8)!
+            webSocket.setRewrapCallback { identifier, symmetricKey in
+//                defer {
+//                    print("END setRewrapCallback")
+//                }
+//                print("BEGIN setRewrapCallback")
+//                print("Received Rewrapped identifier: \(identifier.hexEncodedString())")
+//                print("Received Rewrapped Symmetric key: \(String(describing: symmetricKey))")
+                let nanoTDF = nanoTDFManager.getNanoTDF(withIdentifier: identifier)
+                nanoTDFManager.removeNanoTDF(withIdentifier: identifier)
+                let payload = nanoTDF?.payload
+                let rawIV = payload?.iv
+                // Pad the IV
+                let paddedIV = CryptoHelper.adjustNonce(rawIV!, to: 12)
+                let authTag = payload?.mac
+                let ciphertext = payload?.ciphertext
+                // Create AES-GCM SealedBox
+                do {
+//                    print("Symmetric key (first 4 bytes): \(symmetricKey!.withUnsafeBytes { Data($0.prefix(4)).hexEncodedString() })")
+//                    print("Raw IV: \(rawIV!.hexEncodedString())")
+//                    print("Padded IV: \(paddedIV.hexEncodedString())")
+//                    print("Ciphertext length: \(ciphertext!.count)")
+//                    print("Auth tag: \(authTag!.hexEncodedString())")
+                    let sealedBox = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: paddedIV),
+                                                          ciphertext: ciphertext!,
+                                                          tag: authTag!)
+//                    print("SealedBox created successfully")
+                    let dplaintext = try AES.GCM.open(sealedBox, using: symmetricKey!)
+//                    print("plaintext: \(dplaintext)")
+                    // print("Decryption successful")
+                    XCTAssertEqual(plaintext, dplaintext)
+                } catch {
+                    print("Error decryption nanoTDF payload: \(error)")
+                }
             }
-            print("BEGIN setRewrapCallback")
-            print("Received Rewrapped identifier: \(identifier.hexEncodedString())")
-            print("Received Rewrapped Symmetric key: \(String(describing: symmetricKey))")
-            let nanoTDF = nanoTDFManager.getNanoTDF(withIdentifier: identifier)
-            let payload = nanoTDF?.payload
-            let rawIV = payload?.iv
-            // Pad the IV
-            let paddedIV = CryptoHelper.adjustNonce(rawIV!, to: 12)
-            let authTag = payload?.mac
-            let ciphertext = payload?.ciphertext
-            // Create AES-GCM SealedBox
-            do {
-                print("Symmetric key (first 4 bytes): \(symmetricKey!.withUnsafeBytes { Data($0.prefix(4)).hexEncodedString() })")
-                print("Raw IV: \(rawIV!.hexEncodedString())")
-                print("Padded IV: \(paddedIV.hexEncodedString())")
-                print("Ciphertext length: \(ciphertext!.count)")
-                print("Auth tag: \(authTag!.hexEncodedString())")
-                let sealedBox = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: paddedIV),
-                                                      ciphertext: ciphertext!,
-                                                      tag: authTag!)
-                print("SealedBox created successfully")
-                let dplaintext = try AES.GCM.open(sealedBox, using: symmetricKey!)
-                print("plaintext: \(dplaintext)")
-                print("Decryption successful")
-                XCTAssertEqual(plaintext, dplaintext)
-            } catch {
-                print("Error decryption nanoTDF payload: \(error)")
+            webSocket.setKASPublicKeyCallback { publicKey in
+                let kasRL = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
+                let kasMetadata = KasMetadata(resourceLocator: kasRL!, publicKey: publicKey, curve: .secp256r1)
+                let remotePolicy = ResourceLocator(protocolEnum: .sharedResourceDirectory, body: "localhost/123")
+                var policy = Policy(type: .remote, body: nil, remote: remotePolicy, binding: nil)
+                
+                do {
+                    var i = 0;
+                    while i < 2000 {
+                        i += 1;
+                        // create
+                        let nanoTDF = try createNanoTDF(kas: kasMetadata, policy: &policy, plaintext: plaintext)
+                        // print("Encryption successful")
+                        // store nanoTDF
+                        let id = nanoTDF.header.ephemeralPublicKey
+                        nanoTDFManager.addNanoTDF(nanoTDF, withIdentifier: id)
+                        webSocket.sendRewrapMessage(header: nanoTDF.header)
+                    }
+  
+                } catch {
+                    print("Error creating nanoTDF: \(error)")
+                }
             }
+            webSocket.connect()
+            webSocket.sendPublicKey()
+            webSocket.sendKASKeyMessage()
+            // wait
+            Thread.sleep(forTimeInterval: 0.5)
+            print("+++++++++++++++++", nanoTDFManager.getCount())
+            while !nanoTDFManager.isEmpty() {
+                Thread.sleep(forTimeInterval: 0.1)
+                print("+++++++++++++++++", nanoTDFManager.getCount())
+            }
+            // Optionally, disconnect when done or needed
+            webSocket.disconnect()
         }
-        webSocket.setKASPublicKeyCallback { publicKey in
-            let kasRL = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
-            let kasMetadata = KasMetadata(resourceLocator: kasRL!, publicKey: publicKey, curve: .secp256r1)
-            let remotePolicy = ResourceLocator(protocolEnum: .sharedResourceDirectory, body: "localhost/123")
-            var policy = Policy(type: .remote, body: nil, remote: remotePolicy, binding: nil)
-
-            do {
-                // create
-                let nanoTDF = try createNanoTDF(kas: kasMetadata, policy: &policy, plaintext: plaintext)
-                print("Encryption successful")
-                // store nanoTDF
-                let id = nanoTDF.header.ephemeralPublicKey
-                nanoTDFManager.addNanoTDF(nanoTDF, withIdentifier: id)
-                webSocket.sendRewrapMessage(header: nanoTDF.header)
-            } catch {
-                print("Error creating nanoTDF: \(error)")
-            }
-        }
-        webSocket.connect()
-        webSocket.sendPublicKey()
-        webSocket.sendKASKeyMessage()
-        // wait
-        Thread.sleep(forTimeInterval: 1.0)
-        // Optionally, disconnect when done or needed
-        webSocket.disconnect()
     }
 
     func testWebsocket() throws {

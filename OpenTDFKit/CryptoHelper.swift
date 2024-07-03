@@ -1,13 +1,13 @@
 import CryptoKit
 import Foundation
 
-enum CryptoHelperError: Error {
+public enum CryptoHelperError: Error {
     case unsupportedCurve
 }
 
-enum CryptoHelper {
+public enum CryptoHelper {
     // Step 3: Generate Ephemeral Keypair based on curve
-    static func generateEphemeralKeyPair(curveType: Curve) -> (privateKey: Any, publicKey: Any)? {
+    public static func generateEphemeralKeyPair(curveType: Curve) -> (privateKey: Any, publicKey: Any)? {
         switch curveType {
         case .secp256r1:
             let privateKey = P256.KeyAgreement.PrivateKey()
@@ -27,7 +27,7 @@ enum CryptoHelper {
     }
 
     // Step 3: Derive shared secret using ECDH
-    static func deriveSharedSecret(curveType: Curve, ephemeralPrivateKey: Any, recipientPublicKey: Any) throws -> SharedSecret? {
+    public static func deriveSharedSecret(curveType: Curve, ephemeralPrivateKey: Any, recipientPublicKey: Any) throws -> SharedSecret? {
         switch curveType {
         case .secp256r1:
             let privateKey = ephemeralPrivateKey as! P256.KeyAgreement.PrivateKey
@@ -47,7 +47,7 @@ enum CryptoHelper {
     }
 
     // Step 4: Derive symmetric key using HKDF
-    static func deriveSymmetricKey(sharedSecret: SharedSecret, salt: Data = Data(), info: Data = Data(), outputByteCount: Int = 32) -> SymmetricKey {
+    public static func deriveSymmetricKey(sharedSecret: SharedSecret, salt: Data = Data(), info: Data = Data(), outputByteCount: Int = 32) -> SymmetricKey {
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(using: SHA256.self, salt: salt, sharedInfo: info, outputByteCount: outputByteCount)
 //        if info.count < 12 {
 //            print("dek_shared_secret \(symmetricKey.withUnsafeBytes { Data($0).hexEncodedString() })")
@@ -55,7 +55,7 @@ enum CryptoHelper {
         return symmetricKey
     }
 
-    static func deriveSymmetricKey(sharedSecretKey: SymmetricKey, salt: Data = Data(), info: Data = Data(), outputByteCount: Int = 32) -> SymmetricKey {
+    public static func deriveSymmetricKey(sharedSecretKey: SymmetricKey, salt: Data = Data(), info: Data = Data(), outputByteCount: Int = 32) -> SymmetricKey {
         let symmetricKey = HKDF<SHA256>.deriveKey(inputKeyMaterial: sharedSecretKey, salt: salt, info: info, outputByteCount: outputByteCount)
 //        if info.count < 12 {
 //            print("Derived key (first 8 bytes): \(symmetricKey.withUnsafeBytes { Data($0.prefix(8)).hexEncodedString() })")
@@ -65,20 +65,20 @@ enum CryptoHelper {
     }
 
     // Generate GMAC tag for the policy body
-    static func createGMACBinding(policyBody: Data, symmetricKey: SymmetricKey) throws -> Data {
+    public static func createGMACBinding(policyBody: Data, symmetricKey: SymmetricKey) throws -> Data {
         let gmac = try AES.GCM.seal(policyBody, using: symmetricKey)
         return gmac.tag
     }
 
     // Step 5: Generate nonce (IV)
-    static func generateNonce(length: Int = 12) -> Data {
+    public static func generateNonce(length: Int = 12) -> Data {
         var nonce = Data(count: length)
         _ = nonce.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, length, $0.baseAddress!) }
         return nonce
     }
 
     // Pad or trim nonce (IV) to the required length
-    static func adjustNonce(_ nonce: Data, to length: Int) -> Data {
+    public static func adjustNonce(_ nonce: Data, to length: Int) -> Data {
         if nonce.count == length {
             return nonce
         } else if nonce.count > length {
@@ -91,7 +91,7 @@ enum CryptoHelper {
     }
 
     // Step 6: Encrypt payload using symmetric key and nonce (IV)
-    static func encryptPayload(plaintext: Data, symmetricKey: SymmetricKey, nonce: Data) throws -> (ciphertext: Data, tag: Data) {
+    public static func encryptPayload(plaintext: Data, symmetricKey: SymmetricKey, nonce: Data) throws -> (ciphertext: Data, tag: Data) {
 //        print("Symmetric key: \(symmetricKey.withUnsafeBytes { Data($0).hexEncodedString() })")
 //        print("Padded IV: \(nonce.hexEncodedString())")
         let sealedBox = try AES.GCM.seal(plaintext, using: symmetricKey, nonce: AES.GCM.Nonce(data: nonce))
@@ -99,13 +99,13 @@ enum CryptoHelper {
     }
 
     // Helper function to generate ECDSA signature
-    static func generateECDSASignature(privateKey: P256.Signing.PrivateKey, message: Data) throws -> Data? {
+    public static func generateECDSASignature(privateKey: P256.Signing.PrivateKey, message: Data) throws -> Data? {
         let derSignature = try privateKey.signature(for: message).derRepresentation
         return extractRawECDSASignature(from: derSignature)
     }
 
     // Helper function to extract r and s values from DER-encoded ECDSA signature
-    static func extractRawECDSASignature(from derSignature: Data) -> Data? {
+    public static func extractRawECDSASignature(from derSignature: Data) -> Data? {
         var r: Data?
         var s: Data?
 

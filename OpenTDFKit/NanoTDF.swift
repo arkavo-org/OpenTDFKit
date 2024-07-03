@@ -96,7 +96,7 @@ public struct Signature {
     }
 }
 
-struct PolicyBindingConfig {
+public struct PolicyBindingConfig {
     // true ECDSA using creator key.  The signature is used as the binding
     // false GMAC tag is computed over the policy body using the derived symmetric key.
     var ecdsaBinding: Bool
@@ -133,7 +133,7 @@ public struct SignatureAndPayloadConfig {
     }
 }
 
-enum ProtocolEnum: UInt8 {
+public enum ProtocolEnum: UInt8 {
     case http = 0x00
     case https = 0x01
     // BEGIN out-of-spec
@@ -143,7 +143,7 @@ enum ProtocolEnum: UInt8 {
     case sharedResourceDirectory = 0xFF
 }
 
-struct ResourceLocator {
+public struct ResourceLocator {
     let protocolEnum: ProtocolEnum
     let body: String
 
@@ -167,7 +167,7 @@ struct ResourceLocator {
     }
 }
 
-struct Policy {
+public struct Policy {
     enum PolicyType: UInt8 {
         case remote = 0x00
         case embeddedPlaintext = 0x01
@@ -201,7 +201,7 @@ struct Policy {
     }
 }
 
-struct EmbeddedPolicyBody {
+public struct EmbeddedPolicyBody {
     let length: Int
     let body: Data
     let keyAccess: PolicyKeyAccess?
@@ -217,7 +217,7 @@ struct EmbeddedPolicyBody {
     }
 }
 
-struct PolicyKeyAccess {
+public struct PolicyKeyAccess {
     let resourceLocator: ResourceLocator
     let ephemeralPublicKey: Data
 
@@ -229,7 +229,7 @@ struct PolicyKeyAccess {
     }
 }
 
-enum Curve: UInt8 {
+public enum Curve: UInt8 {
     case secp256r1 = 0x00
     case secp384r1 = 0x01
     case secp521r1 = 0x02
@@ -238,7 +238,7 @@ enum Curve: UInt8 {
     // END in-spec unsupported
 }
 
-enum Cipher: UInt8 {
+public enum Cipher: UInt8 {
     case aes256GCM64 = 0x00
     case aes256GCM96 = 0x01
     case aes256GCM104 = 0x02
@@ -249,7 +249,7 @@ enum Cipher: UInt8 {
     case aes256GCM128 = 0x05
 }
 
-enum SignatureError: Error {
+public enum SignatureError: Error {
     case invalidSigning
     case invalidKey
     case invalidMessage
@@ -259,7 +259,7 @@ enum SignatureError: Error {
 }
 
 // Function to add a signature to a NanoTDF
-func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signing.PrivateKey, config: SignatureAndPayloadConfig) throws {
+public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signing.PrivateKey, config: SignatureAndPayloadConfig) throws {
     let message = nanoTDF.header.toData() + nanoTDF.payload.toData()
     guard let signatureData = try CryptoHelper.generateECDSASignature(privateKey: privateKey, message: message) else {
         throw SignatureError.invalidSigning
@@ -302,7 +302,7 @@ func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signing.Priv
 }
 
 // Initialize a NanoTDF small
-func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoTDF {
+public func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoTDF {
     let magicNumber = Data([0x4C, 0x31]) // 0x4C31 (L1L) - first 18 bits
     let version = Data([0x0C]) // version[0] & 0x3F (12) last 6 bits for version
     let curve: Curve = .secp256r1
@@ -330,13 +330,13 @@ func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoTDF {
                    signature: nil)
 }
 
-struct KasMetadata {
+public struct KasMetadata {
     let resourceLocator: ResourceLocator
     let publicKey: Any
     let curve: Curve
 }
 
-func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) throws -> NanoTDF {
+public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) throws -> NanoTDF {
     // Step 1: Generate an ephemeral key pair
     guard let (ephemeralPrivateKey, ephemeralPublicKey) = CryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
         throw NSError(domain: "CryptoError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to generate ephemeral key pair"])
