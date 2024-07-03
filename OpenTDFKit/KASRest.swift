@@ -1,6 +1,6 @@
 import Foundation
 
-public class KASRest {
+class KASRest {
     private let baseURL: String
     private let apiKey: String
 

@@ -1,10 +1,10 @@
 import Foundation
 
-class BinaryParser {
+public class BinaryParser {
     var data: Data
     var cursor: Int = 0
 
-    init(data: Data) {
+    public init(data: Data) {
         self.data = data
     }
 
@@ -121,7 +121,7 @@ class BinaryParser {
         else {
             return nil
         }
-        print("SymmetricAndPayloadConfig read serialized data:", data.map { String($0, radix: 16) })
+        // print("SymmetricAndPayloadConfig read serialized data:", data.map { String($0, radix: 16) })
         guard data.count == 1 else { return nil }
         let byte = data[0]
         let signed = (byte & 0b1000_0000) != 0
@@ -176,7 +176,7 @@ class BinaryParser {
         return PolicyKeyAccess(resourceLocator: resourceLocator, ephemeralPublicKey: ephemeralPublicKey)
     }
 
-    func parseHeader() throws -> Header {
+    public func parseHeader() throws -> Header {
         guard let magicNumber = read(length: FieldSize.magicNumberSize),
               let version = read(length: FieldSize.versionSize),
               let kas = readResourceLocator(),
@@ -207,7 +207,7 @@ class BinaryParser {
         return header
     }
 
-    func parsePayload(config: SignatureAndPayloadConfig) throws -> Payload {
+    public func parsePayload(config: SignatureAndPayloadConfig) throws -> Payload {
         guard let lengthData = read(length: FieldSize.payloadLengthSize)
         else {
             throw ParsingError.invalidFormat
@@ -252,7 +252,7 @@ class BinaryParser {
         return payload
     }
 
-    func parseSignature(config: SignatureAndPayloadConfig) throws -> Signature? {
+    public func parseSignature(config: SignatureAndPayloadConfig) throws -> Signature? {
         if !config.signed {
             return nil
         }

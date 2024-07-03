@@ -45,7 +45,7 @@ struct RewrappedKeyMessage {
     }
 }
 
-class KASWebSocket {
+public class KASWebSocket {
     private var webSocketTask: URLSessionWebSocketTask?
     private let urlSession: URLSession
     private let myPrivateKey: P256.KeyAgreement.PrivateKey!
@@ -54,24 +54,24 @@ class KASWebSocket {
     private var rewrapCallback: ((Data, SymmetricKey?) -> Void)?
     private var kasPublicKeyCallback: ((P256.KeyAgreement.PublicKey) -> Void)?
 
-    init() {
+    public init() {
         // create key
         myPrivateKey = P256.KeyAgreement.PrivateKey()
         // Initialize a URLSession with a default configuration
         urlSession = URLSession(configuration: .default)
     }
 
-    func setRewrapCallback(_ callback: @escaping (Data, SymmetricKey?) -> Void) {
+    public func setRewrapCallback(_ callback: @escaping (Data, SymmetricKey?) -> Void) {
         rewrapCallback = callback
     }
 
-    func setKASPublicKeyCallback(_ callback: @escaping (P256.KeyAgreement.PublicKey) -> Void) {
+    public func setKASPublicKeyCallback(_ callback: @escaping (P256.KeyAgreement.PublicKey) -> Void) {
         kasPublicKeyCallback = callback
     }
 
-    func connect() {
+    public func connect() {
         // Create the WebSocket task with the specified URL
-        let url = URL(string: "ws://localhost:8080")!
+        let url = URL(string: "wss://kas.arkavo.net")!
         webSocketTask = urlSession.webSocketTask(with: url)
         webSocketTask?.resume()
         // Start receiving messages
@@ -212,7 +212,7 @@ class KASWebSocket {
         }
     }
 
-    func sendPublicKey() {
+    public func sendPublicKey() {
         let myPublicKey = myPrivateKey.publicKey
 //        let hexData = myPublicKey.compressedRepresentation.map { String(format: "%02x", $0) }.joined()
         // print("Client Public Key: \(hexData)")
@@ -226,7 +226,7 @@ class KASWebSocket {
         }
     }
 
-    func sendKASKeyMessage() {
+    public func sendKASKeyMessage() {
         let kasKeyMessage = KASKeyMessage()
         let data = URLSessionWebSocketTask.Message.data(kasKeyMessage.toData())
         // print("Sending data: \(data)")
@@ -237,7 +237,7 @@ class KASWebSocket {
         }
     }
 
-    func sendRewrapMessage(header: Header) {
+    public func sendRewrapMessage(header: Header) {
         let rewrapMessage = RewrapMessage(header: header)
         let data = URLSessionWebSocketTask.Message.data(rewrapMessage.toData())
         // print("Sending data: \(data)")
@@ -248,7 +248,7 @@ class KASWebSocket {
         }
     }
 
-    func disconnect() {
+    public func disconnect() {
         // Close the WebSocket connection
         webSocketTask?.cancel(with: .goingAway, reason: nil)
     }
