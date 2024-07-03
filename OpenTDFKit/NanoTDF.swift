@@ -331,9 +331,9 @@ public func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoT
 }
 
 public struct KasMetadata {
-    let resourceLocator: ResourceLocator
-    let publicKey: Any
-    let curve: Curve
+    public let resourceLocator: ResourceLocator
+    public let publicKey: Any
+    public let curve: Curve
 }
 
 public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) throws -> NanoTDF {
