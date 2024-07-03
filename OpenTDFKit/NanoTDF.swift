@@ -168,7 +168,7 @@ public struct ResourceLocator {
 }
 
 public struct Policy {
-    enum PolicyType: UInt8 {
+    public enum PolicyType: UInt8 {
         case remote = 0x00
         case embeddedPlaintext = 0x01
         case embeddedEncrypted = 0x02
@@ -180,6 +180,13 @@ public struct Policy {
     let body: EmbeddedPolicyBody?
     let remote: ResourceLocator?
     var binding: Data?
+    
+    public init(type: PolicyType, body: EmbeddedPolicyBody?, remote: ResourceLocator?, binding: Data? = nil) {
+        self.type = type
+        self.body = body
+        self.remote = remote
+        self.binding = binding
+    }
 
     func toData() -> Data {
         var data = Data()
