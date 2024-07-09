@@ -6,7 +6,8 @@ final class KASWebsocketTests: XCTestCase {
     func testEncryptDecrypt() throws {
         measure(metrics: [XCTCPUMetric()]) {
             let nanoTDFManager = NanoTDFManager()
-            let webSocket = KASWebSocket()
+            let webSocket = KASWebSocket(kasUrl: URL(string: "wss://kas.arkavo.net")!)
+//            let webSocket = KASWebSocket(kasUrl: URL(string: "ws://localhost:8080")!)
             let plaintext = "Keep this message secret".data(using: .utf8)!
             webSocket.setRewrapCallback { identifier, symmetricKey in
 //                defer {
@@ -17,6 +18,10 @@ final class KASWebsocketTests: XCTestCase {
 //                print("Received Rewrapped Symmetric key: \(String(describing: symmetricKey))")
                 let nanoTDF = nanoTDFManager.getNanoTDF(withIdentifier: identifier)
                 nanoTDFManager.removeNanoTDF(withIdentifier: identifier)
+                if symmetricKey == nil {
+                    // DENY
+                    return
+                }
                 let payload = nanoTDF?.payload
                 let rawIV = payload?.iv
                 // Pad the IV
@@ -45,7 +50,7 @@ final class KASWebsocketTests: XCTestCase {
             webSocket.setKASPublicKeyCallback { publicKey in
                 let kasRL = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
                 let kasMetadata = KasMetadata(resourceLocator: kasRL!, publicKey: publicKey, curve: .secp256r1)
-                let remotePolicy = ResourceLocator(protocolEnum: .sharedResourceDirectory, body: "localhost/123")
+                let remotePolicy = ResourceLocator(protocolEnum: .sharedResourceDirectory, body: "5Cqk3ERPToSMuY8UoKJtcmo4fs1iVyQpq6ndzWzpzWezAF1W")
                 var policy = Policy(type: .remote, body: nil, remote: remotePolicy, binding: nil)
                 
                 do {
@@ -81,7 +86,7 @@ final class KASWebsocketTests: XCTestCase {
     }
 
     func testWebsocket() throws {
-        let webSocket = KASWebSocket()
+        let webSocket = KASWebSocket(kasUrl: URL(string: "ws://localhost:8080")!)
         let expectation = XCTestExpectation(description: "Receive rewrapped key")
         // Create a 33-byte identifier
         let testIdentifier = Data((0 ..< 33).map { _ in UInt8.random(in: 0 ... 255) })
@@ -111,7 +116,7 @@ final class KASWebsocketTests: XCTestCase {
         // Send a request for KAS key for encrypt
 //        webSocket.sendKASKeyMessage()
         // wait
-        Thread.sleep(forTimeInterval: 2.0)
+        Thread.sleep(forTimeInterval: 1.0)
         // Optionally, disconnect when done or needed
         webSocket.disconnect()
     }
