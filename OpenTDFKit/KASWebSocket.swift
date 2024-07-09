@@ -53,12 +53,14 @@ public class KASWebSocket {
     private var salt: Data?
     private var rewrapCallback: ((Data, SymmetricKey?) -> Void)?
     private var kasPublicKeyCallback: ((P256.KeyAgreement.PublicKey) -> Void)?
+    private let kasUrl: URL
 
-    public init() {
+    public init(kasUrl: URL) {
         // create key
         myPrivateKey = P256.KeyAgreement.PrivateKey()
         // Initialize a URLSession with a default configuration
         urlSession = URLSession(configuration: .default)
+        self.kasUrl = kasUrl
     }
 
     public func setRewrapCallback(_ callback: @escaping (Data, SymmetricKey?) -> Void) {
@@ -71,8 +73,7 @@ public class KASWebSocket {
 
     public func connect() {
         // Create the WebSocket task with the specified URL
-        let url = URL(string: "wss://kas.arkavo.net")!
-        webSocketTask = urlSession.webSocketTask(with: url)
+        webSocketTask = urlSession.webSocketTask(with: kasUrl)
         webSocketTask?.resume()
         // Start receiving messages
         receiveMessage()
@@ -170,7 +171,12 @@ public class KASWebSocket {
 //        print("BEGIN handleRewrappedKeyMessage")
         // print("wrapped_dek_shared_secret \(data.hexEncodedString())")
         guard data.count == 93 else {
-            print("Received data is not the expected 93 bytes (33 for identifier + 60 for key)")
+            if data.count == 33 {
+                // DENY -- Notify the app with the identifier
+                rewrapCallback?(data, nil)
+                return
+            }
+            print("RewrappedKeyMessage not the expected 93 bytes (33 for identifier + 60 for key): \(data.count)")
             return
         }
         let identifier = data.prefix(33)
