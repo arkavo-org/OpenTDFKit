@@ -18,7 +18,7 @@ public struct NanoTDF {
         return data
     }
 
-    func getPayloadPlaintext(symmetricKey: SymmetricKey) throws -> Data {
+    public func getPayloadPlaintext(symmetricKey: SymmetricKey) throws -> Data {
         let paddedIV = CryptoHelper.adjustNonce(payload.iv, to: 12)
         let sealedBox = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: paddedIV),
                                               ciphertext: payload.ciphertext,
