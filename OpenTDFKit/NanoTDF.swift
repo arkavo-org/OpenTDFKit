@@ -35,7 +35,7 @@ public struct Header {
     let policyBindingConfig: PolicyBindingConfig
     var payloadSignatureConfig: SignatureAndPayloadConfig
     let policy: Policy
-    let ephemeralPublicKey: Data
+    public let ephemeralPublicKey: Data
 
     init?(magicNumber: Data, version: Data, kas: ResourceLocator, eccMode: PolicyBindingConfig, payloadSigMode: SignatureAndPayloadConfig, policy: Policy, ephemeralKey: Data) {
         // Validate magicNumber
