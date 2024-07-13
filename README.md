@@ -2,6 +2,24 @@
 
 Swift toolkit for OpenTDF (unofficial)
 
+## Usage
+
+Decrypt after rewrap
+
+```swift
+let decryptedData = try nanoTDF.getPayloadPlaintext(symmetricKey: symmetricKey)
+```
+
+Create
+
+```swift
+let kasRL = ResourceLocator(protocolEnum: .http, body: "kas.arkavo.net")
+let kasMetadata = KasMetadata(resourceLocator: kasRL!, publicKey: publicKey, curve: .secp256r1)
+let remotePolicy = ResourceLocator(protocolEnum: .sharedResourceDirectory, body: "5Cqk3ERPToSMuY8UoKJtcmo4fs1iVyQpq6ndzWzpzWezAF1W")
+var policy = Policy(type: .remote, body: nil, remote: remotePolicy, binding: nil)
+let nanoTDF = try createNanoTDF(kas: kasMetadata, policy: &policy, plaintext: "hello".data(using: .utf8)!)
+```
+
 ## Feature
 
 - [OpenTDF nanotdf specification](https://github.com/opentdf/spec/tree/main/schema/nanotdf)
