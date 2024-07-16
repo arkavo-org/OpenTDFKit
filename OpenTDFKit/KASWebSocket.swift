@@ -10,25 +10,25 @@ public enum WebSocketConnectionState {
 
 public class KASWebSocket {
     private var webSocketTask: URLSessionWebSocketTask?
-    private let urlSession: URLSession
+    private var urlSession: URLSession?
     private let myPrivateKey: P256.KeyAgreement.PrivateKey!
     private var sharedSecret: SharedSecret?
     private var salt: Data?
     private var rewrapCallback: ((Data, SymmetricKey?) -> Void)?
     private var kasPublicKeyCallback: ((P256.KeyAgreement.PublicKey) -> Void)?
     private let kasUrl: URL
+    private let token: String
     
     private let connectionStateSubject = CurrentValueSubject<WebSocketConnectionState, Never>(.disconnected)
     public var connectionStatePublisher: AnyPublisher<WebSocketConnectionState, Never> {
         connectionStateSubject.eraseToAnyPublisher()
     }
 
-    public init(kasUrl: URL) {
+    public init(kasUrl: URL, token: String) {
         // create key
         myPrivateKey = P256.KeyAgreement.PrivateKey()
-        // Initialize a URLSession with a default configuration
-        urlSession = URLSession(configuration: .default)
         self.kasUrl = kasUrl
+        self.token = token
     }
 
     public func setRewrapCallback(_ callback: @escaping (Data, SymmetricKey?) -> Void) {
@@ -41,8 +41,20 @@ public class KASWebSocket {
 
     public func connect() {
         connectionStateSubject.send(.connecting)
-        webSocketTask = urlSession.webSocketTask(with: kasUrl)
+        // Create a URLRequest object with the WebSocket URL
+        var request = URLRequest(url: kasUrl)
+        // Add the Authorization header to the request
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        // Initialize a URLSession with a default configuration
+        urlSession = URLSession(configuration: .default)
+        webSocketTask = urlSession!.webSocketTask(with: request)
         webSocketTask?.resume()
+        let tokenMessage = URLSessionWebSocketTask.Message.string(token)
+        webSocketTask?.send(tokenMessage) { error in
+            if let error {
+                print("token sending error: \(error)")
+            }
+        }
         // Start receiving messages
         receiveMessage()
         pingPeriodically()
