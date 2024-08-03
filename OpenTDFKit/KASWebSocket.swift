@@ -16,6 +16,7 @@ public class KASWebSocket {
     private var salt: Data?
     private var rewrapCallback: ((Data, SymmetricKey?) -> Void)?
     private var kasPublicKeyCallback: ((P256.KeyAgreement.PublicKey) -> Void)?
+    private var customMessageCallback: ((Data) -> Void)?
     private let kasUrl: URL
     private let token: String
     
@@ -39,6 +40,20 @@ public class KASWebSocket {
         kasPublicKeyCallback = callback
     }
 
+    public func setCustomMessageCallback(_ callback: @escaping (Data) -> Void) {
+        customMessageCallback = callback
+    }
+    
+    public func sendCustomMessage(_ message: Data, completion: @escaping (Error?) -> Void) {
+        let task = URLSessionWebSocketTask.Message.data(message)
+        webSocketTask?.send(task) { error in
+            if let error = error {
+                print("Error sending custom message: \(error)")
+            }
+            completion(error)
+        }
+    }
+    
     public func connect() {
         connectionStateSubject.send(.connecting)
         // Create a URLRequest object with the WebSocket URL
@@ -108,7 +123,7 @@ public class KASWebSocket {
         case Data([0x04]):
             handleRewrappedKeyMessage(data: data.suffix(from: 1))
         default:
-            print("Unknown message type")
+            customMessageCallback?(data)
         }
     }
 
