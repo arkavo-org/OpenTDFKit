@@ -8,7 +8,7 @@ public struct NanoTDF {
     #if DEBUG
         var storedKey: SymmetricKey?
     #endif
-    func toData() -> Data {
+    public func toData() -> Data {
         var data = Data()
         data.append(header.toData())
         data.append(payload.toData())
