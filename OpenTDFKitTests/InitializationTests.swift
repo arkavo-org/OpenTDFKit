@@ -15,7 +15,6 @@ final class InitializationTests: XCTestCase {
         XCTAssertNotNil(locator)
         let nanoTDF = initializeSmallNanoTDF(kasResourceLocator: locator!)
         // Validate the Header
-        XCTAssertEqual(nanoTDF.header.version, UInt8(0x0C))
         XCTAssertEqual(nanoTDF.header.kas.protocolEnum, locator!.protocolEnum)
         XCTAssertEqual(nanoTDF.header.kas.body, locator!.body)
         // Validate the Payload
@@ -40,7 +39,6 @@ final class InitializationTests: XCTestCase {
       
         // Test valid header creation
         XCTAssertNoThrow(Header(
-            version: UInt8(0x0C),
             kas: locator!,
             policyBindingConfig: PolicyBindingConfig(ecdsaBinding: false, curve: .secp256r1),
             payloadSignatureConfig: SignatureAndPayloadConfig(signed: false, signatureCurve: nil, payloadCipher: .aes256GCM128),

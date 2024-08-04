@@ -215,7 +215,6 @@ public class BinaryParser {
         }
 
         return Header(
-            version: version,
             kas: kas,
             policyBindingConfig: policyBindingConfig,
             payloadSignatureConfig: payloadSignatureConfig,
