@@ -34,14 +34,14 @@ public struct NanoTDF {
 
 public struct Header {
     public static let magicNumber = Data([0x4C, 0x31]) // 0x4C31 (L1L) - first 18 bits
-    public let version: Data
+    public let version: UInt8
     public let kas: ResourceLocator
     public let policyBindingConfig: PolicyBindingConfig
     public var payloadSignatureConfig: SignatureAndPayloadConfig
     public let policy: Policy
     public let ephemeralPublicKey: Data
 
-    public init(version: Data, kas: ResourceLocator, policyBindingConfig: PolicyBindingConfig, payloadSignatureConfig: SignatureAndPayloadConfig, policy: Policy, ephemeralPublicKey: Data) {
+    public init(version: UInt8, kas: ResourceLocator, policyBindingConfig: PolicyBindingConfig, payloadSignatureConfig: SignatureAndPayloadConfig, policy: Policy, ephemeralPublicKey: Data) {
         self.version = version
         self.kas = kas
         self.policyBindingConfig = policyBindingConfig
@@ -314,7 +314,7 @@ public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signi
 
 // Initialize a NanoTDF small
 public func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoTDF {
-    let version = Data([0x0C]) // version[0] & 0x3F (12) last 6 bits for version
+    let version = UInt8(0x0C) // version[0] & 0x3F (12) last 6 bits for version
     let curve: Curve = .secp256r1
     let header = Header(
         version: version,
@@ -398,7 +398,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
                           ciphertext: ciphertext,
                           mac: tag)
     // Header
-    let version = Data([0x4C]) // version[0] & 0x3F (12) last 6 bits for version
+    let version = UInt8(0x0C) // version[0] & 0x3F (12) last 6 bits for version
     let curve: Curve = .secp256r1
     var ephemeralPublicKeyData = Data()
     if let ephemeralPublicKey = ephemeralPublicKey as? P256.KeyAgreement.PublicKey {

@@ -177,10 +177,22 @@ public class BinaryParser {
     }
 
     public func parseHeader() throws -> Header {
-        guard let readMagicNumber = read(length: FieldSize.magicNumberSize),
-              readMagicNumber == Header.magicNumber,
-              let version = read(length: FieldSize.versionSize),
-              let kas = readResourceLocator(),
+        print("Starting to parse header")
+        
+        guard let magicNumber = read(length: FieldSize.magicNumberSize) else {
+            throw ParsingError.invalidFormat
+        }
+        print("Read Magic Number: \(magicNumber), Expected: \(Header.magicNumber)")
+        guard magicNumber == Header.magicNumber else {
+            throw ParsingError.invalidMagicNumber
+        }
+        
+        guard let versionData = read(length: FieldSize.versionSize) else {
+            throw ParsingError.invalidFormat
+        }
+        let version = versionData[0]
+        print("Version: \(String(format: "%02X", version))")
+        guard let kas = readResourceLocator(),
               let policyBindingConfig = readEccAndBindingMode(),
               let payloadSignatureConfig = readSymmetricAndPayloadConfig(),
               let policy = readPolicyField(bindingMode: policyBindingConfig)

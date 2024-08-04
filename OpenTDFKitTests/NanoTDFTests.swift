@@ -208,9 +208,6 @@ final class NanoTDFTests: XCTestCase {
         do {
             let header = try parser.parseHeader()
             print("Parsed Header:", header)
-            // Version
-            let versionHexString = header.version.map { String(format: "%02x", $0) }.joined(separator: " ")
-            print("Version Hex:", versionHexString)
             // KAS
             print("KAS:", header.kas.body)
             if header.kas.body != "kas.example.com" {
