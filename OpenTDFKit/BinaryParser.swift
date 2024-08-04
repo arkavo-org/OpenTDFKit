@@ -308,7 +308,7 @@ enum FieldSize {
     static let maxPayloadMacSize = 32
 }
 
-enum ParsingError: Error {
+public enum ParsingError: Error {
     case invalidFormat
     case invalidMagicNumber
     case invalidVersion
