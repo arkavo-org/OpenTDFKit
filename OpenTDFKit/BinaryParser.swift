@@ -9,6 +9,8 @@ public class BinaryParser {
     }
 
     func read(length: Int) -> Data? {
+        guard cursor >= 0 else { return nil }
+        guard !data.isEmpty else { return nil }
         guard cursor + length <= data.count else { return nil }
         let range = cursor ..< (cursor + length)
         cursor += length
@@ -26,11 +28,11 @@ public class BinaryParser {
         else {
             return nil
         }
-        let bodyLengthlHex = String(format: "%02x", bodyLength)
-        print("Body Length Hex:", bodyLengthlHex)
-        let bodyHexString = body.map { String(format: "%02x", $0) }.joined(separator: " ")
-        print("Body Hex:", bodyHexString)
-        print("bodyString: \(bodyString)")
+//        let bodyLengthlHex = String(format: "%02x", bodyLength)
+//        print("Body Length Hex:", bodyLengthlHex)
+//        let bodyHexString = body.map { String(format: "%02x", $0) }.joined(separator: " ")
+//        print("Body Hex:", bodyHexString)
+//        print("bodyString: \(bodyString)")
         return ResourceLocator(protocolEnum: protocolEnumValue, body: bodyString)
     }
 
@@ -100,8 +102,8 @@ public class BinaryParser {
             print("Failed to read BindingMode")
             return nil
         }
-        let eccModeHex = String(format: "%02x", eccAndBindingMode)
-        print("ECC Mode Hex:", eccModeHex)
+//        let eccModeHex = String(format: "%02x", eccAndBindingMode)
+//        print("ECC Mode Hex:", eccModeHex)
         let ecdsaBinding = (eccAndBindingMode & (1 << 7)) != 0
         let ephemeralECCParamsEnumValue = Curve(rawValue: eccAndBindingMode & 0x7)
 
@@ -110,8 +112,8 @@ public class BinaryParser {
             return nil
         }
 
-        print("ecdsaBinding: \(ecdsaBinding)")
-        print("ephemeralECCParamsEnum: \(ephemeralECCParamsEnum)")
+//        print("ecdsaBinding: \(ecdsaBinding)")
+//        print("ephemeralECCParamsEnum: \(ephemeralECCParamsEnum)")
 
         return PolicyBindingConfig(ecdsaBinding: ecdsaBinding, curve: ephemeralECCParamsEnum)
     }
@@ -137,7 +139,7 @@ public class BinaryParser {
 
     func readPolicyBinding(bindingMode: PolicyBindingConfig) -> Data? {
         var bindingSize: Int
-        print("bindingMode", bindingMode)
+//        print("bindingMode", bindingMode)
         if bindingMode.ecdsaBinding {
             switch bindingMode.curve {
             case .secp256r1, .xsecp256k1:
@@ -151,7 +153,7 @@ public class BinaryParser {
             // GMAC Tag Binding
             bindingSize = 16
         }
-        print("bindingSize", bindingSize)
+//        print("bindingSize", bindingSize)
         return read(length: bindingSize)
     }
 
@@ -177,17 +179,34 @@ public class BinaryParser {
     }
 
     public func parseHeader() throws -> Header {
-        guard let magicNumber = read(length: FieldSize.magicNumberSize),
-              let version = read(length: FieldSize.versionSize),
-              let kas = readResourceLocator(),
-              let eccMode = readEccAndBindingMode(),
-              let payloadSigMode = readSymmetricAndPayloadConfig(),
-              let policy = readPolicyField(bindingMode: eccMode)
+//        print("Starting to parse header")
+        
+        guard let magicNumber = read(length: FieldSize.magicNumberSize) else {
+            throw ParsingError.invalidFormat
+        }
+//        print("Read Magic Number: \(magicNumber), Expected: \(Header.magicNumber)")
+        guard magicNumber == Header.magicNumber else {
+            throw ParsingError.invalidMagicNumber
+        }
+        
+        guard let versionData = read(length: FieldSize.versionSize) else {
+            throw ParsingError.invalidFormat
+        }
+        let versionDataInt = Int(versionData[0])
+        guard versionDataInt == Header.version else {
+            throw ParsingError.invalidVersion
+        }
+//        let version = versionData[0]
+//        print("Version: \(String(format: "%02X", version))")
+        guard let kas = readResourceLocator(),
+              let policyBindingConfig = readEccAndBindingMode(),
+              let payloadSignatureConfig = readSymmetricAndPayloadConfig(),
+              let policy = readPolicyField(bindingMode: policyBindingConfig)
         else {
             throw ParsingError.invalidFormat
         }
 
-        let ephemeralKeySize = switch eccMode.curve {
+        let ephemeralPublicKeySize = switch policyBindingConfig.curve {
         case .secp256r1:
             33
         case .secp384r1:
@@ -197,14 +216,17 @@ public class BinaryParser {
         case .xsecp256k1:
             33
         }
-        guard let ephemeralKey = read(length: ephemeralKeySize) else {
+        guard let ephemeralPublicKey = read(length: ephemeralPublicKeySize) else {
             throw ParsingError.invalidFormat
         }
 
-        guard let header = Header(magicNumber: magicNumber, version: version, kas: kas, eccMode: eccMode, payloadSigMode: payloadSigMode, policy: policy, ephemeralKey: ephemeralKey) else {
-            throw ParsingError.invalidMagicNumber
-        }
-        return header
+        return Header(
+            kas: kas,
+            policyBindingConfig: policyBindingConfig,
+            payloadSignatureConfig: payloadSignatureConfig,
+            policy: policy,
+            ephemeralPublicKey: ephemeralPublicKey
+        )
     }
 
     public func parsePayload(config: SignatureAndPayloadConfig) throws -> Payload {
@@ -216,7 +238,7 @@ public class BinaryParser {
         let byte2 = UInt32(lengthData[1]) << 8
         let byte3 = UInt32(lengthData[2])
         let length: UInt32 = byte1 | byte2 | byte3
-        print("parsePayload length", length)
+//        print("parsePayload length", length)
         // IV nonce
         guard let iv = read(length: FieldSize.payloadIvSize)
         else {
@@ -242,7 +264,7 @@ public class BinaryParser {
         }
         // cipherText
         let cipherTextLength = Int(length) - payloadMACSize - FieldSize.payloadIvSize
-        print("cipherTextLength", cipherTextLength)
+//        print("cipherTextLength", cipherTextLength)
         guard let ciphertext = read(length: cipherTextLength),
               let payloadMAC = read(length: payloadMACSize)
         else {
@@ -258,7 +280,7 @@ public class BinaryParser {
         }
         let publicKeyLength: Int
         let signatureLength: Int
-        print("config.signatureECCMode", config)
+//        print("config.signatureECCMode", config)
         switch config.signatureCurve {
         case .secp256r1, .xsecp256k1:
             publicKeyLength = 33
@@ -273,8 +295,8 @@ public class BinaryParser {
             print("signatureECCMode not found")
             throw ParsingError.invalidFormat
         }
-        print("publicKeyLength", publicKeyLength)
-        print("signatureLength", signatureLength)
+//        print("publicKeyLength", publicKeyLength)
+//        print("signatureLength", signatureLength)
         guard let publicKey = read(length: publicKeyLength),
               let signature = read(length: signatureLength)
         else {
@@ -303,7 +325,7 @@ enum FieldSize {
     static let maxPayloadMacSize = 32
 }
 
-enum ParsingError: Error {
+public enum ParsingError: Error {
     case invalidFormat
     case invalidMagicNumber
     case invalidVersion

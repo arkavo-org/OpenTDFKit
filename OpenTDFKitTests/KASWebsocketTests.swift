@@ -6,8 +6,8 @@ final class KASWebsocketTests: XCTestCase {
     func testEncryptDecrypt() throws {
         measure(metrics: [XCTCPUMetric()]) {
             let nanoTDFManager = NanoTDFManager()
-            let webSocket = KASWebSocket(kasUrl: URL(string: "wss://kas.arkavo.net")!)
-//            let webSocket = KASWebSocket(kasUrl: URL(string: "ws://localhost:8080")!)
+            let webSocket = KASWebSocket(kasUrl: URL(string: "wss://kas.arkavo.net")!, token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c")
+//            let webSocket = KASWebSocket(kasUrl: URL(string: "ws://localhost:8080")!, token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c")
             let plaintext = "Keep this message secret".data(using: .utf8)!
             webSocket.setRewrapCallback { identifier, symmetricKey in
 //                defer {
@@ -86,7 +86,7 @@ final class KASWebsocketTests: XCTestCase {
     }
 
     func testWebsocket() throws {
-        let webSocket = KASWebSocket(kasUrl: URL(string: "ws://localhost:8080")!)
+        let webSocket = KASWebSocket(kasUrl: URL(string: "ws://localhost:8080")!, token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c")
         let expectation = XCTestExpectation(description: "Receive rewrapped key")
         // Create a 33-byte identifier
         let testIdentifier = Data((0 ..< 33).map { _ in UInt8.random(in: 0 ... 255) })

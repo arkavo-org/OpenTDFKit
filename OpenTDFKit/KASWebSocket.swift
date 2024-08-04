@@ -1,66 +1,35 @@
 import CryptoKit
 import Foundation
+import Combine
 
-struct KASKeyMessage {
-    let messageType: Data = .init([0x02])
-
-    func toData() -> Data {
-        messageType
-    }
-}
-
-struct PublicKeyMessage {
-    let messageType: Data = .init([0x01])
-    let publicKey: Data
-
-    func toData() -> Data {
-        var data = Data()
-        data.append(messageType)
-        data.append(publicKey)
-        return data
-    }
-}
-
-struct RewrapMessage {
-    let messageType: Data = .init([0x03])
-    let header: Header
-
-    func toData() -> Data {
-        var data = Data()
-        data.append(messageType)
-        data.append(header.toData())
-        return data
-    }
-}
-
-struct RewrappedKeyMessage {
-    let messageType: Data = .init([0x04])
-    let rewrappedKey: Data
-
-    func toData() -> Data {
-        var data = Data()
-        data.append(messageType)
-        data.append(rewrappedKey)
-        return data
-    }
+public enum WebSocketConnectionState {
+    case disconnected
+    case connecting
+    case connected
 }
 
 public class KASWebSocket {
     private var webSocketTask: URLSessionWebSocketTask?
-    private let urlSession: URLSession
+    private var urlSession: URLSession?
     private let myPrivateKey: P256.KeyAgreement.PrivateKey!
     private var sharedSecret: SharedSecret?
     private var salt: Data?
     private var rewrapCallback: ((Data, SymmetricKey?) -> Void)?
     private var kasPublicKeyCallback: ((P256.KeyAgreement.PublicKey) -> Void)?
+    private var customMessageCallback: ((Data) -> Void)?
     private let kasUrl: URL
+    private let token: String
+    
+    private let connectionStateSubject = CurrentValueSubject<WebSocketConnectionState, Never>(.disconnected)
+    public var connectionStatePublisher: AnyPublisher<WebSocketConnectionState, Never> {
+        connectionStateSubject.eraseToAnyPublisher()
+    }
 
-    public init(kasUrl: URL) {
+    public init(kasUrl: URL, token: String) {
         // create key
         myPrivateKey = P256.KeyAgreement.PrivateKey()
-        // Initialize a URLSession with a default configuration
-        urlSession = URLSession(configuration: .default)
         self.kasUrl = kasUrl
+        self.token = token
     }
 
     public func setRewrapCallback(_ callback: @escaping (Data, SymmetricKey?) -> Void) {
@@ -71,12 +40,54 @@ public class KASWebSocket {
         kasPublicKeyCallback = callback
     }
 
+    public func setCustomMessageCallback(_ callback: @escaping (Data) -> Void) {
+        customMessageCallback = callback
+    }
+    
+    public func sendCustomMessage(_ message: Data, completion: @escaping (Error?) -> Void) {
+        let task = URLSessionWebSocketTask.Message.data(message)
+        webSocketTask?.send(task) { error in
+            if let error = error {
+                print("Error sending custom message: \(error)")
+            }
+            completion(error)
+        }
+    }
+    
     public func connect() {
-        // Create the WebSocket task with the specified URL
-        webSocketTask = urlSession.webSocketTask(with: kasUrl)
+        connectionStateSubject.send(.connecting)
+        // Create a URLRequest object with the WebSocket URL
+        var request = URLRequest(url: kasUrl)
+        // Add the Authorization header to the request
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        // Initialize a URLSession with a default configuration
+        urlSession = URLSession(configuration: .default)
+        webSocketTask = urlSession!.webSocketTask(with: request)
         webSocketTask?.resume()
+        let tokenMessage = URLSessionWebSocketTask.Message.string(token)
+        webSocketTask?.send(tokenMessage) { error in
+            if let error {
+                print("token sending error: \(error)")
+            }
+        }
         // Start receiving messages
         receiveMessage()
+        pingPeriodically()
+    }
+
+    private func pingPeriodically() {
+        webSocketTask?.sendPing { [weak self] error in
+            if let error = error {
+                print("Error sending ping: \(error)")
+                self?.connectionStateSubject.send(.disconnected)
+            } else {
+                self?.connectionStateSubject.send(.connected)
+            }
+            // Schedule next ping
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                self?.pingPeriodically()
+            }
+        }
     }
 
     private func receiveMessage() {
@@ -84,7 +95,9 @@ public class KASWebSocket {
             switch result {
             case let .failure(error):
                 print("Failed to receive message: \(error)")
+                self?.connectionStateSubject.send(.disconnected)
             case let .success(message):
+                self?.connectionStateSubject.send(.connected)
                 switch message {
                 case let .string(text):
                     print("Received string: \(text)")
@@ -93,7 +106,6 @@ public class KASWebSocket {
                 @unknown default:
                     fatalError()
                 }
-
                 // Continue receiving messages
                 self?.receiveMessage()
             }
@@ -111,7 +123,7 @@ public class KASWebSocket {
         case Data([0x04]):
             handleRewrappedKeyMessage(data: data.suffix(from: 1))
         default:
-            print("Unknown message type")
+            customMessageCallback?(data)
         }
     }
 
@@ -254,9 +266,19 @@ public class KASWebSocket {
         }
     }
 
+    public func sendPing(completionHandler: @escaping (Error?) -> Void) {
+        webSocketTask?.sendPing { error in
+            if let error = error {
+                print("Error sending ping: \(error)")
+            }
+            completionHandler(error)
+        }
+    }
+
+    
     public func disconnect() {
-        // Close the WebSocket connection
         webSocketTask?.cancel(with: .goingAway, reason: nil)
+        connectionStateSubject.send(.disconnected)
     }
 }
 
@@ -264,5 +286,49 @@ public class KASWebSocket {
 extension Data {
     func hexEncodedString() -> String {
         map { String(format: "%02hhx", $0) }.joined()
+    }
+}
+
+struct KASKeyMessage {
+    let messageType: Data = .init([0x02])
+
+    func toData() -> Data {
+        messageType
+    }
+}
+
+struct PublicKeyMessage {
+    let messageType: Data = .init([0x01])
+    let publicKey: Data
+
+    func toData() -> Data {
+        var data = Data()
+        data.append(messageType)
+        data.append(publicKey)
+        return data
+    }
+}
+
+struct RewrapMessage {
+    let messageType: Data = .init([0x03])
+    let header: Header
+
+    func toData() -> Data {
+        var data = Data()
+        data.append(messageType)
+        data.append(header.toData())
+        return data
+    }
+}
+
+struct RewrappedKeyMessage {
+    let messageType: Data = .init([0x04])
+    let rewrappedKey: Data
+    
+    func toData() -> Data {
+        var data = Data()
+        data.append(messageType)
+        data.append(rewrappedKey)
+        return data
     }
 }

@@ -15,8 +15,6 @@ final class InitializationTests: XCTestCase {
         XCTAssertNotNil(locator)
         let nanoTDF = initializeSmallNanoTDF(kasResourceLocator: locator!)
         // Validate the Header
-        XCTAssertEqual(nanoTDF.header.magicNumber, Data([0x4C, 0x31]))
-        XCTAssertEqual(nanoTDF.header.version, Data([0x0C]))
         XCTAssertEqual(nanoTDF.header.kas.protocolEnum, locator!.protocolEnum)
         XCTAssertEqual(nanoTDF.header.kas.body, locator!.body)
         // Validate the Payload
@@ -30,25 +28,23 @@ final class InitializationTests: XCTestCase {
         // out of spec - too small
         var locator = ResourceLocator(protocolEnum: .http, body: "")
         XCTAssertNil(locator)
+        
         // out of spec - too large
         let body256Bytes = String(repeating: "a", count: 256)
         locator = ResourceLocator(protocolEnum: .http, body: body256Bytes)
         XCTAssertNil(locator)
+        
         locator = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
-        let header = Header(magicNumber: Data([0xFF, 0xFF]),
-                            version: Data([0xFF]),
-                            kas: locator!,
-                            eccMode: PolicyBindingConfig(ecdsaBinding: false,
-                                                         curve: .secp256r1),
-                            payloadSigMode: SignatureAndPayloadConfig(signed: false,
-                                                                      signatureCurve: nil,
-                                                                      payloadCipher: .aes256GCM128),
-                            policy: Policy(type: .embeddedPlaintext,
-                                           body: nil,
-                                           remote: nil,
-                                           binding: nil),
-                            ephemeralKey: Data([0x04, 0x05, 0x06]))
-        XCTAssertNil(header)
+        XCTAssertNotNil(locator)
+      
+        // Test valid header creation
+        XCTAssertNoThrow(Header(
+            kas: locator!,
+            policyBindingConfig: PolicyBindingConfig(ecdsaBinding: false, curve: .secp256r1),
+            payloadSignatureConfig: SignatureAndPayloadConfig(signed: false, signatureCurve: nil, payloadCipher: .aes256GCM128),
+            policy: Policy(type: .embeddedPlaintext, body: nil, remote: nil, binding: nil),
+            ephemeralPublicKey: Data([0x04, 0x05, 0x06])
+        ))
     }
 
     func testSmallNanoTDFSize() throws {
