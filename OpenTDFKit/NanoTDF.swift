@@ -3,11 +3,15 @@ import Foundation
 
 public struct NanoTDF {
     public var header: Header
-    var payload: Payload
-    var signature: Signature?
-    #if DEBUG
-        var storedKey: SymmetricKey?
-    #endif
+    public var payload: Payload
+    public var signature: Signature?
+    
+    public init(header: Header, payload: Payload, signature: Signature? = nil) {
+        self.header = header
+        self.payload = payload
+        self.signature = signature
+    }
+    
     public func toData() -> Data {
         var data = Data()
         data.append(header.toData())
@@ -29,33 +33,26 @@ public struct NanoTDF {
 }
 
 public struct Header {
-    let magicNumber: Data
-    let version: Data
-    let kas: ResourceLocator
-    let policyBindingConfig: PolicyBindingConfig
-    var payloadSignatureConfig: SignatureAndPayloadConfig
-    let policy: Policy
+    public static let magicNumber = Data([0x4C, 0x31]) // 0x4C31 (L1L) - first 18 bits
+    public let version: Data
+    public let kas: ResourceLocator
+    public let policyBindingConfig: PolicyBindingConfig
+    public var payloadSignatureConfig: SignatureAndPayloadConfig
+    public let policy: Policy
     public let ephemeralPublicKey: Data
 
-    init?(magicNumber: Data, version: Data, kas: ResourceLocator, eccMode: PolicyBindingConfig, payloadSigMode: SignatureAndPayloadConfig, policy: Policy, ephemeralKey: Data) {
-        // Validate magicNumber
-        let expectedMagicNumber = Data([0x4C, 0x31]) // 0x4C31 (L1L) - first 18 bits
-        guard magicNumber.prefix(2) == expectedMagicNumber else {
-            print("Header.init magicNumber", magicNumber)
-            return nil
-        }
-        self.magicNumber = magicNumber
+    public init(version: Data, kas: ResourceLocator, policyBindingConfig: PolicyBindingConfig, payloadSignatureConfig: SignatureAndPayloadConfig, policy: Policy, ephemeralPublicKey: Data) {
         self.version = version
         self.kas = kas
-        policyBindingConfig = eccMode
-        payloadSignatureConfig = payloadSigMode
+        self.policyBindingConfig = policyBindingConfig
+        self.payloadSignatureConfig = payloadSignatureConfig
         self.policy = policy
-        ephemeralPublicKey = ephemeralKey
+        self.ephemeralPublicKey = ephemeralPublicKey
     }
 
-    func toData() -> Data {
+    public func toData() -> Data {
         var data = Data()
-        data.append(magicNumber)
+        data.append(Header.magicNumber)
         data.append(version)
         data.append(kas.toData())
         data.append(policyBindingConfig.toData())
@@ -67,12 +64,19 @@ public struct Header {
 }
 
 public struct Payload {
-    let length: UInt32
-    let iv: Data
-    let ciphertext: Data
-    let mac: Data
+    public let length: UInt32
+    public let iv: Data
+    public let ciphertext: Data
+    public let mac: Data
 
-    func toData() -> Data {
+    public init(length: UInt32, iv: Data, ciphertext: Data, mac: Data) {
+        self.length = length
+        self.iv = iv
+        self.ciphertext = ciphertext
+        self.mac = mac
+    }
+
+    public func toData() -> Data {
         var data = Data()
         data.append(UInt8((length >> 16) & 0xFF))
         data.append(UInt8((length >> 8) & 0xFF))
@@ -310,29 +314,25 @@ public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signi
 
 // Initialize a NanoTDF small
 public func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoTDF {
-    let magicNumber = Data([0x4C, 0x31]) // 0x4C31 (L1L) - first 18 bits
     let version = Data([0x0C]) // version[0] & 0x3F (12) last 6 bits for version
     let curve: Curve = .secp256r1
-    let header = Header(magicNumber: magicNumber,
-                        version: version,
-                        kas: kasResourceLocator,
-                        eccMode: PolicyBindingConfig(ecdsaBinding: false,
-                                                     curve: curve),
-                        payloadSigMode: SignatureAndPayloadConfig(signed: false,
-                                                                  signatureCurve: curve,
-                                                                  payloadCipher: .aes256GCM128),
-                        policy: Policy(type: .remote,
-                                       body: nil,
-                                       remote: kasResourceLocator,
-                                       binding: nil),
-                        ephemeralKey: Data([0x04, 0x05, 0x06]))
+    let header = Header(
+        version: version,
+        kas: kasResourceLocator,
+        policyBindingConfig: PolicyBindingConfig(ecdsaBinding: false, curve: curve),
+        payloadSignatureConfig: SignatureAndPayloadConfig(signed: false, signatureCurve: curve, payloadCipher: .aes256GCM128),
+        policy: Policy(type: .remote, body: nil, remote: kasResourceLocator, binding: nil),
+        ephemeralPublicKey: Data([0x04, 0x05, 0x06])
+    )
 
-    let payload = Payload(length: 7,
-                          iv: Data([0x07, 0x08, 0x09]),
-                          ciphertext: Data([0x00]),
-                          mac: Data([0x13, 0x14, 0x15]))
+    let payload = Payload(
+        length: 7,
+        iv: Data([0x07, 0x08, 0x09]),
+        ciphertext: Data([0x00]),
+        mac: Data([0x13, 0x14, 0x15])
+    )
 
-    return NanoTDF(header: header!,
+    return NanoTDF(header: header,
                    payload: payload,
                    signature: nil)
 }
@@ -398,7 +398,6 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
                           ciphertext: ciphertext,
                           mac: tag)
     // Header
-    let magicNumber = Data([0x4C, 0x31]) // 0x4C31 (L1L) - first 18 bits
     let version = Data([0x4C]) // version[0] & 0x3F (12) last 6 bits for version
     let curve: Curve = .secp256r1
     var ephemeralPublicKeyData = Data()
@@ -406,23 +405,16 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
         ephemeralPublicKeyData = ephemeralPublicKey.compressedRepresentation
     }
     // print("tdf_ephemeral_key hex: ", ephemeralPublicKeyData.hexEncodedString())
-    let header = Header(magicNumber: magicNumber,
-                        version: version,
-                        kas: kas.resourceLocator,
-                        eccMode: PolicyBindingConfig(ecdsaBinding: false,
-                                                     curve: curve),
-                        payloadSigMode: SignatureAndPayloadConfig(signed: false,
-                                                                  signatureCurve: .secp256r1,
-                                                                  payloadCipher: .aes256GCM128),
-                        policy: policy,
-                        ephemeralKey: ephemeralPublicKeyData)
-    #if DEBUG
-        return NanoTDF(header: header!,
-                       payload: payload,
-                       signature: nil,
-                       storedKey: tdfSymmetricKey)
-    #endif
-    return NanoTDF(header: header!,
+    let header = Header(
+        version: version,
+        kas: kas.resourceLocator,
+        policyBindingConfig: PolicyBindingConfig(ecdsaBinding: false, curve: curve),
+        payloadSignatureConfig: SignatureAndPayloadConfig(signed: false, signatureCurve: curve, payloadCipher: .aes256GCM128),
+        policy: policy,
+        ephemeralPublicKey: ephemeralPublicKeyData
+    )
+    
+    return NanoTDF(header: header,
                    payload: payload,
                    signature: nil)
 }

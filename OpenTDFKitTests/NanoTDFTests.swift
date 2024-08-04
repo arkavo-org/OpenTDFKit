@@ -208,9 +208,6 @@ final class NanoTDFTests: XCTestCase {
         do {
             let header = try parser.parseHeader()
             print("Parsed Header:", header)
-            // Magic Number
-            let magicNumberHexString = header.magicNumber.map { String(format: "%02x", $0) }.joined(separator: " ")
-            print("Magic Number Hex:", magicNumberHexString)
             // Version
             let versionHexString = header.version.map { String(format: "%02x", $0) }.joined(separator: " ")
             print("Version Hex:", versionHexString)

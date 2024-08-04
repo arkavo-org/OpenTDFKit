@@ -177,17 +177,18 @@ public class BinaryParser {
     }
 
     public func parseHeader() throws -> Header {
-        guard let magicNumber = read(length: FieldSize.magicNumberSize),
+        guard let readMagicNumber = read(length: FieldSize.magicNumberSize),
+              readMagicNumber == Header.magicNumber,
               let version = read(length: FieldSize.versionSize),
               let kas = readResourceLocator(),
-              let eccMode = readEccAndBindingMode(),
-              let payloadSigMode = readSymmetricAndPayloadConfig(),
-              let policy = readPolicyField(bindingMode: eccMode)
+              let policyBindingConfig = readEccAndBindingMode(),
+              let payloadSignatureConfig = readSymmetricAndPayloadConfig(),
+              let policy = readPolicyField(bindingMode: policyBindingConfig)
         else {
             throw ParsingError.invalidFormat
         }
 
-        let ephemeralKeySize = switch eccMode.curve {
+        let ephemeralPublicKeySize = switch policyBindingConfig.curve {
         case .secp256r1:
             33
         case .secp384r1:
@@ -197,14 +198,18 @@ public class BinaryParser {
         case .xsecp256k1:
             33
         }
-        guard let ephemeralKey = read(length: ephemeralKeySize) else {
+        guard let ephemeralPublicKey = read(length: ephemeralPublicKeySize) else {
             throw ParsingError.invalidFormat
         }
 
-        guard let header = Header(magicNumber: magicNumber, version: version, kas: kas, eccMode: eccMode, payloadSigMode: payloadSigMode, policy: policy, ephemeralKey: ephemeralKey) else {
-            throw ParsingError.invalidMagicNumber
-        }
-        return header
+        return Header(
+            version: version,
+            kas: kas,
+            policyBindingConfig: policyBindingConfig,
+            payloadSignatureConfig: payloadSignatureConfig,
+            policy: policy,
+            ephemeralPublicKey: ephemeralPublicKey
+        )
     }
 
     public func parsePayload(config: SignatureAndPayloadConfig) throws -> Payload {
