@@ -8,6 +8,16 @@ public enum WebSocketConnectionState {
     case connected
 }
 
+extension WebSocketConnectionState: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .disconnected: "Disconnected"
+        case .connecting: "Connecting"
+        case .connected: "Connected"
+        }
+    }
+}
+
 public class KASWebSocket {
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
