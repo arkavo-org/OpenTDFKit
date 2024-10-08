@@ -10,7 +10,7 @@ import XCTest
 // #if DEBUG
 //    var storedKey: SymmetricKey?
 // #endif
-//class SymmetricKeyTests: XCTestCase {
+// class SymmetricKeyTests: XCTestCase {
 //    let originalMessage = "This is a secret message for TDF testing."
 //    // Simulating key storage
 //    static var storedKey: SymmetricKey?
@@ -97,4 +97,4 @@ import XCTest
 //        // Clean up: delete the file
 //        try FileManager.default.removeItem(at: fileURL)
 //    }
-//}
+// }

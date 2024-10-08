@@ -24,10 +24,10 @@ class NanoTDFManager {
     }
 
     func isEmpty() -> Bool {
-        return nanoTDFs.isEmpty
+        nanoTDFs.isEmpty
     }
 
     func getCount() -> Int {
-        return count
+        count
     }
 }

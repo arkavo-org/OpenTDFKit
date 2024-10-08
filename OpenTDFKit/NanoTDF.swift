@@ -5,13 +5,13 @@ public struct NanoTDF {
     public var header: Header
     public var payload: Payload
     public var signature: Signature?
-    
+
     public init(header: Header, payload: Payload, signature: Signature? = nil) {
         self.header = header
         self.payload = payload
         self.signature = signature
     }
-    
+
     public func toData() -> Data {
         var data = Data()
         data.append(header.toData())
@@ -179,11 +179,11 @@ public struct Policy {
         case embeddedEncryptedWithPolicyKeyAccess = 0x03
     }
 
-    let type: PolicyType
-    let body: EmbeddedPolicyBody?
-    let remote: ResourceLocator?
-    var binding: Data?
-    
+    public let type: PolicyType
+    public let body: EmbeddedPolicyBody?
+    public let remote: ResourceLocator?
+    public var binding: Data?
+
     public init(type: PolicyType, body: EmbeddedPolicyBody?, remote: ResourceLocator?, binding: Data? = nil) {
         self.type = type
         self.body = body
@@ -212,9 +212,9 @@ public struct Policy {
 }
 
 public struct EmbeddedPolicyBody {
-    let length: Int
-    let body: Data
-    let keyAccess: PolicyKeyAccess?
+    public let length: Int
+    public let body: Data
+    public let keyAccess: PolicyKeyAccess?
 
     func toData() -> Data {
         var data = Data()
@@ -228,8 +228,8 @@ public struct EmbeddedPolicyBody {
 }
 
 public struct PolicyKeyAccess {
-    let resourceLocator: ResourceLocator
-    let ephemeralPublicKey: Data
+    public let resourceLocator: ResourceLocator
+    public let ephemeralPublicKey: Data
 
     func toData() -> Data {
         var data = Data()
@@ -408,7 +408,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
         policy: policy,
         ephemeralPublicKey: ephemeralPublicKeyData
     )
-    
+
     return NanoTDF(header: header,
                    payload: payload,
                    signature: nil)

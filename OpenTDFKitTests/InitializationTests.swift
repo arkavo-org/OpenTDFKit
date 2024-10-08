@@ -28,15 +28,15 @@ final class InitializationTests: XCTestCase {
         // out of spec - too small
         var locator = ResourceLocator(protocolEnum: .http, body: "")
         XCTAssertNil(locator)
-        
+
         // out of spec - too large
         let body256Bytes = String(repeating: "a", count: 256)
         locator = ResourceLocator(protocolEnum: .http, body: body256Bytes)
         XCTAssertNil(locator)
-        
+
         locator = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
         XCTAssertNotNil(locator)
-      
+
         // Test valid header creation
         XCTAssertNoThrow(Header(
             kas: locator!,

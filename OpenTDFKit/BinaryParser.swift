@@ -138,20 +138,21 @@ public class BinaryParser {
     }
 
     func readPolicyBinding(bindingMode: PolicyBindingConfig) -> Data? {
-        var bindingSize: Int
+        var bindingSize
 //        print("bindingMode", bindingMode)
-        if bindingMode.ecdsaBinding {
+            = if bindingMode.ecdsaBinding
+        {
             switch bindingMode.curve {
             case .secp256r1, .xsecp256k1:
-                bindingSize = 64
+                64
             case .secp384r1:
-                bindingSize = 96
+                96
             case .secp521r1:
-                bindingSize = 132
+                132
             }
         } else {
             // GMAC Tag Binding
-            bindingSize = 16
+            16
         }
 //        print("bindingSize", bindingSize)
         return read(length: bindingSize)
@@ -180,7 +181,7 @@ public class BinaryParser {
 
     public func parseHeader() throws -> Header {
 //        print("Starting to parse header")
-        
+
         guard let magicNumber = read(length: FieldSize.magicNumberSize) else {
             throw ParsingError.invalidFormat
         }
@@ -188,7 +189,7 @@ public class BinaryParser {
         guard magicNumber == Header.magicNumber else {
             throw ParsingError.invalidMagicNumber
         }
-        
+
         guard let versionData = read(length: FieldSize.versionSize) else {
             throw ParsingError.invalidFormat
         }

@@ -1,6 +1,6 @@
+import Combine
 import CryptoKit
 import Foundation
-import Combine
 
 public enum WebSocketConnectionState {
     case disconnected
@@ -29,7 +29,7 @@ public class KASWebSocket {
     private var customMessageCallback: ((Data) -> Void)?
     private let kasUrl: URL
     private let token: String
-    
+
     private let connectionStateSubject = CurrentValueSubject<WebSocketConnectionState, Never>(.disconnected)
     public var connectionStatePublisher: AnyPublisher<WebSocketConnectionState, Never> {
         connectionStateSubject.eraseToAnyPublisher()
@@ -53,17 +53,17 @@ public class KASWebSocket {
     public func setCustomMessageCallback(_ callback: @escaping (Data) -> Void) {
         customMessageCallback = callback
     }
-    
+
     public func sendCustomMessage(_ message: Data, completion: @escaping (Error?) -> Void) {
         let task = URLSessionWebSocketTask.Message.data(message)
         webSocketTask?.send(task) { error in
-            if let error = error {
+            if let error {
                 print("Error sending custom message: \(error)")
             }
             completion(error)
         }
     }
-    
+
     public func connect() {
         connectionStateSubject.send(.connecting)
         // Create a URLRequest object with the WebSocket URL
@@ -87,7 +87,7 @@ public class KASWebSocket {
 
     private func pingPeriodically() {
         webSocketTask?.sendPing { [weak self] error in
-            if let error = error {
+            if let error {
                 print("Error sending ping: \(error)")
                 self?.connectionStateSubject.send(.disconnected)
             } else {
@@ -278,14 +278,13 @@ public class KASWebSocket {
 
     public func sendPing(completionHandler: @escaping (Error?) -> Void) {
         webSocketTask?.sendPing { error in
-            if let error = error {
+            if let error {
                 print("Error sending ping: \(error)")
             }
             completionHandler(error)
         }
     }
 
-    
     public func disconnect() {
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         connectionStateSubject.send(.disconnected)
@@ -334,7 +333,7 @@ struct RewrapMessage {
 struct RewrappedKeyMessage {
     let messageType: Data = .init([0x04])
     let rewrappedKey: Data
-    
+
     func toData() -> Data {
         var data = Data()
         data.append(messageType)
