@@ -18,7 +18,7 @@ extension WebSocketConnectionState: CustomStringConvertible {
     }
 }
 
-public class KASWebSocket {
+public class KASWebSocket: @unchecked Sendable {
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
     private let myPrivateKey: P256.KeyAgreement.PrivateKey!
@@ -54,7 +54,7 @@ public class KASWebSocket {
         customMessageCallback = callback
     }
 
-    public func sendCustomMessage(_ message: Data, completion: @escaping (Error?) -> Void) {
+    public func sendCustomMessage(_ message: Data, completion: @Sendable @escaping (Error?) -> Void) {
         let task = URLSessionWebSocketTask.Message.data(message)
         webSocketTask?.send(task) { error in
             if let error {
@@ -276,7 +276,7 @@ public class KASWebSocket {
         }
     }
 
-    public func sendPing(completionHandler: @escaping (Error?) -> Void) {
+    public func sendPing(completionHandler: @escaping @Sendable (Error?) -> Void) {
         webSocketTask?.sendPing { error in
             if let error {
                 print("Error sending ping: \(error)")

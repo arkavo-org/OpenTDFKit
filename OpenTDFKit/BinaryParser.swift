@@ -138,7 +138,7 @@ public class BinaryParser {
     }
 
     func readPolicyBinding(bindingMode: PolicyBindingConfig) -> Data? {
-        var bindingSize
+        let bindingSize
 //        print("bindingMode", bindingMode)
             = if bindingMode.ecdsaBinding
         {
