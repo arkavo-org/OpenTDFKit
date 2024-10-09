@@ -147,8 +147,8 @@ public enum ProtocolEnum: UInt8, Sendable {
 }
 
 public struct ResourceLocator: Sendable {
-    let protocolEnum: ProtocolEnum
-    let body: String
+    public let protocolEnum: ProtocolEnum
+    public let body: String
 
     public init?(protocolEnum: ProtocolEnum, body: String) {
         guard body.utf8.count >= 1, body.utf8.count <= 255 else {
