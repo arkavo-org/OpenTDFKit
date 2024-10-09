@@ -14,7 +14,7 @@ public struct Benchmark {
     public func run() -> (name: String, averageTime: Double) {
         var totalTime: Double = 0
 
-        for _ in 1...iterations {
+        for _ in 1 ... iterations {
             let start = DispatchTime.now()
             operation()
             let end = DispatchTime.now()
@@ -41,15 +41,15 @@ public func runBenchmarks(_ benchmarks: [Benchmark]) {
 // Example usage:
 let benchmarks = [
     Benchmark(name: "Array Sorting") {
-        var arr = (1...1000).map { _ in Int.random(in: 1...1000) }
+        var arr = (1 ... 1000).map { _ in Int.random(in: 1 ... 1000) }
         arr.sort()
     },
     Benchmark(name: "String Concatenation", iterations: 10000) {
         var str = ""
-        for _ in 1...100 {
+        for _ in 1 ... 100 {
             str += "Hello, World! "
         }
-    }
+    },
 ]
 
 runBenchmarks(benchmarks)

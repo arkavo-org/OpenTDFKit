@@ -3,7 +3,7 @@ import XCTest
 
 final class OpenTDFKitTests: XCTestCase {
     // Test for KASClient's rewrap function
-    func testKASClientRewrap() {
+    @MainActor func testKASClientRewrap() {
         let kasClient = KASRest(baseURL: "https://platform.virtru.us/api/kas", apiKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c")
         let expectation = expectation(description: "Rewrap key")
 

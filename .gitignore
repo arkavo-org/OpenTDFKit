@@ -90,3 +90,6 @@ fastlane/test_output
 .DS_Store
 /.cache/
 .idea
+/.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+/.swiftpm/xcode/xcshareddata/xcschemes/OpenTDFKit.xcscheme
+/.swiftpm/xcode/xcshareddata/xcschemes/OpenTDFKitTests.xcscheme

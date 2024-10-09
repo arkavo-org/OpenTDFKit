@@ -1,17 +1,17 @@
 import CryptoKit
 import Foundation
 
-public struct NanoTDF {
+public struct NanoTDF: Sendable {
     public var header: Header
     public var payload: Payload
     public var signature: Signature?
-    
+
     public init(header: Header, payload: Payload, signature: Signature? = nil) {
         self.header = header
         self.payload = payload
         self.signature = signature
     }
-    
+
     public func toData() -> Data {
         var data = Data()
         data.append(header.toData())
@@ -32,7 +32,7 @@ public struct NanoTDF {
     }
 }
 
-public struct Header {
+public struct Header: Sendable {
     public static let magicNumber = Data([0x4C, 0x31]) // 0x4C31 (L1L) - first 18 bits
     public static let version: UInt8 = 0x4C // "L"
     public let kas: ResourceLocator
@@ -62,7 +62,7 @@ public struct Header {
     }
 }
 
-public struct Payload {
+public struct Payload: Sendable {
     public let length: UInt32
     public let iv: Data
     public let ciphertext: Data
@@ -87,7 +87,7 @@ public struct Payload {
     }
 }
 
-public struct Signature {
+public struct Signature: Sendable {
     let publicKey: Data
     let signature: Data
 
@@ -99,7 +99,7 @@ public struct Signature {
     }
 }
 
-public struct PolicyBindingConfig {
+public struct PolicyBindingConfig: Sendable {
     // true ECDSA using creator key.  The signature is used as the binding
     // false GMAC tag is computed over the policy body using the derived symmetric key.
     var ecdsaBinding: Bool
@@ -115,7 +115,7 @@ public struct PolicyBindingConfig {
     }
 }
 
-public struct SignatureAndPayloadConfig {
+public struct SignatureAndPayloadConfig: Sendable {
     var signed: Bool
     var signatureCurve: Curve?
     let payloadCipher: Cipher?
@@ -136,7 +136,7 @@ public struct SignatureAndPayloadConfig {
     }
 }
 
-public enum ProtocolEnum: UInt8 {
+public enum ProtocolEnum: UInt8, Sendable {
     case http = 0x00
     case https = 0x01
     // BEGIN out-of-spec
@@ -146,9 +146,9 @@ public enum ProtocolEnum: UInt8 {
     case sharedResourceDirectory = 0xFF
 }
 
-public struct ResourceLocator {
-    let protocolEnum: ProtocolEnum
-    let body: String
+public struct ResourceLocator: Sendable {
+    public let protocolEnum: ProtocolEnum
+    public let body: String
 
     public init?(protocolEnum: ProtocolEnum, body: String) {
         guard body.utf8.count >= 1, body.utf8.count <= 255 else {
@@ -170,8 +170,8 @@ public struct ResourceLocator {
     }
 }
 
-public struct Policy {
-    public enum PolicyType: UInt8 {
+public struct Policy: Sendable {
+    public enum PolicyType: UInt8, Sendable {
         case remote = 0x00
         case embeddedPlaintext = 0x01
         case embeddedEncrypted = 0x02
@@ -179,11 +179,11 @@ public struct Policy {
         case embeddedEncryptedWithPolicyKeyAccess = 0x03
     }
 
-    let type: PolicyType
-    let body: EmbeddedPolicyBody?
-    let remote: ResourceLocator?
-    var binding: Data?
-    
+    public let type: PolicyType
+    public let body: EmbeddedPolicyBody?
+    public let remote: ResourceLocator?
+    public var binding: Data?
+
     public init(type: PolicyType, body: EmbeddedPolicyBody?, remote: ResourceLocator?, binding: Data? = nil) {
         self.type = type
         self.body = body
@@ -211,10 +211,10 @@ public struct Policy {
     }
 }
 
-public struct EmbeddedPolicyBody {
-    let length: Int
-    let body: Data
-    let keyAccess: PolicyKeyAccess?
+public struct EmbeddedPolicyBody: Sendable {
+    public let length: Int
+    public let body: Data
+    public let keyAccess: PolicyKeyAccess?
 
     func toData() -> Data {
         var data = Data()
@@ -227,9 +227,9 @@ public struct EmbeddedPolicyBody {
     }
 }
 
-public struct PolicyKeyAccess {
-    let resourceLocator: ResourceLocator
-    let ephemeralPublicKey: Data
+public struct PolicyKeyAccess: Sendable {
+    public let resourceLocator: ResourceLocator
+    public let ephemeralPublicKey: Data
 
     func toData() -> Data {
         var data = Data()
@@ -239,7 +239,7 @@ public struct PolicyKeyAccess {
     }
 }
 
-public enum Curve: UInt8 {
+public enum Curve: UInt8, Sendable {
     case secp256r1 = 0x00
     case secp384r1 = 0x01
     case secp521r1 = 0x02
@@ -248,7 +248,7 @@ public enum Curve: UInt8 {
     // END in-spec unsupported
 }
 
-public enum Cipher: UInt8 {
+public enum Cipher: UInt8, Sendable {
     case aes256GCM64 = 0x00
     case aes256GCM96 = 0x01
     case aes256GCM104 = 0x02
@@ -408,7 +408,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
         policy: policy,
         ephemeralPublicKey: ephemeralPublicKeyData
     )
-    
+
     return NanoTDF(header: header,
                    payload: payload,
                    signature: nil)

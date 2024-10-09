@@ -52,11 +52,11 @@ final class KASWebsocketTests: XCTestCase {
                 let kasMetadata = KasMetadata(resourceLocator: kasRL!, publicKey: publicKey, curve: .secp256r1)
                 let remotePolicy = ResourceLocator(protocolEnum: .sharedResourceDirectory, body: "5Cqk3ERPToSMuY8UoKJtcmo4fs1iVyQpq6ndzWzpzWezAF1W")
                 var policy = Policy(type: .remote, body: nil, remote: remotePolicy, binding: nil)
-                
+
                 do {
-                    var i = 0;
+                    var i = 0
                     while i < 2000 {
-                        i += 1;
+                        i += 1
                         // create
                         let nanoTDF = try createNanoTDF(kas: kasMetadata, policy: &policy, plaintext: plaintext)
                         // print("Encryption successful")
@@ -65,7 +65,7 @@ final class KASWebsocketTests: XCTestCase {
                         nanoTDFManager.addNanoTDF(nanoTDF, withIdentifier: id)
                         webSocket.sendRewrapMessage(header: nanoTDF.header)
                     }
-  
+
                 } catch {
                     print("Error creating nanoTDF: \(error)")
                 }

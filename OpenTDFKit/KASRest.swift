@@ -9,7 +9,7 @@ class KASRest {
         self.apiKey = apiKey
     }
 
-    public func rewrap(key: String, completion: @escaping (Result<String, Error>) -> Void) {
+    public func rewrap(key: String, completion: @escaping @Sendable (Result<String, Error>) -> Void) {
         guard let url = URL(string: "\(baseURL)/rewrap") else {
             completion(.failure(NSError(domain: "KASClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
             return
