@@ -82,7 +82,7 @@ public class BinaryParser {
         // if no policy added then no read
         // Note 3.4.2.3.2 Body for Embedded Policy states Minimum Length is 1
         if contentLength == 0 {
-            return EmbeddedPolicyBody(length: 1, body: Data([0x00]), keyAccess: nil)
+            return EmbeddedPolicyBody(body: Data([0x00]), keyAccess: nil)
         }
 
         guard let plaintextCiphertext = read(length: Int(contentLength)) else {
@@ -92,7 +92,7 @@ public class BinaryParser {
         // Policy Key Access
         let keyAccess = policyType == .embeddedEncryptedWithPolicyKeyAccess ? readPolicyKeyAccess(bindingMode: bindingMode) : nil
 
-        return EmbeddedPolicyBody(length: plaintextCiphertext.count, body: plaintextCiphertext, keyAccess: keyAccess)
+        return EmbeddedPolicyBody(body: plaintextCiphertext, keyAccess: keyAccess)
     }
 
     func readEccAndBindingMode() -> PolicyBindingConfig? {

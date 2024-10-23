@@ -3,11 +3,114 @@ import CryptoKit
 import XCTest
 
 final class KASWebsocketTests: XCTestCase {
+    func testGeofence() throws {
+        measure(metrics: [XCTCPUMetric()]) {
+            let nanoTDFManager = NanoTDFManager()
+//            let webSocket = KASWebSocket(kasUrl: URL(string: "wss://kas.arkavo.net")!, token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c")
+            let webSocket = KASWebSocket(kasUrl: URL(string: "ws://localhost:8080")!, token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MjkzMDE2NDAsImF1ZCI6WyJrYXMuYXJrYXZvLm5ldCJdLCJpc3MiOiJBcmthdm8gQXBwIiwic3ViIjoiN0RQNnhIR3VqTHV2RnBmOUc4ekNLb0hmMmd1bWVzenZVZ3p6am5UeXJZOTIiLCJleHAiOjE3MjkzMDUyNDB9.R_B3RuguYq-k_d-au8BOBqAvIIuDweU1XOXwft5ohbY")
+            let plaintext = "Keep this message secret".data(using: .utf8)!
+            webSocket.setRewrapCallback { identifier, symmetricKey in
+//                defer {
+//                    print("END setRewrapCallback")
+//                }
+//                print("BEGIN setRewrapCallback")
+//                print("Received Rewrapped identifier: \(identifier.hexEncodedString())")
+//                print("Received Rewrapped Symmetric key: \(String(describing: symmetricKey))")
+                let nanoTDF = nanoTDFManager.getNanoTDF(withIdentifier: identifier)
+                nanoTDFManager.removeNanoTDF(withIdentifier: identifier)
+                if symmetricKey == nil {
+                    // DENY
+                    return
+                }
+                let payload = nanoTDF?.payload
+                let rawIV = payload?.iv
+                // Pad the IV
+                let paddedIV = CryptoHelper.adjustNonce(rawIV!, to: 12)
+                let authTag = payload?.mac
+                let ciphertext = payload?.ciphertext
+                // Create AES-GCM SealedBox
+                do {
+//                    print("Symmetric key (first 4 bytes): \(symmetricKey!.withUnsafeBytes { Data($0.prefix(4)).hexEncodedString() })")
+//                    print("Raw IV: \(rawIV!.hexEncodedString())")
+//                    print("Padded IV: \(paddedIV.hexEncodedString())")
+//                    print("Ciphertext length: \(ciphertext!.count)")
+//                    print("Auth tag: \(authTag!.hexEncodedString())")
+                    let sealedBox = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: paddedIV),
+                                                          ciphertext: ciphertext!,
+                                                          tag: authTag!)
+//                    print("SealedBox created successfully")
+                    let dplaintext = try AES.GCM.open(sealedBox, using: symmetricKey!)
+//                    print("plaintext: \(dplaintext)")
+                    // print("Decryption successful")
+                    XCTAssertEqual(plaintext, dplaintext)
+                } catch {
+                    print("Error decryption nanoTDF payload: \(error)")
+                }
+            }
+            webSocket.setKASPublicKeyCallback { publicKey in
+                let kasRL = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
+                let kasMetadata = KasMetadata(resourceLocator: kasRL!, publicKey: publicKey, curve: .secp256r1)
+                // geofence smart contract
+                let geofenceContractResourceLocator = ResourceLocator(protocolEnum: .sharedResourceDirectory, body: "5H6sLwXKBv3cdm5VVRxrvA8p5cux2Rrni5CQ4GRyYKo4b9B4")
+                guard let geofenceContractResourceLocator else {
+                    print("Error creating geofence contract resource locator")
+                    return
+                }
+                let geofence = Geofence3D(minLatitude: 374300000,
+                                          maxLatitude: 374310000,
+                                          minLongitude: -1221020000,
+                                          maxLongitude: -1221010000,
+                                          minAltitude: 0,
+                                          maxAltitude: 2000)
+                var policyBodyData = Data()
+                policyBodyData.append(geofenceContractResourceLocator.toData())
+                policyBodyData.append(geofence.toData())
+                print("Policy body data: \(policyBodyData.hexEncodedString())")
+                let embeddedPolicy = EmbeddedPolicyBody(body: policyBodyData)
+                var policy = Policy(type: .embeddedPlaintext, body: embeddedPolicy, remote: nil, binding: nil)
+
+                let coordinate = Coordinate3D(latitude: 374305556, // 37.4305556 degrees
+                                              longitude: -1221018056, // -122.1018056 degrees
+                                              altitude: 1000) // 1000 meters
+                print("Coordinate: \(coordinate)")
+                
+                do {
+                    var i = 0
+                    while i < 2000 {
+                        i += 1
+                        // create
+                        let nanoTDF = try createNanoTDF(kas: kasMetadata, policy: &policy, plaintext: plaintext)
+                        // print("Encryption successful")
+                        // store nanoTDF
+                        let id = nanoTDF.header.ephemeralPublicKey
+                        nanoTDFManager.addNanoTDF(nanoTDF, withIdentifier: id)
+                        webSocket.sendRewrapMessage(header: nanoTDF.header)
+                    }
+
+                } catch {
+                    print("Error creating nanoTDF: \(error)")
+                }
+            }
+            webSocket.connect()
+            webSocket.sendPublicKey()
+            webSocket.sendKASKeyMessage()
+            // wait
+            Thread.sleep(forTimeInterval: 0.5)
+            print("+++++++++++++++++", nanoTDFManager.getCount())
+            while !nanoTDFManager.isEmpty() {
+                Thread.sleep(forTimeInterval: 0.1)
+                print("+++++++++++++++++", nanoTDFManager.getCount())
+            }
+            // Optionally, disconnect when done or needed
+            webSocket.disconnect()
+        }
+    }
+    
     func testEncryptDecrypt() throws {
         measure(metrics: [XCTCPUMetric()]) {
             let nanoTDFManager = NanoTDFManager()
-            let webSocket = KASWebSocket(kasUrl: URL(string: "wss://kas.arkavo.net")!, token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c")
-//            let webSocket = KASWebSocket(kasUrl: URL(string: "ws://localhost:8080")!, token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c")
+//            let webSocket = KASWebSocket(kasUrl: URL(string: "wss://kas.arkavo.net")!, token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c")
+            let webSocket = KASWebSocket(kasUrl: URL(string: "ws://localhost:8080")!, token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c")
             let plaintext = "Keep this message secret".data(using: .utf8)!
             webSocket.setRewrapCallback { identifier, symmetricKey in
 //                defer {
@@ -176,5 +279,39 @@ final class KASWebsocketTests: XCTestCase {
         XCTAssertNotNil(locator)
         let nanoTDF = initializeSmallNanoTDF(kasResourceLocator: locator!)
         return nanoTDF.header
+    }
+}
+
+public struct Coordinate3D: Codable, Sendable {
+    public let latitude: Int64
+    public let longitude: Int64
+    public let altitude: Int64
+    
+    public func toData() -> Data {
+        var data = Data()
+        data.append(contentsOf: withUnsafeBytes(of: latitude.bigEndian) { Data($0) })
+        data.append(contentsOf: withUnsafeBytes(of: longitude.bigEndian) { Data($0) })
+        data.append(contentsOf: withUnsafeBytes(of: altitude.bigEndian) { Data($0) })
+        return data
+    }
+}
+
+public struct Geofence3D: Codable, Sendable {
+    public let minLatitude: Int64
+    public let maxLatitude: Int64
+    public let minLongitude: Int64
+    public let maxLongitude: Int64
+    public let minAltitude: Int64
+    public let maxAltitude: Int64
+    
+    public func toData() -> Data {
+        var data = Data()
+        data.append(contentsOf: withUnsafeBytes(of: minLatitude.bigEndian) { Data($0) })
+        data.append(contentsOf: withUnsafeBytes(of: maxLatitude.bigEndian) { Data($0) })
+        data.append(contentsOf: withUnsafeBytes(of: minLongitude.bigEndian) { Data($0) })
+        data.append(contentsOf: withUnsafeBytes(of: maxLongitude.bigEndian) { Data($0) })
+        data.append(contentsOf: withUnsafeBytes(of: minAltitude.bigEndian) { Data($0) })
+        data.append(contentsOf: withUnsafeBytes(of: maxAltitude.bigEndian) { Data($0) })
+        return data
     }
 }

@@ -159,7 +159,7 @@ public struct ResourceLocator: Sendable {
         self.body = body
     }
 
-    func toData() -> Data {
+    public func toData() -> Data {
         var data = Data()
         data.append(protocolEnum.rawValue)
         if let bodyData = body.data(using: .utf8) {
@@ -191,7 +191,7 @@ public struct Policy: Sendable {
         self.binding = binding
     }
 
-    func toData() -> Data {
+    public func toData() -> Data {
         var data = Data()
         data.append(type.rawValue)
         switch type {
@@ -212,13 +212,19 @@ public struct Policy: Sendable {
 }
 
 public struct EmbeddedPolicyBody: Sendable {
-    public let length: Int
     public let body: Data
     public let keyAccess: PolicyKeyAccess?
 
-    func toData() -> Data {
+    public init(body: Data, keyAccess: PolicyKeyAccess? = nil) {
+        self.body = body
+        self.keyAccess = keyAccess
+    }
+
+    public func toData() -> Data {
         var data = Data()
-        data.append(UInt8(body.count)) // length
+        let bodyLength = UInt16(body.count)
+        data.append(UInt8((bodyLength >> 8) & 0xFF)) // length high byte
+        data.append(UInt8(bodyLength & 0xFF)) // length low byte
         data.append(body)
         if let keyAccess {
             data.append(keyAccess.toData())
