@@ -75,9 +75,9 @@ public class BinaryParser {
         let plaintextCiphertextLengthData = contentLengthData.prefix(2) // contentLengthData.first
 
         let contentLength = plaintextCiphertextLengthData.withUnsafeBytes {
-            $0.load(as: UInt16.self)
+            $0.load(as: UInt16.self).bigEndian
         }
-        print("Policy Body Length: \(contentLength)")
+//        print("Policy Body Length: \(contentLength)")
 
         // if no policy added then no read
         // Note 3.4.2.3.2 Body for Embedded Policy states Minimum Length is 1
