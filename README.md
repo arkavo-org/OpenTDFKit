@@ -78,3 +78,11 @@ sequenceDiagram
     TDFBuilder->>TDFBuilder: Combine header, encrypted payload, and signature
     TDFBuilder-->>App: Return NanoTDF
 ```
+
+## Development
+
+### Format
+
+```shell
+swiftformat --swiftversion 6.0 .
+```

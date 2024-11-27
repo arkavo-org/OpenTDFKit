@@ -2,11 +2,11 @@ import CryptoKit
 import Foundation
 
 // Define a Sendable key pair struct
-internal struct EphemeralKeyPair: Sendable {
-    let privateKey: Data  // Store as raw data
+struct EphemeralKeyPair: Sendable {
+    let privateKey: Data // Store as raw data
     let publicKey: Data
     let curve: Curve
-    
+
     init(privateKey: Data, publicKey: Data, curve: Curve) {
         self.privateKey = privateKey
         self.publicKey = publicKey
@@ -21,9 +21,9 @@ public enum CryptoHelperError: Error {
     case sessionNotFound
 }
 
-internal actor CryptoHelper {
+actor CryptoHelper {
     private var activeSessions: [String: EphemeralKeyPair] = [:]
-    
+
     func generateEphemeralKeyPair(curveType: Curve) -> EphemeralKeyPair? {
         switch curveType {
         case .secp256r1:
@@ -70,7 +70,7 @@ internal actor CryptoHelper {
             return nil
         }
     }
-    
+
     func deriveSymmetricKey(sharedSecret: SharedSecret, salt: Data = Data(), info: Data = Data(), outputByteCount: Int = 32) -> SymmetricKey {
         sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
@@ -79,18 +79,18 @@ internal actor CryptoHelper {
             outputByteCount: outputByteCount
         )
     }
-    
+
     func createGMACBinding(policyBody: Data, symmetricKey: SymmetricKey) throws -> Data {
         let gmac = try AES.GCM.seal(policyBody, using: symmetricKey)
         return gmac.tag
     }
-    
+
     func generateNonce(length: Int = 12) -> Data {
         var nonce = Data(count: length)
         _ = nonce.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, length, $0.baseAddress!) }
         return nonce
     }
-    
+
     func adjustNonce(_ nonce: Data, to length: Int) -> Data {
         if nonce.count == length {
             return nonce
@@ -102,12 +102,12 @@ internal actor CryptoHelper {
             return paddedNonce
         }
     }
-    
+
     func encryptPayload(plaintext: Data, symmetricKey: SymmetricKey, nonce: Data) throws -> (ciphertext: Data, tag: Data) {
         let sealedBox = try AES.GCM.seal(plaintext, using: symmetricKey, nonce: AES.GCM.Nonce(data: nonce))
         return (sealedBox.ciphertext, sealedBox.tag)
     }
-    
+
     func decryptPayload(ciphertext: Data, symmetricKey: SymmetricKey, nonce: Data, tag: Data) throws -> Data {
         let sealedBox = try AES.GCM.SealedBox(
             nonce: AES.GCM.Nonce(data: nonce),
@@ -116,49 +116,49 @@ internal actor CryptoHelper {
         )
         return try AES.GCM.open(sealedBox, using: symmetricKey)
     }
-    
+
     func generateECDSASignature(privateKey: P256.Signing.PrivateKey, message: Data) throws -> Data? {
         let derSignature = try privateKey.signature(for: message).derRepresentation
         return extractRawECDSASignature(from: derSignature)
     }
-    
+
     private func extractRawECDSASignature(from derSignature: Data) -> Data? {
         var r: Data?
         var s: Data?
-        
+
         guard derSignature.count > 8 else { return nil }
-        
+
         var index = 0
         guard derSignature[index] == 0x30 else { return nil }
         index += 1
-        
+
         _ = derSignature[index]
         index += 1
-        
+
         guard derSignature[index] == 0x02 else { return nil }
         index += 1
-        
+
         let rLength = Int(derSignature[index])
         index += 1
-        
+
         r = derSignature[index ..< (index + rLength)]
         index += rLength
-        
+
         guard derSignature[index] == 0x02 else { return nil }
         index += 1
-        
+
         let sLength = Int(derSignature[index])
         index += 1
-        
+
         s = derSignature[index ..< (index + sLength)]
-        
+
         guard let rData = r, let sData = s else { return nil }
-        
+
         let rTrimmed = rData.count == 33 ? rData.dropFirst() : rData
         let sTrimmed = sData.count == 33 ? sData.dropFirst() : sData
-        
+
         guard rTrimmed.count == 32, sTrimmed.count == 32 else { return nil }
-        
+
         return rTrimmed + sTrimmed
     }
 }

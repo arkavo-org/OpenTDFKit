@@ -36,7 +36,7 @@ public struct NanoTDF: Sendable {
 
 public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) async throws -> NanoTDF {
     let cryptoHelper = CryptoHelper()
-    
+
     // Step 1: Generate an ephemeral key pair
     guard let keyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
         throw CryptoHelperError.keyDerivationFailed
@@ -44,7 +44,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
 
     // Step 2: Derive shared secret
     let kasPublicKey = try kas.getPublicKey()
-    
+
     guard let sharedSecret = try await cryptoHelper.deriveSharedSecret(
         keyPair: keyPair,
         recipientPublicKey: kasPublicKey
@@ -113,7 +113,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
 public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signing.PrivateKey, config: SignatureAndPayloadConfig) async throws {
     let cryptoHelper = CryptoHelper()
     let message = nanoTDF.header.toData() + nanoTDF.payload.toData()
-    
+
     guard let signatureData = try await cryptoHelper.generateECDSASignature(
         privateKey: privateKey,
         message: message
@@ -123,7 +123,7 @@ public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signi
 
     let publicKeyData = privateKey.publicKey.compressedRepresentation
     let signature = Signature(publicKey: publicKeyData, signature: signatureData)
-    
+
     nanoTDF.signature = signature
     nanoTDF.header.payloadSignatureConfig.signed = true
     nanoTDF.header.payloadSignatureConfig.signatureCurve = config.signatureCurve
@@ -395,7 +395,7 @@ public func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoT
 }
 
 public enum PublicKeyType: Sendable {
-    case p256(Data)  // Stores compressed representation
+    case p256(Data) // Stores compressed representation
     case p384(Data)
     case p521(Data)
 }
@@ -404,42 +404,42 @@ public struct KasMetadata: Sendable {
     public let resourceLocator: ResourceLocator
     private let publicKeyType: PublicKeyType
     public let curve: Curve
-    
+
     public init(resourceLocator: ResourceLocator, publicKey: Any, curve: Curve) throws {
         self.resourceLocator = resourceLocator
         self.curve = curve
-        
+
         // Store compressed representation instead of key objects
         switch curve {
         case .secp256r1:
             guard let key = publicKey as? P256.KeyAgreement.PublicKey else {
                 throw CryptoHelperError.unsupportedCurve
             }
-            self.publicKeyType = .p256(key.compressedRepresentation)
+            publicKeyType = .p256(key.compressedRepresentation)
         case .secp384r1:
             guard let key = publicKey as? P384.KeyAgreement.PublicKey else {
                 throw CryptoHelperError.unsupportedCurve
             }
-            self.publicKeyType = .p384(key.compressedRepresentation)
+            publicKeyType = .p384(key.compressedRepresentation)
         case .secp521r1:
             guard let key = publicKey as? P521.KeyAgreement.PublicKey else {
                 throw CryptoHelperError.unsupportedCurve
             }
-            self.publicKeyType = .p521(key.compressedRepresentation)
+            publicKeyType = .p521(key.compressedRepresentation)
         case .xsecp256k1:
             throw CryptoHelperError.unsupportedCurve
         }
     }
-    
+
     public func getPublicKey() throws -> Data {
         // Return the compressed representation directly
         switch publicKeyType {
-        case .p256(let data):
-            return data
-        case .p384(let data):
-            return data
-        case .p521(let data):
-            return data
+        case let .p256(data):
+            data
+        case let .p384(data):
+            data
+        case let .p521(data):
+            data
         }
     }
 }
