@@ -275,7 +275,7 @@ final class NanoTDFTests: XCTestCase {
         }
     }
 
-    func testAddSignature() {
+    func testAddSignature() async {
         // Parse a NanoTDF without a signature
         let hexString = """
         4c 31 4c 01 0f 6b 61 73 2e 65 78 61 6d 70 6c 65 2e 63 6f 6d
@@ -299,7 +299,7 @@ final class NanoTDFTests: XCTestCase {
             let privateKey = P256.Signing.PrivateKey()
             // Add the signature to the NanoTDF
             print("Adding signature")
-            try addSignatureToNanoTDF(nanoTDF: &nanoTDF, privateKey: privateKey, config: header.payloadSignatureConfig)
+            try await addSignatureToNanoTDF(nanoTDF: &nanoTDF, privateKey: privateKey, config: header.payloadSignatureConfig)
             // Print the updated NanoTDF
             print(nanoTDF)
             var serializedSignature = nanoTDF.signature?.toData()
@@ -343,7 +343,7 @@ final class NanoTDFTests: XCTestCase {
         }
     }
 
-    func testCreateAddVerifySignature() throws {
+    func testCreateAddVerifySignature() async throws {
         let locator = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
         XCTAssertNotNil(locator)
         var nanoTDF = initializeSmallNanoTDF(kasResourceLocator: locator!)
@@ -351,7 +351,7 @@ final class NanoTDFTests: XCTestCase {
         let privateKey = P256.Signing.PrivateKey()
 
         // Add the signature to the NanoTDF
-        try addSignatureToNanoTDF(nanoTDF: &nanoTDF, privateKey: privateKey, config: nanoTDF.header.payloadSignatureConfig)
+        try await addSignatureToNanoTDF(nanoTDF: &nanoTDF, privateKey: privateKey, config: nanoTDF.header.payloadSignatureConfig)
         XCTAssertEqual(64, nanoTDF.signature?.signature.count)
 //        // Serialize the NanoTDF
 //        let serializedData = nanoTDF.toData()

@@ -1,9 +1,9 @@
-import CryptoKit
+@preconcurrency import CryptoKit
 import Foundation
 
 public struct NanoTDF: Sendable {
     public var header: Header
-    public var payload: Payload
+    public let payload: Payload
     public var signature: Signature?
 
     public init(header: Header, payload: Payload, signature: Signature? = nil) {
@@ -22,14 +22,111 @@ public struct NanoTDF: Sendable {
         return data
     }
 
-    public func getPayloadPlaintext(symmetricKey: SymmetricKey) throws -> Data {
-        let paddedIV = CryptoHelper.adjustNonce(payload.iv, to: 12)
-        let sealedBox = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: paddedIV),
-                                              ciphertext: payload.ciphertext,
-                                              tag: payload.mac)
-        let decryptedData = try AES.GCM.open(sealedBox, using: symmetricKey)
-        return decryptedData
+    public func getPayloadPlaintext(symmetricKey: SymmetricKey) async throws -> Data {
+        let cryptoHelper = CryptoHelper()
+        let paddedIV = await cryptoHelper.adjustNonce(payload.iv, to: 12)
+        return try await cryptoHelper.decryptPayload(
+            ciphertext: payload.ciphertext,
+            symmetricKey: symmetricKey,
+            nonce: paddedIV,
+            tag: payload.mac
+        )
     }
+}
+
+public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) async throws -> NanoTDF {
+    let cryptoHelper = CryptoHelper()
+    
+    // Step 1: Generate an ephemeral key pair
+    guard let keyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
+        throw CryptoHelperError.keyDerivationFailed
+    }
+
+    // Step 2: Derive shared secret
+    let kasPublicKey = try kas.getPublicKey()
+    
+    guard let sharedSecret = try await cryptoHelper.deriveSharedSecret(
+        keyPair: keyPair,
+        recipientPublicKey: kasPublicKey
+    ) else {
+        throw CryptoHelperError.keyDerivationFailed
+    }
+
+    // Step 3: Derive symmetric key
+    let tdfSymmetricKey = await cryptoHelper.deriveSymmetricKey(
+        sharedSecret: sharedSecret,
+        salt: Data("L1L".utf8),
+        info: Data("encryption".utf8),
+        outputByteCount: 32
+    )
+
+    // Policy
+    let policyBody: Data = switch policy.type {
+    case .remote:
+        policy.remote!.toData()
+    case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
+        policy.body!.toData()
+    }
+
+    // Create GMAC binding
+    let gmacTag = try await cryptoHelper.createGMACBinding(
+        policyBody: policyBody,
+        symmetricKey: tdfSymmetricKey
+    )
+    policy.binding = gmacTag
+
+    // Step 4: Generate nonce
+    let nonce = await cryptoHelper.generateNonce(length: 3)
+    let nonce12 = await cryptoHelper.adjustNonce(nonce, to: 12)
+
+    // Step 5: Encrypt payload
+    let (ciphertext, tag) = try await cryptoHelper.encryptPayload(
+        plaintext: plaintext,
+        symmetricKey: tdfSymmetricKey,
+        nonce: nonce12
+    )
+
+    let payloadLength = ciphertext.count + tag.count + nonce.count
+    let payload = Payload(
+        length: UInt32(payloadLength),
+        iv: nonce,
+        ciphertext: ciphertext,
+        mac: tag
+    )
+
+    let header = Header(
+        kas: kas.resourceLocator,
+        policyBindingConfig: PolicyBindingConfig(ecdsaBinding: false, curve: kas.curve),
+        payloadSignatureConfig: SignatureAndPayloadConfig(
+            signed: false,
+            signatureCurve: kas.curve,
+            payloadCipher: .aes256GCM128
+        ),
+        policy: policy,
+        ephemeralPublicKey: keyPair.publicKey
+    )
+
+    return NanoTDF(header: header, payload: payload, signature: nil)
+}
+
+// Update the addSignatureToNanoTDF function:
+public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signing.PrivateKey, config: SignatureAndPayloadConfig) async throws {
+    let cryptoHelper = CryptoHelper()
+    let message = nanoTDF.header.toData() + nanoTDF.payload.toData()
+    
+    guard let signatureData = try await cryptoHelper.generateECDSASignature(
+        privateKey: privateKey,
+        message: message
+    ) else {
+        throw SignatureError.invalidSigning
+    }
+
+    let publicKeyData = privateKey.publicKey.compressedRepresentation
+    let signature = Signature(publicKey: publicKeyData, signature: signatureData)
+    
+    nanoTDF.signature = signature
+    nanoTDF.header.payloadSignatureConfig.signed = true
+    nanoTDF.header.payloadSignatureConfig.signatureCurve = config.signatureCurve
 }
 
 public struct Header: Sendable {
@@ -274,49 +371,6 @@ public enum SignatureError: Error {
     case invalidCurve
 }
 
-// Function to add a signature to a NanoTDF
-public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signing.PrivateKey, config: SignatureAndPayloadConfig) throws {
-    let message = nanoTDF.header.toData() + nanoTDF.payload.toData()
-    guard let signatureData = try CryptoHelper.generateECDSASignature(privateKey: privateKey, message: message) else {
-        throw SignatureError.invalidSigning
-    }
-    print("signatureData", signatureData.count)
-    let publicKeyData = privateKey.publicKey.compressedRepresentation // Using compressedRepresentation for the compressed key format
-    print("publicKeyData", publicKeyData.count)
-    // Determine lengths based on ECC mode
-    let publicKeyLength: Int
-    let signatureLength: Int
-
-    print("config.signatureECCMode", config.signatureCurve as Any)
-    switch config.signatureCurve {
-    case .secp256r1, .xsecp256k1:
-        publicKeyLength = 33
-        signatureLength = 64
-    case .secp384r1:
-        publicKeyLength = 49
-        signatureLength = 96
-    case .secp521r1:
-        publicKeyLength = 67
-        signatureLength = 132
-    case .none:
-        print("signatureECCMode not found")
-        throw SignatureError.invalidCurve
-    }
-
-    // Check lengths
-    guard publicKeyData.count == publicKeyLength else {
-        throw SignatureError.invalidPublicKeyLength
-    }
-    guard signatureData.count == signatureLength else {
-        throw SignatureError.invalidSignatureLength
-    }
-
-    let signature = Signature(publicKey: publicKeyData, signature: signatureData)
-    nanoTDF.signature = signature
-    nanoTDF.header.payloadSignatureConfig.signed = true
-    nanoTDF.header.payloadSignatureConfig.signatureCurve = config.signatureCurve
-}
-
 // Initialize a NanoTDF small
 public func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoTDF {
     let curve: Curve = .secp256r1
@@ -340,82 +394,52 @@ public func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoT
                    signature: nil)
 }
 
-public struct KasMetadata {
-    public let resourceLocator: ResourceLocator
-    public let publicKey: Any
-    public let curve: Curve
-    public init(resourceLocator: ResourceLocator, publicKey: Any, curve: Curve) {
-        self.resourceLocator = resourceLocator
-        self.publicKey = publicKey
-        self.curve = curve
-    }
+public enum PublicKeyType: Sendable {
+    case p256(Data)  // Stores compressed representation
+    case p384(Data)
+    case p521(Data)
 }
 
-public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Data) throws -> NanoTDF {
-    // Step 1: Generate an ephemeral key pair
-    guard let (ephemeralPrivateKey, ephemeralPublicKey) = CryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
-        throw NSError(domain: "CryptoError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to generate ephemeral key pair"])
+public struct KasMetadata: Sendable {
+    public let resourceLocator: ResourceLocator
+    private let publicKeyType: PublicKeyType
+    public let curve: Curve
+    
+    public init(resourceLocator: ResourceLocator, publicKey: Any, curve: Curve) throws {
+        self.resourceLocator = resourceLocator
+        self.curve = curve
+        
+        // Store compressed representation instead of key objects
+        switch curve {
+        case .secp256r1:
+            guard let key = publicKey as? P256.KeyAgreement.PublicKey else {
+                throw CryptoHelperError.unsupportedCurve
+            }
+            self.publicKeyType = .p256(key.compressedRepresentation)
+        case .secp384r1:
+            guard let key = publicKey as? P384.KeyAgreement.PublicKey else {
+                throw CryptoHelperError.unsupportedCurve
+            }
+            self.publicKeyType = .p384(key.compressedRepresentation)
+        case .secp521r1:
+            guard let key = publicKey as? P521.KeyAgreement.PublicKey else {
+                throw CryptoHelperError.unsupportedCurve
+            }
+            self.publicKeyType = .p521(key.compressedRepresentation)
+        case .xsecp256k1:
+            throw CryptoHelperError.unsupportedCurve
+        }
     }
-    // print("Ephemeral Public Key: \(ephemeralPublicKey)")
-    // Step 2: Derive shared secret
-    guard let sharedSecret = try CryptoHelper.deriveSharedSecret(curveType: kas.curve, ephemeralPrivateKey: ephemeralPrivateKey, recipientPublicKey: kas.publicKey) else {
-        throw NSError(domain: "CryptoError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to derive shared secret"])
+    
+    public func getPublicKey() throws -> Data {
+        // Return the compressed representation directly
+        switch publicKeyType {
+        case .p256(let data):
+            return data
+        case .p384(let data):
+            return data
+        case .p521(let data):
+            return data
+        }
     }
-    // print("Raw shared secret: \(sharedSecret)")
-    // Step 3: Derive symmetric key
-    let tdfSymmetricKey = CryptoHelper.deriveSymmetricKey(sharedSecret: sharedSecret, salt: Data("L1L".utf8), info: Data("encryption".utf8), outputByteCount: 32)
-    // print("TDF Symmetric Key: \(tdfSymmetricKey.withUnsafeBytes { Data($0).hexEncodedString() })")
-    // Policy
-    let policyBody: Data = switch policy.type {
-    case .remote:
-        policy.remote!.toData()
-    case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
-        policy.body!.toData()
-    }
-    let gmacTag = try CryptoHelper.createGMACBinding(policyBody: policyBody, symmetricKey: tdfSymmetricKey)
-    policy.binding = gmacTag
-    // print("GMAC Tag: \(gmacTag.hexEncodedString())")
-    // Step 4: Generate nonce (IV)
-    // 3.3.2.2 IV + Ciphertext + MAClength 3
-    let nonce3 = CryptoHelper.adjustNonce(CryptoHelper.generateNonce(), to: 3)
-    let nonce12 = CryptoHelper.adjustNonce(nonce3, to: 12)
-    // print("Nonce (3 bytes): \(nonce3.hexEncodedString())")
-    // print("Nonce (12 bytes): \(nonce12.hexEncodedString())")
-    // Step 5: Encrypt payload
-    let (ciphertext, tag) = try CryptoHelper.encryptPayload(plaintext: plaintext, symmetricKey: tdfSymmetricKey, nonce: nonce12)
-    // print("Ciphertext length: \(ciphertext.count)")
-    // print("Auth tag: \(tag.hexEncodedString())")
-    // Step 6: Create Policy Key Access structure
-//    let policyKeyAccessEphemeralKeyPair = CryptoHelper.generateEphemeralKeyPair(curveType: kas.curve)!
-//    let policyKeyAccess = PolicyKeyAccess(
-//        resourceLocator: kas.resourceLocator,
-//        ephemeralPublicKey: policyKeyAccessEphemeralKeyPair.publicKey
-//    )
-
-    // If including nonce in payload, add its length
-    let payloadLength = ciphertext.count + tag.count + nonce3.count
-    // print("createNanoTDF payloadLength", payloadLength)
-    // Payload
-    let payload = Payload(length: UInt32(payloadLength),
-                          iv: nonce3,
-                          ciphertext: ciphertext,
-                          mac: tag)
-    // Header
-    let curve: Curve = .secp256r1
-    var ephemeralPublicKeyData = Data()
-    if let ephemeralPublicKey = ephemeralPublicKey as? P256.KeyAgreement.PublicKey {
-        ephemeralPublicKeyData = ephemeralPublicKey.compressedRepresentation
-    }
-    // print("tdf_ephemeral_key hex: ", ephemeralPublicKeyData.hexEncodedString())
-    let header = Header(
-        kas: kas.resourceLocator,
-        policyBindingConfig: PolicyBindingConfig(ecdsaBinding: false, curve: curve),
-        payloadSignatureConfig: SignatureAndPayloadConfig(signed: false, signatureCurve: curve, payloadCipher: .aes256GCM128),
-        policy: policy,
-        ephemeralPublicKey: ephemeralPublicKeyData
-    )
-
-    return NanoTDF(header: header,
-                   payload: payload,
-                   signature: nil)
 }
