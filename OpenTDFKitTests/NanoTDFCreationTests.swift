@@ -3,7 +3,7 @@ import CryptoKit
 import XCTest
 
 class NanoTDFCreationTests: XCTestCase {
-    func testCreateNanoTDF() throws {
+    func testCreateNanoTDF() async throws {
         let kasRL = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
         XCTAssertNotNil(kasRL)
         let recipientBase64 = "A2ifhGOpE0DjR4R0FPXvZ6YBOrcjayIpxwtxeXTudOts"
@@ -11,14 +11,14 @@ class NanoTDFCreationTests: XCTestCase {
             throw NSError(domain: "invalid base64 encoding", code: 0, userInfo: nil)
         }
         let kasPK = try P256.KeyAgreement.PublicKey(compressedRepresentation: recipientDER)
-        let kasMetadata = KasMetadata(resourceLocator: kasRL!, publicKey: kasPK, curve: .secp256r1)
+        let kasMetadata = try KasMetadata(resourceLocator: kasRL!, publicKey: kasPK, curve: .secp256r1)
 //        let policyBody = "classification:secret".data(using: .utf8)!
 //        let embeddedPolicy = EmbeddedPolicyBody(length: policyBody.count, body: policyBody, keyAccess: nil)
         let remotePolicy = ResourceLocator(protocolEnum: .https, body: "localhost/123")
         var policy = Policy(type: .remote, body: nil, remote: remotePolicy, binding: nil)
         let plaintext = "Keep this message secret".data(using: .utf8)!
         // create
-        let nanoTDF = try createNanoTDF(kas: kasMetadata, policy: &policy, plaintext: plaintext)
+        let nanoTDF = try await createNanoTDF(kas: kasMetadata, policy: &policy, plaintext: plaintext)
         XCTAssertNotNil(nanoTDF, "NanoTDF should not be nil")
         XCTAssertNotNil(nanoTDF.header, "Header should not be nil")
         XCTAssertNotNil(nanoTDF.header.policy.remote, "Policy body should not be nil")
