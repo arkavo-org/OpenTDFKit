@@ -86,3 +86,15 @@ sequenceDiagram
 ```shell
 swiftformat --swiftversion 6.0 .
 ```
+
+## Test
+
+
+
+### Performance
+
+```shell
+swift test --configuration release --filter KeyStoreBenchmarkTests
+```
+
+
