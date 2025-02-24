@@ -13,12 +13,39 @@ public struct KeyPairIdentifier: Hashable, Sendable {
 }
 
 public struct StoredKeyPair: Sendable {
-    let publicKey: Data
-    let privateKey: Data
+    // Store all bytes contiguously
+    private let bytes: ContiguousArray<UInt8>
+    private let publicKeyLength: Int
+    
+    var publicKey: Data {
+        return bytes.withUnsafeBufferPointer { buffer in
+            return Data(bytes: buffer.baseAddress!, count: publicKeyLength)
+        }
+    }
+    
+    var privateKey: Data {
+        return bytes.withUnsafeBufferPointer { buffer in
+            let privateKeyStart = buffer.baseAddress!.advanced(by: publicKeyLength)
+            let privateKeyLength = buffer.count - publicKeyLength
+            return Data(bytes: privateKeyStart, count: privateKeyLength)
+        }
+    }
     
     init(publicKey: Data, privateKey: Data) {
-        self.publicKey = publicKey
-        self.privateKey = privateKey
+        // Single allocation for both keys
+        var bytes = ContiguousArray<UInt8>()
+        bytes.reserveCapacity(publicKey.count + privateKey.count)
+        
+        // Copy bytes directly without intermediate buffers
+        publicKey.withUnsafeBytes { pubBytes in
+            bytes.append(contentsOf: pubBytes)
+        }
+        privateKey.withUnsafeBytes { privBytes in
+            bytes.append(contentsOf: privBytes)
+        }
+        
+        self.bytes = bytes
+        self.publicKeyLength = publicKey.count
     }
 }
 
@@ -26,23 +53,16 @@ public struct StoredKeyPair: Sendable {
 
 public actor KeyStore {
     let curve: Curve
-    var keyPairs: [KeyPairIdentifier: StoredKeyPair]
-    // Just track public keys for fast existence checks
-    private var publicKeySet: Set<KeyPairIdentifier>
+    var keyPairs: Dictionary<KeyPairIdentifier, StoredKeyPair>
+    // Track total memory used
+    private var totalBytesStored: Int = 0
     
     public init(curve: Curve, capacity: Int = 1000) {
         self.curve = curve
         self.keyPairs = Dictionary(minimumCapacity: capacity)
-        self.publicKeySet = Set(minimumCapacity: capacity)
+        self.totalBytesStored = 0
     }
     
-    // Fast path - just checks existence
-    public func hasKey(publicKey: Data) -> Bool {
-        let identifier = KeyPairIdentifier(publicKey: publicKey)
-        return publicKeySet.contains(identifier)
-    }
-    
-    // Called only when needed for key exchange
     public func getPrivateKey(forPublicKey publicKey: Data) -> Data? {
         let identifier = KeyPairIdentifier(publicKey: publicKey)
         return keyPairs[identifier]?.privateKey
@@ -51,7 +71,23 @@ public actor KeyStore {
     public func store(keyPair: StoredKeyPair) {
         let identifier = KeyPairIdentifier(publicKey: keyPair.publicKey)
         keyPairs[identifier] = keyPair
-        publicKeySet.insert(identifier)
+        totalBytesStored += curve.publicKeyLength + curve.privateKeyLength
+    }
+    
+    // Batch storage optimized for memory
+    public func storeBatch(pairs: [(publicKey: Data, privateKey: Data)]) {
+        // Pre-allocate for entire batch
+        let totalNewBytes = pairs.count * (curve.publicKeyLength + curve.privateKeyLength)
+        keyPairs.reserveCapacity(keyPairs.count + pairs.count)
+        
+        // Store all pairs
+        for pair in pairs {
+            let stored = StoredKeyPair(publicKey: pair.publicKey, privateKey: pair.privateKey)
+            let identifier = KeyPairIdentifier(publicKey: pair.publicKey)
+            keyPairs[identifier] = stored
+        }
+        
+        totalBytesStored += totalNewBytes
     }
     
     // Batch generation method
@@ -76,7 +112,7 @@ public actor KeyStore {
         // Batch insert
         for (identifier, keyPair) in tempPairs {
             keyPairs[identifier] = keyPair
-            publicKeySet.insert(identifier)
+            totalBytesStored += curve.publicKeyLength + curve.privateKeyLength
         }
     }
     
@@ -144,13 +180,11 @@ public actor KeyStore {
         
         // Clear existing data
         keyPairs.removeAll(keepingCapacity: true)
-        publicKeySet.removeAll(keepingCapacity: true)
-        
+
         var offset = 5
         
         // Pre-allocate capacity
         keyPairs.reserveCapacity(Int(count))
-        publicKeySet.reserveCapacity(Int(count))
         
         // Read fixed-size pairs
         for _ in 0..<count {
@@ -169,7 +203,6 @@ public actor KeyStore {
             
             let identifier = KeyPairIdentifier(publicKey: keyPair.publicKey)
             keyPairs[identifier] = keyPair
-            publicKeySet.insert(identifier)
             
             offset += pairSize
         }
