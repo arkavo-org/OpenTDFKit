@@ -4,10 +4,11 @@ import CryptoKit
 // MARK: - Key Types and Storage
 
 public struct KeyPairIdentifier: Hashable, Sendable {
-    let publicKeyHash: String
+    // Store the public key bytes directly - already fixed size per curve
+    private let bytes: Data
     
     init(publicKey: Data) {
-        self.publicKeyHash = SHA256.hash(data: publicKey).compactMap { String(format: "%02x", $0) }.joined()
+        self.bytes = publicKey
     }
 }
 
