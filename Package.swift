@@ -17,7 +17,7 @@ let package = Package(
         .executable(
             name: "OpenTDFKitProfiler",
             targets: ["OpenTDFKitProfiler"]
-        )
+        ),
     ],
     dependencies: [],
     targets: [
