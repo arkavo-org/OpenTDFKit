@@ -87,9 +87,14 @@ sequenceDiagram
 swiftformat --swiftversion 6.0 .
 ```
 
+### Profile
+
+```shell
+swift build -c release
+swift run -c release OpenTDFKitProfiler
+```
+
 ## Test
-
-
 
 ### Performance
 

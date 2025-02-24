@@ -53,9 +53,9 @@ public struct StoredKeyPair: Sendable {
 
 public actor KeyStore {
     let curve: Curve
-    var keyPairs: Dictionary<KeyPairIdentifier, StoredKeyPair>
+    public var keyPairs: Dictionary<KeyPairIdentifier, StoredKeyPair>
     // Track total memory used
-    private var totalBytesStored: Int = 0
+   public  var totalBytesStored: Int = 0
     
     public init(curve: Curve, capacity: Int = 1000) {
         self.curve = curve
@@ -205,34 +205,6 @@ public actor KeyStore {
             keyPairs[identifier] = keyPair
             
             offset += pairSize
-        }
-    }
-    
-    // Key exchange functionality
-    public func performKeyExchange(publicKey: Data) throws -> (sharedSecret: SharedSecret, ephemeralPublicKey: Data) {
-        let ephemeralKeyPair = generateKeyPair()
-        
-        switch curve {
-        case .secp521r1:
-            let recipientKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: publicKey)
-            let privateKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: ephemeralKeyPair.privateKey)
-            let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: recipientKey)
-            return (sharedSecret, ephemeralKeyPair.publicKey)
-            
-        case .secp384r1:
-            let recipientKey = try P384.KeyAgreement.PublicKey(compressedRepresentation: publicKey)
-            let privateKey = try P384.KeyAgreement.PrivateKey(rawRepresentation: ephemeralKeyPair.privateKey)
-            let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: recipientKey)
-            return (sharedSecret, ephemeralKeyPair.publicKey)
-            
-        case .secp256r1:
-            let recipientKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: publicKey)
-            let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: ephemeralKeyPair.privateKey)
-            let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: recipientKey)
-            return (sharedSecret, ephemeralKeyPair.publicKey)
-            
-        case .xsecp256k1:
-            throw KeyStoreError.unsupportedCurve
         }
     }
 }
