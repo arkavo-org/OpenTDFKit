@@ -4,11 +4,11 @@ import XCTest
 
 final class KeyStoreBenchmarkTests: XCTestCase {
     func testGenerateAndStore8192EC521Keys() async throws {
-        let keyStore = KeyStore(capacity: 8192)
+        let keyStore = KeyStore(curve: .secp521r1, capacity: 8192)
         let startTime = DispatchTime.now()
         
         // Generate and store keys in a single batch
-        try await keyStore.generateAndStoreKeyPairs(count: 8192, curve: .secp521r1)
+        try await keyStore.generateAndStoreKeyPairs(count: 8192)
         
         let endTime = DispatchTime.now()
         let timeInterval = Double(endTime.uptimeNanoseconds - startTime.uptimeNanoseconds) / 1_000_000_000
@@ -20,31 +20,62 @@ final class KeyStoreBenchmarkTests: XCTestCase {
         print("Average bytes per key pair: \(Double(serializedData.count) / 8192)")
         
         // Test key lookup
-        let testKeyPair = await keyStore.generateKeyPair(curve: .secp521r1)
+        let testKeyPair = await keyStore.generateKeyPair()
         await keyStore.store(keyPair: testKeyPair)
         
+        // Test hasKey performance
         let lookupStartTime = DispatchTime.now()
-        let foundPrivateKey = await keyStore.getPrivateKey(forPublicKey: testKeyPair.publicKey)
+        let exists = await keyStore.hasKey(publicKey: testKeyPair.publicKey)
         let lookupEndTime = DispatchTime.now()
         let lookupTimeInterval = Double(lookupEndTime.uptimeNanoseconds - lookupStartTime.uptimeNanoseconds) / 1_000_000
         
+        XCTAssertTrue(exists)
+        print("Time to check key existence: \(lookupTimeInterval) milliseconds")
+        
+        // Test private key retrieval
+        let privateKeyStartTime = DispatchTime.now()
+        let foundPrivateKey = await keyStore.getPrivateKey(forPublicKey: testKeyPair.publicKey)
+        let privateKeyEndTime = DispatchTime.now()
+        let privateKeyTimeInterval = Double(privateKeyEndTime.uptimeNanoseconds - privateKeyStartTime.uptimeNanoseconds) / 1_000_000
+        
         XCTAssertNotNil(foundPrivateKey)
         XCTAssertEqual(foundPrivateKey, testKeyPair.privateKey)
-        print("Time to lookup key: \(lookupTimeInterval) milliseconds")
+        print("Time to retrieve private key: \(privateKeyTimeInterval) milliseconds")
     }
     
     func testKeyLookupPerformance() async throws {
         let totalPairs = 1000
         let lookupIterations = 10000
-        let keyStore = KeyStore(capacity: totalPairs)
+        let keyStore = KeyStore(curve: .secp521r1, capacity: totalPairs)
         
         print("Generating \(totalPairs) test key pairs...")
-        try await keyStore.generateAndStoreKeyPairs(count: totalPairs, curve: .secp521r1)
+        try await keyStore.generateAndStoreKeyPairs(count: totalPairs)
         
         let publicKeys = await keyStore.getAllPublicKeys()
         
-        print("Running \(lookupIterations) random key lookups...")
-        let startTime = DispatchTime.now()
+        // Test hasKey performance
+        print("Running \(lookupIterations) random existence checks...")
+        let existsStartTime = DispatchTime.now()
+        
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0..<lookupIterations {
+                group.addTask {
+                    let randomIndex = Int.random(in: 0..<publicKeys.count)
+                    let publicKey = publicKeys[randomIndex]
+                    let exists = await keyStore.hasKey(publicKey: publicKey)
+                    XCTAssertTrue(exists, "Failed existence check")
+                }
+            }
+            try await group.waitForAll()
+        }
+        
+        let existsEndTime = DispatchTime.now()
+        let existsTimeMs = Double(existsEndTime.uptimeNanoseconds - existsStartTime.uptimeNanoseconds) / 1_000_000
+        let avgExistsTimeMs = existsTimeMs / Double(lookupIterations)
+        
+        // Test private key retrieval performance
+        print("Running \(lookupIterations) random private key retrievals...")
+        let retrievalStartTime = DispatchTime.now()
         
         try await withThrowingTaskGroup(of: Void.self) { group in
             for _ in 0..<lookupIterations {
@@ -58,17 +89,17 @@ final class KeyStoreBenchmarkTests: XCTestCase {
             try await group.waitForAll()
         }
         
-        let endTime = DispatchTime.now()
-        let nanoTime = endTime.uptimeNanoseconds - startTime.uptimeNanoseconds
-        let totalTimeMs = Double(nanoTime) / 1_000_000
-        let avgLookupTimeMs = totalTimeMs / Double(lookupIterations)
+        let retrievalEndTime = DispatchTime.now()
+        let retrievalTimeMs = Double(retrievalEndTime.uptimeNanoseconds - retrievalStartTime.uptimeNanoseconds) / 1_000_000
+        let avgRetrievalTimeMs = retrievalTimeMs / Double(lookupIterations)
         
         print("""
         Lookup Performance Metrics:
         - Total lookups: \(lookupIterations)
-        - Total time: \(totalTimeMs) ms
-        - Average lookup time: \(avgLookupTimeMs) ms
-        - Lookups per second: \(Double(lookupIterations) / (totalTimeMs / 1000))
+        - Average existence check time: \(avgExistsTimeMs) ms
+        - Existence checks per second: \(Double(lookupIterations) / (existsTimeMs / 1000))
+        - Average private key retrieval time: \(avgRetrievalTimeMs) ms
+        - Private key retrievals per second: \(Double(lookupIterations) / (retrievalTimeMs / 1000))
         """)
     }
     
@@ -76,11 +107,11 @@ final class KeyStoreBenchmarkTests: XCTestCase {
         let keyCounts = [100, 1000, 10000]
         
         for count in keyCounts {
-            let keyStore = KeyStore(capacity: count)
+            let keyStore = KeyStore(curve: .secp521r1, capacity: count)
             
             print("\nGenerating \(count) key pairs...")
             let genStartTime = DispatchTime.now()
-            try await keyStore.generateAndStoreKeyPairs(count: count, curve: .secp521r1)
+            try await keyStore.generateAndStoreKeyPairs(count: count)
             let genEndTime = DispatchTime.now()
             let genTimeMs = Double(genEndTime.uptimeNanoseconds - genStartTime.uptimeNanoseconds) / 1_000_000
             
@@ -111,16 +142,15 @@ final class KeyStoreBenchmarkTests: XCTestCase {
     }
     
     func testKeyExchangePerformance() async throws {
-        let keyStore = KeyStore()
-        let recipientKeyPair = await keyStore.generateKeyPair(curve: .secp521r1)
+        let keyStore = KeyStore(curve: .secp521r1)
+        let recipientKeyPair = await keyStore.generateKeyPair()
         
         measure {
             let expectation = expectation(description: "Key exchange completed")
             
             Task {
                 let (sharedSecret, _) = try await keyStore.performKeyExchange(
-                    publicKey: recipientKeyPair.publicKey,
-                    curve: .secp521r1
+                    publicKey: recipientKeyPair.publicKey
                 )
                 
                 XCTAssertNotNil(sharedSecret)
@@ -129,12 +159,5 @@ final class KeyStoreBenchmarkTests: XCTestCase {
             
             wait(for: [expectation], timeout: 10.0)
         }
-    }
-}
-
-// Extension to help with testing
-extension KeyStore {
-    func getAllPublicKeys() -> [Data] {
-        return Array(keyPairs.values.map { $0.publicKey })
     }
 }
