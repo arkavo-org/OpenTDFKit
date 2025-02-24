@@ -25,11 +25,11 @@ final class KeyStoreBenchmarkTests: XCTestCase {
         
         // Test hasKey performance
         let lookupStartTime = DispatchTime.now()
-        let exists = await keyStore.hasKey(publicKey: testKeyPair.publicKey)
+        let exists = await keyStore.getPrivateKey(forPublicKey: testKeyPair.publicKey)
         let lookupEndTime = DispatchTime.now()
         let lookupTimeInterval = Double(lookupEndTime.uptimeNanoseconds - lookupStartTime.uptimeNanoseconds) / 1_000_000
         
-        XCTAssertTrue(exists)
+        XCTAssertTrue((exists != nil))
         print("Time to check key existence: \(lookupTimeInterval) milliseconds")
         
         // Test private key retrieval
@@ -62,7 +62,8 @@ final class KeyStoreBenchmarkTests: XCTestCase {
                 group.addTask {
                     let randomIndex = Int.random(in: 0..<publicKeys.count)
                     let publicKey = publicKeys[randomIndex]
-                    let exists = await keyStore.hasKey(publicKey: publicKey)
+                    let privateKey = await keyStore.getPrivateKey(forPublicKey: publicKey)
+                    let exists = privateKey != nil
                     XCTAssertTrue(exists, "Failed existence check")
                 }
             }

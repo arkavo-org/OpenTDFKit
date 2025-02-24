@@ -10,8 +10,8 @@ final class KeyStoreTests: XCTestCase {
         await keyStore.store(keyPair: keyPair)
         
         // Test existence check
-        let exists = await keyStore.hasKey(publicKey: keyPair.publicKey)
-        XCTAssertTrue(exists)
+        let exists = await keyStore.getPrivateKey(forPublicKey: keyPair.publicKey)
+        XCTAssertTrue((exists != nil))
         
         // Test private key retrieval
         let foundPrivateKey = await keyStore.getPrivateKey(forPublicKey: keyPair.publicKey)
@@ -41,8 +41,8 @@ final class KeyStoreTests: XCTestCase {
         // Verify all keys were restored correctly
         for publicKey in originalKeys {
             // Check existence
-            let exists = await restoredStore.hasKey(publicKey: publicKey)
-            XCTAssertTrue(exists, "Key existence check failed after deserialization")
+            let exists = await restoredStore.getPrivateKey(forPublicKey: publicKey)
+            XCTAssertTrue((exists != nil), "Key existence check failed after deserialization")
             
             // Verify private key matches
             let originalPrivateKey = await keyStore.getPrivateKey(forPublicKey: publicKey)
