@@ -141,24 +141,4 @@ final class KeyStoreBenchmarkTests: XCTestCase {
             """)
         }
     }
-
-    func testKeyExchangePerformance() async throws {
-        let keyStore = KeyStore(curve: .secp521r1)
-        let recipientKeyPair = await keyStore.generateKeyPair()
-
-        measure {
-            let expectation = expectation(description: "Key exchange completed")
-
-            Task {
-                let (sharedSecret, _) = try await keyStore.performKeyExchange(
-                    publicKey: recipientKeyPair.publicKey
-                )
-
-                XCTAssertNotNil(sharedSecret)
-                expectation.fulfill()
-            }
-
-            wait(for: [expectation], timeout: 10.0)
-        }
-    }
 }

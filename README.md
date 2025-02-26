@@ -96,6 +96,12 @@ swift run -c release OpenTDFKitProfiler
 
 ## Test
 
+### Functionality
+
+```shell
+swift test --filter KASServiceTests
+```
+
 ### Performance
 
 ```shell

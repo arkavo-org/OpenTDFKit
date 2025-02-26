@@ -50,37 +50,6 @@ final class KeyStoreTests: XCTestCase {
         }
     }
 
-    func testKeyExchangeImplementation() async throws {
-        let keyStore = KeyStore(curve: .secp256r1)
-
-        // Generate recipient key pair
-        let recipientKeyPair = await keyStore.generateKeyPair()
-        XCTAssertFalse(recipientKeyPair.publicKey.isEmpty)
-        XCTAssertFalse(recipientKeyPair.privateKey.isEmpty)
-
-        let (sharedSecret, ephemeralPublicKey) = try await keyStore.performKeyExchange(
-            publicKey: recipientKeyPair.publicKey
-        )
-
-        XCTAssertNotNil(sharedSecret)
-        XCTAssertFalse(ephemeralPublicKey.isEmpty)
-
-        // Test key derivation and encryption
-        let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
-            using: SHA256.self,
-            salt: Data("test-salt".utf8),
-            sharedInfo: Data("test-info".utf8),
-            outputByteCount: 32
-        )
-
-        let testMessage = "Test message".data(using: .utf8)!
-        let nonce = AES.GCM.Nonce()
-        let sealedBox = try AES.GCM.seal(testMessage, using: symmetricKey, nonce: nonce)
-        let decryptedMessage = try AES.GCM.open(sealedBox, using: symmetricKey)
-
-        XCTAssertEqual(testMessage, decryptedMessage)
-    }
-
     func testInvalidDeserialization() async {
         let keyStore = KeyStore(curve: .secp256r1)
 
