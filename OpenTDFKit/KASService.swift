@@ -136,6 +136,9 @@ public actor KASService {
         case .secp521r1:
             let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: keyPair.publicKey)
             return try KasMetadata(resourceLocator: resourceLocator, publicKey: publicKey, curve: .secp521r1)
+
+        case .xsecp256k1:
+            throw KASServiceError.invalidCurve
         }
     }
 
@@ -201,18 +204,23 @@ public actor KASService {
         }
     }
 
-    /// Internal helper function to rewrap a key
+    /// Process key access request locally (server-side KAS implementation)
     /// - Parameters:
     ///   - ephemeralPublicKey: Client's ephemeral public key
     ///   - encryptedKey: The encrypted key to unwrap
-    ///   - privateKeyData: The KAS private key to use for decryption
-    /// - Returns: Rewrapped key data and the new key pair used for rewrapping
-    private func rewrapKeyInternal(
+    ///   - kasPublicKey: The KAS public key that was used for encryption
+    /// - Returns: Rewrapped key data
+    public func processKeyAccess(
         ephemeralPublicKey: Data,
         encryptedKey: Data,
-        privateKeyData: Data
-    ) async throws -> (rewrappedKey: Data, newKeyPair: StoredKeyPair) {
-        // 1. Derive shared secret using the client's ephemeral public key and KAS private key
+        kasPublicKey: Data
+    ) async throws -> Data {
+        // 1. Get the KAS private key corresponding to the KAS public key
+        guard let privateKeyData = await keyStore.getPrivateKey(forPublicKey: kasPublicKey) else {
+            throw KASServiceError.keyNotFound
+        }
+
+        // 2. Derive shared secret using the client's ephemeral public key and KAS private key
         let sharedSecret: SharedSecret
 
         switch keyStore.curve {
@@ -230,32 +238,23 @@ public actor KASService {
             let privateKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData)
             let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
             sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
+
+        case .xsecp256k1:
+            throw KASServiceError.invalidCurve
         }
 
-        // 2. Derive symmetric key for decryption
-        // Support both v12 and v13 salt values
-        // For a production implementation, you would determine the version from the NanoTDF header
-        // Here we'll create keys using both salts and try both for decryption
-        let symmetricKeyV12 = sharedSecret.hkdfDerivedSymmetricKey(
+        // 3. Derive symmetric key for decryption
+        let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1L".utf8), // v12 salt
+            salt: Data("L1L".utf8),
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
 
-        let symmetricKeyV13 = sharedSecret.hkdfDerivedSymmetricKey(
-            using: SHA256.self,
-            salt: Data("L1M".utf8), // v13 salt
-            sharedInfo: Data("encryption".utf8),
-            outputByteCount: 32
-        )
-
-        // We'll try both keys in the decryption step
-
-        // 3. Generate a new ephemeral key pair for rewrapping
+        // 4. Generate a new ephemeral key pair for rewrapping
         let newKeyPair = await keyStore.generateKeyPair()
 
-        // 4. Decrypt the encrypted key using the derived symmetric key
+        // 5. Decrypt the encrypted key using the derived symmetric key
         guard encryptedKey.count >= 28 else { // Minimum size for AES-GCM: 12 bytes nonce + 16 bytes tag
             throw KASServiceError.invalidKeyFormat
         }
@@ -271,16 +270,9 @@ public actor KASService {
             tag: tag
         )
 
-        // Try decryption with the v13 key first
-        let decryptedKey: Data
-        do {
-            decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKeyV13)
-        } catch {
-            // If v13 key fails, fallback to v12 key
-            decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKeyV12)
-        }
+        let decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKey)
 
-        // 5. Create new shared secret for rewrapping
+        // 6. Create new shared secret for rewrapping
         let newSharedSecret: SharedSecret
 
         switch keyStore.curve {
@@ -298,21 +290,24 @@ public actor KASService {
             let privateKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: newKeyPair.privateKey)
             let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
             newSharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
+
+        case .xsecp256k1:
+            throw KASServiceError.invalidCurve
         }
 
-        // 6. Derive new symmetric key for encryption (using v13 format)
+        // 7. Derive new symmetric key for encryption
         let newSymmetricKey = newSharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8), // Always use v13 salt for new keys
+            salt: Data("L1L".utf8),
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
 
-        // 7. Re-encrypt the key with the new symmetric key
+        // 8. Re-encrypt the key with the new symmetric key
         let newNonce = AES.GCM.Nonce()
         let newSealedBox = try AES.GCM.seal(decryptedKey, using: newSymmetricKey, nonce: newNonce)
 
-        // 8. Combine the new ephemeral public key with the encrypted data
+        // 9. Combine the new ephemeral public key with the encrypted data
         var result = Data()
         result.append(newKeyPair.publicKey)
 
@@ -323,33 +318,7 @@ public actor KASService {
         result.append(newSealedBox.ciphertext)
         result.append(newSealedBox.tag)
 
-        return (rewrappedKey: result, newKeyPair: newKeyPair)
-    }
-
-    /// Process key access request locally (server-side KAS implementation)
-    /// - Parameters:
-    ///   - ephemeralPublicKey: Client's ephemeral public key
-    ///   - encryptedKey: The encrypted key to unwrap
-    ///   - kasPublicKey: The KAS public key that was used for encryption
-    /// - Returns: Rewrapped key data
-    public func processKeyAccess(
-        ephemeralPublicKey: Data,
-        encryptedKey: Data,
-        kasPublicKey: Data
-    ) async throws -> Data {
-        // Get the KAS private key corresponding to the KAS public key
-        guard let privateKeyData = await keyStore.getPrivateKey(forPublicKey: kasPublicKey) else {
-            throw KASServiceError.keyNotFound
-        }
-
-        // Use the internal helper to perform the rewrapping
-        let (rewrappedKey, _) = try await rewrapKeyInternal(
-            ephemeralPublicKey: ephemeralPublicKey,
-            encryptedKey: encryptedKey,
-            privateKeyData: privateKeyData
-        )
-
-        return rewrappedKey
+        return result
     }
 
     /// Verify whether a policy binding is valid
@@ -366,41 +335,5 @@ public actor KASService {
         // For GMAC binding verification, create a tag with empty ciphertext and the policy data as authenticated data
         let expectedTag = try AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyData).tag
         return policyBinding == expectedTag
-    }
-
-    /// Process a key access request and report which key was used
-    /// - Parameters:
-    ///   - ephemeralPublicKey: The ephemeral public key from the requester
-    ///   - encryptedKey: The encrypted session key that needs to be rewrapped
-    ///   - kasPublicKey: The KAS public key
-    /// - Returns: A tuple containing the rewrapped key data and the ID of the key that was used
-    /// - Throws: KAS errors
-    public func processKeyAccessWithKeyIdentifier(
-        ephemeralPublicKey: Data,
-        encryptedKey: Data,
-        kasPublicKey: Data
-    ) async throws -> (rewrappedKey: Data, keyID: UUID) {
-        // Create a UUID based on the KAS public key bytes
-        let keyID = UUID()
-
-        // Get the KAS private key corresponding to the KAS public key
-        guard let privateKeyData = await keyStore.getPrivateKey(forPublicKey: kasPublicKey) else {
-            throw KASServiceError.keyNotFound
-        }
-
-        // Create KeyPairIdentifier for the key
-        let kasKeyIdentifier = KeyPairIdentifier(publicKey: kasPublicKey)
-
-        // Use the internal helper to perform the rewrapping
-        let (rewrappedKey, _) = try await rewrapKeyInternal(
-            ephemeralPublicKey: ephemeralPublicKey,
-            encryptedKey: encryptedKey,
-            privateKeyData: privateKeyData
-        )
-
-        // Remove the used key from the keystore to ensure one-time use
-        try await keyStore.removeKeyPair(keyID: kasKeyIdentifier)
-
-        return (rewrappedKey: rewrappedKey, keyID: keyID)
     }
 }
