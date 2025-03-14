@@ -104,8 +104,56 @@ swift test --filter KASServiceTests
 
 ### Performance
 
+Run the benchmarks:
+
 ```shell
-swift test --configuration release --filter KeyStoreBenchmarkTests
+swift test --configuration release --filter "BenchmarkTests"
 ```
+
+#### Performance Results
+
+Below are the benchmark results showing the performance characteristics of the major components in OpenTDFKit:
+
+##### KeyStore Performance
+
+| Operation | Performance |
+|-----------|------------|
+| Generate and store 8192 EC521 keys | ~23 seconds total |
+| Key lookup | ~0.002ms per lookup (440,000+ ops/sec) |
+| Private key retrieval | ~0.003ms per retrieval (370,000+ ops/sec) |
+| Serialization throughput | 408-475 MB/s (varies with key count) |
+
+##### NanoTDF Cryptographic Operations
+
+| Operation | Performance |
+|-----------|------------|
+| **Encryption by Curve Type:** | |
+| - secp256r1 | ~1.1ms per operation (900+ ops/sec) |
+| - secp384r1 | ~2.9ms per operation (350+ ops/sec) |
+| - secp521r1 | ~7.9ms per operation (125+ ops/sec) |
+| Decryption | ~0.003ms per operation (390,000+ ops/sec) |
+| Signature operation | ~1.6ms per operation (630+ ops/sec) |
+
+##### Serialization Performance
+
+| Payload Size | Throughput |
+|--------------|------------|
+| 10 bytes | ~17 MB/s |
+| 100 bytes | ~42 MB/s |
+| 1,000 bytes | ~225 MB/s |
+| 10,000 bytes | ~1.8 GB/s |
+
+##### KAS Service Performance
+
+| Operation | Performance |
+|-----------|------------|
+| KAS metadata generation | ~0.4ms per operation (2,400+ ops/sec) |
+| **Key access by Curve Type:** | |
+| - secp256r1 | ~1.3ms per operation (750+ ops/sec) |
+| - secp384r1 | ~3.4ms per operation (290+ ops/sec) |
+| - secp521r1 | ~9.4ms per operation (105+ ops/sec) |
+| Policy binding verification | ~0.002ms (500,000+ verifications/sec) |
+
+These benchmarks were measured on an Apple M1 Max processor using Swift 6.0 in release mode.
 
 
