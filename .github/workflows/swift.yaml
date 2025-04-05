@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
 
 env:
-  SWIFT_VERSION: "6.0"
+  SWIFT_VERSION: "5.9.2"
   DERIVED_DATA_PATH: ".build"
-  SWIFT_CACHE_KEY: "swift-v6-${{ github.ref }}-${{ hashFiles('**/*.swift', 'Package.swift') }}"
+  SWIFT_CACHE_KEY: "swift-v5-${{ github.ref }}-${{ hashFiles('**/*.swift', 'Package.swift') }}"
 
 jobs:
   lint:
@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v4
         
       - name: Setup Swift
-        uses: swift-actions/setup-swift@v1
+        uses: swift-actions/setup-swift@v2
         with:
           swift-version: ${{ env.SWIFT_VERSION }}
           
@@ -40,7 +40,7 @@ jobs:
           brew install swiftformat swiftlint
           
       - name: Run SwiftFormat
-        run: swiftformat --swiftversion ${{ env.SWIFT_VERSION }} . --lint
+        run: swiftformat --swiftversion 5.9 . --lint
         
       - name: Run SwiftLint
         run: swiftlint --strict
@@ -54,7 +54,7 @@ jobs:
         uses: actions/checkout@v4
         
       - name: Setup Swift
-        uses: swift-actions/setup-swift@v1
+        uses: swift-actions/setup-swift@v2
         with:
           swift-version: ${{ env.SWIFT_VERSION }}
           
@@ -96,7 +96,7 @@ jobs:
         uses: actions/checkout@v4
         
       - name: Setup Swift
-        uses: swift-actions/setup-swift@v1
+        uses: swift-actions/setup-swift@v2
         with:
           swift-version: ${{ env.SWIFT_VERSION }}
           
