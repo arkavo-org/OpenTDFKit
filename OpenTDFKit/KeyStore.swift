@@ -17,7 +17,7 @@ public struct StoredKeyPair: Sendable {
     private let bytes: ContiguousArray<UInt8>
     private let publicKeyLength: Int
 
-    var publicKey: Data {
+    public var publicKey: Data {
         bytes.withUnsafeBufferPointer { buffer in
             Data(bytes: buffer.baseAddress!, count: publicKeyLength)
         }
