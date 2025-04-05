@@ -5,60 +5,125 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  SWIFT_VERSION: "6.0"
+  DERIVED_DATA_PATH: ".build"
+  SWIFT_CACHE_KEY: "swift-v6-${{ github.ref }}-${{ hashFiles('**/*.swift', 'Package.swift') }}"
 
 jobs:
-  test:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@v1
-        with:
-          swift-version: "6.0"
-      - name: Build
-        run: swift build
-      - name: Run tests
-        run: swift test
-
   lint:
+    name: Lint
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
       - name: Setup Swift
         uses: swift-actions/setup-swift@v1
         with:
-          swift-version: "6.0"
-      - name: Install SwiftFormat
-        run: brew install swiftformat
-      - name: Check format
-        run: swiftformat --swiftversion 6.0 . --lint
-      - name: Install SwiftLint
-        run: brew install swiftlint
+          swift-version: ${{ env.SWIFT_VERSION }}
+          
+      - name: Cache Homebrew dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/Library/Caches/Homebrew
+            /usr/local/Homebrew
+          key: ${{ runner.os }}-brew-${{ hashFiles('.github/workflows/swift.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-brew-
+            
+      - name: Install SwiftFormat & SwiftLint
+        run: |
+          brew install swiftformat swiftlint
+          
+      - name: Run SwiftFormat
+        run: swiftformat --swiftversion ${{ env.SWIFT_VERSION }} . --lint
+        
       - name: Run SwiftLint
         run: swiftlint --strict
 
-  build:
+  build-and-test:
+    name: Build and Test
     runs-on: macos-latest
+    needs: lint
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
       - name: Setup Swift
         uses: swift-actions/setup-swift@v1
         with:
-          swift-version: "6.0"
-      - name: Build Release
-        run: swift build -c release
+          swift-version: ${{ env.SWIFT_VERSION }}
+          
+      - name: Cache Swift packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            .build
+            ~/.swiftpm
+          key: ${{ env.SWIFT_CACHE_KEY }}
+          restore-keys: |
+            swift-v6-${{ github.ref }}-
+            swift-v6-
+            
+      - name: Build (Debug)
+        run: swift build -v
+        
+      - name: Run tests
+        run: swift test -v
+        
+      - name: Build (Release)
+        run: swift build -c release -v
+        
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-artifacts
+          path: |
+            ${{ env.DERIVED_DATA_PATH }}/**/debug/OpenTDFKit
+            ${{ env.DERIVED_DATA_PATH }}/**/release/OpenTDFKit
+          retention-days: 7
 
   benchmark:
+    name: Performance Benchmarks
     runs-on: macos-latest
+    needs: build-and-test
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
       - name: Setup Swift
         uses: swift-actions/setup-swift@v1
         with:
-          swift-version: "6.0"
+          swift-version: ${{ env.SWIFT_VERSION }}
+          
+      - name: Cache Swift packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            .build
+            ~/.swiftpm
+          key: ${{ env.SWIFT_CACHE_KEY }}
+          restore-keys: |
+            swift-v6-${{ github.ref }}-
+            swift-v6-
+            
       - name: Run KeyStore Benchmarks
-        run: swift test --configuration release --filter KeyStoreBenchmarkTests
+        run: swift test --configuration release --filter KeyStoreBenchmarkTests | tee keystore-benchmark.log
+        
       - name: Run KASService Benchmarks
-        run: swift test --configuration release --filter KASServiceBenchmarkTests
+        run: swift test --configuration release --filter KASServiceBenchmarkTests | tee kasservice-benchmark.log
+        
       - name: Run NanoTDF Benchmarks
-        run: swift test --configuration release --filter NanoTDFBenchmarkTests
+        run: swift test --configuration release --filter NanoTDFBenchmarkTests | tee nanotdf-benchmark.log
+        
+      - name: Upload benchmark logs
+        uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-results
+          path: |
+            *-benchmark.log
+          retention-days: 7
