@@ -8,9 +8,8 @@ on:
   workflow_dispatch:
 
 env:
-  SWIFT_VERSION: "5.9.2"
   DERIVED_DATA_PATH: ".build"
-  SWIFT_CACHE_KEY: "swift-v5-${{ github.ref }}-${{ hashFiles('**/*.swift', 'Package.swift') }}"
+  SWIFT_CACHE_KEY: "swift-v6-${{ github.ref }}-${{ hashFiles('**/*.swift', 'Package.swift') }}"
 
 jobs:
   lint:
@@ -22,8 +21,9 @@ jobs:
         
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: ${{ env.SWIFT_VERSION }}
+        
+      - name: Print Swift version
+        run: swift --version
           
       - name: Cache Homebrew dependencies
         uses: actions/cache@v3
@@ -40,7 +40,7 @@ jobs:
           brew install swiftformat swiftlint
           
       - name: Run SwiftFormat
-        run: swiftformat --swiftversion 5.9 . --lint
+        run: swiftformat --swiftversion 6.0 . --lint
         
       - name: Run SwiftLint
         run: swiftlint --strict
@@ -55,8 +55,9 @@ jobs:
         
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: ${{ env.SWIFT_VERSION }}
+        
+      - name: Print Swift version
+        run: swift --version
           
       - name: Cache Swift packages
         uses: actions/cache@v3
@@ -97,8 +98,9 @@ jobs:
         
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: ${{ env.SWIFT_VERSION }}
+        
+      - name: Print Swift version
+        run: swift --version
           
       - name: Cache Swift packages
         uses: actions/cache@v3
