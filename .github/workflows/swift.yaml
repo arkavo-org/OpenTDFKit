@@ -1,0 +1,64 @@
+name: Swift
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v1
+        with:
+          swift-version: "6.0"
+      - name: Build
+        run: swift build
+      - name: Run tests
+        run: swift test
+
+  lint:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v1
+        with:
+          swift-version: "6.0"
+      - name: Install SwiftFormat
+        run: brew install swiftformat
+      - name: Check format
+        run: swiftformat --swiftversion 6.0 . --lint
+      - name: Install SwiftLint
+        run: brew install swiftlint
+      - name: Run SwiftLint
+        run: swiftlint --strict
+
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v1
+        with:
+          swift-version: "6.0"
+      - name: Build Release
+        run: swift build -c release
+
+  benchmark:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v1
+        with:
+          swift-version: "6.0"
+      - name: Run KeyStore Benchmarks
+        run: swift test --configuration release --filter KeyStoreBenchmarkTests
+      - name: Run KASService Benchmarks
+        run: swift test --configuration release --filter KASServiceBenchmarkTests
+      - name: Run NanoTDF Benchmarks
+        run: swift test --configuration release --filter NanoTDFBenchmarkTests
