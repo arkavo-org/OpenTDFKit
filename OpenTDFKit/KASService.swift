@@ -204,23 +204,18 @@ public actor KASService {
         }
     }
 
-    /// Process key access request locally (server-side KAS implementation)
+    /// Internal helper function to rewrap a key
     /// - Parameters:
     ///   - ephemeralPublicKey: Client's ephemeral public key
     ///   - encryptedKey: The encrypted key to unwrap
-    ///   - kasPublicKey: The KAS public key that was used for encryption
-    /// - Returns: Rewrapped key data
-    public func processKeyAccess(
+    ///   - privateKeyData: The KAS private key to use for decryption
+    /// - Returns: Rewrapped key data and the new key pair used for rewrapping
+    private func rewrapKeyInternal(
         ephemeralPublicKey: Data,
         encryptedKey: Data,
-        kasPublicKey: Data
-    ) async throws -> Data {
-        // 1. Get the KAS private key corresponding to the KAS public key
-        guard let privateKeyData = await keyStore.getPrivateKey(forPublicKey: kasPublicKey) else {
-            throw KASServiceError.keyNotFound
-        }
-
-        // 2. Derive shared secret using the client's ephemeral public key and KAS private key
+        privateKeyData: Data
+    ) async throws -> (rewrappedKey: Data, newKeyPair: StoredKeyPair) {
+        // 1. Derive shared secret using the client's ephemeral public key and KAS private key
         let sharedSecret: SharedSecret
 
         switch keyStore.curve {
@@ -243,7 +238,7 @@ public actor KASService {
             throw KASServiceError.invalidCurve
         }
 
-        // 3. Derive symmetric key for decryption
+        // 2. Derive symmetric key for decryption
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
             salt: Data("L1L".utf8),
@@ -251,10 +246,10 @@ public actor KASService {
             outputByteCount: 32
         )
 
-        // 4. Generate a new ephemeral key pair for rewrapping
+        // 3. Generate a new ephemeral key pair for rewrapping
         let newKeyPair = await keyStore.generateKeyPair()
 
-        // 5. Decrypt the encrypted key using the derived symmetric key
+        // 4. Decrypt the encrypted key using the derived symmetric key
         guard encryptedKey.count >= 28 else { // Minimum size for AES-GCM: 12 bytes nonce + 16 bytes tag
             throw KASServiceError.invalidKeyFormat
         }
@@ -272,7 +267,7 @@ public actor KASService {
 
         let decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKey)
 
-        // 6. Create new shared secret for rewrapping
+        // 5. Create new shared secret for rewrapping
         let newSharedSecret: SharedSecret
 
         switch keyStore.curve {
@@ -295,7 +290,7 @@ public actor KASService {
             throw KASServiceError.invalidCurve
         }
 
-        // 7. Derive new symmetric key for encryption
+        // 6. Derive new symmetric key for encryption
         let newSymmetricKey = newSharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
             salt: Data("L1L".utf8),
@@ -303,11 +298,11 @@ public actor KASService {
             outputByteCount: 32
         )
 
-        // 8. Re-encrypt the key with the new symmetric key
+        // 7. Re-encrypt the key with the new symmetric key
         let newNonce = AES.GCM.Nonce()
         let newSealedBox = try AES.GCM.seal(decryptedKey, using: newSymmetricKey, nonce: newNonce)
 
-        // 9. Combine the new ephemeral public key with the encrypted data
+        // 8. Combine the new ephemeral public key with the encrypted data
         var result = Data()
         result.append(newKeyPair.publicKey)
 
@@ -318,7 +313,33 @@ public actor KASService {
         result.append(newSealedBox.ciphertext)
         result.append(newSealedBox.tag)
 
-        return result
+        return (rewrappedKey: result, newKeyPair: newKeyPair)
+    }
+
+    /// Process key access request locally (server-side KAS implementation)
+    /// - Parameters:
+    ///   - ephemeralPublicKey: Client's ephemeral public key
+    ///   - encryptedKey: The encrypted key to unwrap
+    ///   - kasPublicKey: The KAS public key that was used for encryption
+    /// - Returns: Rewrapped key data
+    public func processKeyAccess(
+        ephemeralPublicKey: Data,
+        encryptedKey: Data,
+        kasPublicKey: Data
+    ) async throws -> Data {
+        // Get the KAS private key corresponding to the KAS public key
+        guard let privateKeyData = await keyStore.getPrivateKey(forPublicKey: kasPublicKey) else {
+            throw KASServiceError.keyNotFound
+        }
+
+        // Use the internal helper to perform the rewrapping
+        let (rewrappedKey, _) = try await rewrapKeyInternal(
+            ephemeralPublicKey: ephemeralPublicKey,
+            encryptedKey: encryptedKey,
+            privateKeyData: privateKeyData
+        )
+
+        return rewrappedKey
     }
 
     /// Verify whether a policy binding is valid
@@ -352,7 +373,7 @@ public actor KASService {
         // Create a UUID based on the KAS public key bytes
         let keyID = UUID()
 
-        // 1. Get the KAS private key corresponding to the KAS public key
+        // Get the KAS private key corresponding to the KAS public key
         guard let privateKeyData = await keyStore.getPrivateKey(forPublicKey: kasPublicKey) else {
             throw KASServiceError.keyNotFound
         }
@@ -360,107 +381,16 @@ public actor KASService {
         // Create KeyPairIdentifier for the key
         let kasKeyIdentifier = KeyPairIdentifier(publicKey: kasPublicKey)
 
-        // 2. Derive shared secret using the client's ephemeral public key and KAS private key
-        let sharedSecret: SharedSecret
-
-        switch keyStore.curve {
-        case .secp256r1:
-            let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData)
-            let publicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
-            sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
-
-        case .secp384r1:
-            let privateKey = try P384.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData)
-            let publicKey = try P384.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
-            sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
-
-        case .secp521r1:
-            let privateKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData)
-            let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
-            sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
-
-        case .xsecp256k1:
-            throw KASServiceError.invalidCurve
-        }
-
-        // 3. Derive symmetric key for decryption
-        let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
-            using: SHA256.self,
-            salt: Data("L1L".utf8),
-            sharedInfo: Data("encryption".utf8),
-            outputByteCount: 32
+        // Use the internal helper to perform the rewrapping
+        let (rewrappedKey, _) = try await rewrapKeyInternal(
+            ephemeralPublicKey: ephemeralPublicKey,
+            encryptedKey: encryptedKey,
+            privateKeyData: privateKeyData
         )
 
-        // 4. Generate a new ephemeral key pair for rewrapping
-        let newKeyPair = await keyStore.generateKeyPair()
-
-        // 5. Decrypt the encrypted key using the derived symmetric key
-        guard encryptedKey.count >= 28 else { // Minimum size for AES-GCM: 12 bytes nonce + 16 bytes tag
-            throw KASServiceError.invalidKeyFormat
-        }
-
-        // Parse the encrypted key format (split into nonce, ciphertext, and tag)
-        let nonce = encryptedKey.prefix(12)
-        let tag = encryptedKey.suffix(16)
-        let ciphertext = encryptedKey.dropFirst(12).dropLast(16)
-
-        let sealedBox = try AES.GCM.SealedBox(
-            nonce: AES.GCM.Nonce(data: nonce),
-            ciphertext: ciphertext,
-            tag: tag
-        )
-
-        let decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKey)
-
-        // 6. Create new shared secret for rewrapping
-        let newSharedSecret: SharedSecret
-
-        switch keyStore.curve {
-        case .secp256r1:
-            let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: newKeyPair.privateKey)
-            let publicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
-            newSharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
-
-        case .secp384r1:
-            let privateKey = try P384.KeyAgreement.PrivateKey(rawRepresentation: newKeyPair.privateKey)
-            let publicKey = try P384.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
-            newSharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
-
-        case .secp521r1:
-            let privateKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: newKeyPair.privateKey)
-            let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
-            newSharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
-
-        case .xsecp256k1:
-            throw KASServiceError.invalidCurve
-        }
-
-        // 7. Derive new symmetric key for encryption
-        let newSymmetricKey = newSharedSecret.hkdfDerivedSymmetricKey(
-            using: SHA256.self,
-            salt: Data("L1L".utf8),
-            sharedInfo: Data("encryption".utf8),
-            outputByteCount: 32
-        )
-
-        // 8. Re-encrypt the key with the new symmetric key
-        let newNonce = AES.GCM.Nonce()
-        let newSealedBox = try AES.GCM.seal(decryptedKey, using: newSymmetricKey, nonce: newNonce)
-
-        // 9. Combine the new ephemeral public key with the encrypted data
-        var result = Data()
-        result.append(newKeyPair.publicKey)
-
-        // Add nonce, ciphertext, and tag separately for compatibility with our test format
-        var nonceBytes = Data()
-        newNonce.withUnsafeBytes { nonceBytes.append(contentsOf: $0) }
-        result.append(nonceBytes)
-        result.append(newSealedBox.ciphertext)
-        result.append(newSealedBox.tag)
-
-        // 10. Remove the used key from the keystore to ensure one-time use
+        // Remove the used key from the keystore to ensure one-time use
         try await keyStore.removeKeyPair(keyID: kasKeyIdentifier)
 
-        return (rewrappedKey: result, keyID: keyID)
+        return (rewrappedKey: rewrappedKey, keyID: keyID)
     }
 }
