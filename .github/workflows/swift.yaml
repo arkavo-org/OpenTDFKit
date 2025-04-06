@@ -37,7 +37,7 @@ jobs:
             
       - name: Install SwiftFormat & SwiftLint
         run: |
-          brew install swiftformat swiftlint
+          brew install swiftformat swiftlint || true
           
       - name: Run SwiftFormat
         run: swiftformat --swiftversion 6.0 . --lint
