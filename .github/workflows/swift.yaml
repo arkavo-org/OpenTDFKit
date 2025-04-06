@@ -9,7 +9,6 @@ on:
 
 env:
   DERIVED_DATA_PATH: ".build"
-  SWIFT_CACHE_KEY: "swift-v6-${{ github.ref }}"
 
 jobs:
   lint:
@@ -25,6 +24,7 @@ jobs:
         run: swift --version
           
       - name: Cache Homebrew dependencies
+        id: cache-brew
         uses: actions/cache@v4
         with:
           path: |
@@ -57,14 +57,15 @@ jobs:
         run: swift --version
           
       - name: Cache Swift packages
+        id: cache-swift
         uses: actions/cache@v4
         with:
           path: |
             .build
             ~/.swiftpm
-          key: ${{ env.SWIFT_CACHE_KEY }}
+          key: ${{ runner.os }}-swift-${{ hashFiles('Package.swift') }}
           restore-keys: |
-            swift-v6-
+            ${{ runner.os }}-swift-
             
       - name: Build Debug
         run: swift build -v
@@ -94,14 +95,15 @@ jobs:
         run: swift --version
           
       - name: Cache Swift packages
+        id: cache-swift
         uses: actions/cache@v4
         with:
           path: |
             .build
             ~/.swiftpm
-          key: ${{ env.SWIFT_CACHE_KEY }}
+          key: ${{ runner.os }}-swift-${{ hashFiles('Package.swift') }}
           restore-keys: |
-            swift-v6-
+            ${{ runner.os }}-swift-
             
       - name: Run tests
         run: swift test -v
@@ -119,14 +121,15 @@ jobs:
         run: swift --version
           
       - name: Cache Swift packages
+        id: cache-swift
         uses: actions/cache@v4
         with:
           path: |
             .build
             ~/.swiftpm
-          key: ${{ env.SWIFT_CACHE_KEY }}
+          key: ${{ runner.os }}-swift-${{ hashFiles('Package.swift') }}
           restore-keys: |
-            swift-v6-
+            ${{ runner.os }}-swift-
             
       - name: Run KeyStore Benchmarks
         run: swift test --configuration release --filter KeyStoreBenchmarkTests | tee keystore-benchmark.log
