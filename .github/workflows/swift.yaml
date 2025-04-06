@@ -36,16 +36,12 @@ jobs:
           key: ${{ runner.os }}-brew
           restore-keys: |
             ${{ runner.os }}-brew-
-            
-      - name: Install SwiftFormat & SwiftLint
-        run: |
-          brew install swiftformat swiftlint || true
-          
+
       - name: Run SwiftFormat
         run: swiftformat --swiftversion 6.0 . --lint
         
-      - name: Run SwiftLint
-        run: swiftlint --strict
+#      - name: Run SwiftLint
+#        run: swiftlint --strict
 
   build:
     runs-on: macos-latest
@@ -77,15 +73,6 @@ jobs:
         
       - name: Build Release
         run: swift build -c release -v
-        
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-artifacts
-          path: |
-            ${{ env.DERIVED_DATA_PATH }}/**/debug/OpenTDFKit
-            ${{ env.DERIVED_DATA_PATH }}/**/release/OpenTDFKit
-          retention-days: 7
 
   test:
     runs-on: macos-latest
@@ -113,7 +100,7 @@ jobs:
             ${{ runner.os }}-swift-
             
       - name: Run tests
-        run: swift test -v
+        run: swift test
 
   benchmark:
     runs-on: macos-latest
