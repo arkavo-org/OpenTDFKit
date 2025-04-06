@@ -13,7 +13,6 @@ env:
 
 jobs:
   lint:
-    name: Lint
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -45,10 +44,8 @@ jobs:
       - name: Run SwiftLint
         run: swiftlint --strict
 
-  build-and-test:
-    name: Build and Test
+  build:
     runs-on: macos-latest
-    needs: lint
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -69,13 +66,10 @@ jobs:
           restore-keys: |
             swift-v6-
             
-      - name: Build (Debug)
+      - name: Build Debug
         run: swift build -v
         
-      - name: Run tests
-        run: swift test -v
-        
-      - name: Build (Release)
+      - name: Build Release
         run: swift build -c release -v
         
       - name: Upload build artifacts
@@ -87,10 +81,33 @@ jobs:
             ${{ env.DERIVED_DATA_PATH }}/**/release/OpenTDFKit
           retention-days: 7
 
-  benchmark:
-    name: Performance Benchmarks
+  test:
     runs-on: macos-latest
-    needs: build-and-test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        
+      - name: Print Swift version
+        run: swift --version
+          
+      - name: Cache Swift packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            .build
+            ~/.swiftpm
+          key: ${{ env.SWIFT_CACHE_KEY }}
+          restore-keys: |
+            swift-v6-
+            
+      - name: Run tests
+        run: swift test -v
+
+  benchmark:
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
