@@ -9,7 +9,7 @@ on:
 
 env:
   DERIVED_DATA_PATH: ".build"
-  MACOSX_DEPLOYMENT_TARGET: "14.0"
+  MACOSX_DEPLOYMENT_TARGET: "15.4"
 
 jobs:
   lint:
