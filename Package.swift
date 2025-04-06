@@ -5,7 +5,7 @@ let package = Package(
     name: "OpenTDFKit",
     platforms: [
         .iOS(.v18),
-        .macOS(.v15),
+        .macOS(.v14),
         .tvOS(.v18),
         .watchOS(.v11),
     ],
