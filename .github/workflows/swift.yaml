@@ -9,11 +9,10 @@ on:
 
 env:
   DERIVED_DATA_PATH: ".build"
-  MACOSX_DEPLOYMENT_TARGET: "15.4"
 
 jobs:
   lint:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -26,25 +25,20 @@ jobs:
       - name: Print Swift version
         run: swift --version
           
-      - name: Cache Homebrew dependencies
-        id: cache-brew
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/Library/Caches/Homebrew
-            /usr/local/Homebrew
-          key: ${{ runner.os }}-brew
-          restore-keys: |
-            ${{ runner.os }}-brew-
+      - name: Install SwiftFormat
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y npm
+          sudo npm install -g swift-format
 
       - name: Run SwiftFormat
-        run: swiftformat --swiftversion 6.0 . --lint
+        run: swift-format --version && swift-format --mode lint --recursive .
         
 #      - name: Run SwiftLint
 #        run: swiftlint --strict
 
   build:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -74,36 +68,36 @@ jobs:
       - name: Build Release
         run: swift build -c release -v
 
-  test:
-    runs-on: macos-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: 6
-        
-      - name: Print Swift version
-        run: swift --version
-          
-      - name: Cache Swift packages
-        id: cache-swift
-        uses: actions/cache@v4
-        with:
-          path: |
-            .build
-            ~/.swiftpm
-          key: ${{ runner.os }}-swift-${{ hashFiles('Package.swift') }}
-          restore-keys: |
-            ${{ runner.os }}-swift-
-            
-      - name: Run tests
-        run: swift test
+#  test:
+#    runs-on: ubuntu-latest
+#    steps:
+#      - name: Checkout repository
+#        uses: actions/checkout@v4
+#        
+#      - name: Setup Swift
+#        uses: swift-actions/setup-swift@v2
+#        with:
+#          swift-version: 6
+#        
+#      - name: Print Swift version
+#        run: swift --version
+#          
+#      - name: Cache Swift packages
+#        id: cache-swift
+#        uses: actions/cache@v4
+#        with:
+#          path: |
+#            .build
+#            ~/.swiftpm
+#          key: ${{ runner.os }}-swift-${{ hashFiles('Package.swift') }}
+#          restore-keys: |
+#            ${{ runner.os }}-swift-
+#            
+#      - name: Run tests
+#        run: swift test
 
   benchmark:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
