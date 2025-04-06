@@ -9,7 +9,7 @@ on:
 
 env:
   DERIVED_DATA_PATH: ".build"
-  SWIFT_CACHE_KEY: "swift-v6-${{ github.ref }}-${{ hashFiles('**/*.swift', 'Package.swift') }}"
+  SWIFT_CACHE_KEY: "swift-v6-${{ github.ref }}"
 
 jobs:
   lint:
@@ -31,7 +31,7 @@ jobs:
           path: |
             ~/Library/Caches/Homebrew
             /usr/local/Homebrew
-          key: ${{ runner.os }}-brew-${{ hashFiles('.github/workflows/swift.yaml') }}
+          key: ${{ runner.os }}-brew
           restore-keys: |
             ${{ runner.os }}-brew-
             
@@ -67,7 +67,6 @@ jobs:
             ~/.swiftpm
           key: ${{ env.SWIFT_CACHE_KEY }}
           restore-keys: |
-            swift-v6-${{ github.ref }}-
             swift-v6-
             
       - name: Build (Debug)
@@ -110,7 +109,6 @@ jobs:
             ~/.swiftpm
           key: ${{ env.SWIFT_CACHE_KEY }}
           restore-keys: |
-            swift-v6-${{ github.ref }}-
             swift-v6-
             
       - name: Run KeyStore Benchmarks
