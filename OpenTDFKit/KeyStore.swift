@@ -56,7 +56,7 @@ public struct StoredKeyPair: Sendable {
 // MARK: - KeyStore Implementation
 
 public actor KeyStore {
-    let curve: Curve
+    public let curve: Curve
     public var keyPairs: [KeyPairIdentifier: StoredKeyPair]
     // Track total memory used
     public var totalBytesStored: Int = 0
