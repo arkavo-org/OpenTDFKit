@@ -87,21 +87,120 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
         outputByteCount: 32 // AES-256 key size
     )
 
-    // Extract the policy body data based on the policy type
+    // Extract and potentially encrypt the policy body based on the policy type
     let policyBody: Data
     switch policy.type {
     case .remote:
         guard let remote = policy.remote else {
             // Handle error: Remote policy type must have a remote locator
-            throw PolicyError.missingRemoteLocator // Define a suitable PolicyError enum
+            throw PolicyError.missingRemoteLocator
         }
         policyBody = remote.toData()
-    case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
+    case .embeddedPlaintext:
         guard let body = policy.body else {
             // Handle error: Embedded policy type must have a body
-            throw PolicyError.missingEmbeddedBody // Define a suitable PolicyError enum
+            throw PolicyError.missingEmbeddedBody
         }
         policyBody = body.toData()
+    case .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
+        guard let body = policy.body else {
+            throw PolicyError.missingEmbeddedBody
+        }
+
+        if policy.type == .embeddedEncryptedWithPolicyKeyAccess {
+            guard let keyAccess = body.keyAccess else {
+                throw PolicyError.missingPolicyKeyAccess
+            }
+
+            // CRITICAL: For embedded encrypted policies with key access:
+            // 1. Generate a new ephemeral key pair specifically for policy encryption
+            // 2. Get the Policy KAS public key (which would be provided separately)
+            // 3. Create a new PolicyKeyAccess with our newly generated ephemeral public key
+            // 4. Encrypt policy with the shared secret derived from our ephemeral private key and Policy KAS public key
+
+            // Get the original Policy KAS public key
+            // Note: In a real implementation, we would look up this key from a keystore based on
+            // the keyAccess.resourceLocator, but for now we'll use the provided key
+            let policyKasPublicKey = keyAccess.ephemeralPublicKey
+
+            // Generate a new ephemeral key pair specifically for policy encryption
+            guard let policyEphemeralKeyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
+                throw CryptoHelperError.keyGenerationFailed
+            }
+
+            // Create a new PolicyKeyAccess with our generated ephemeral public key
+            // This is the public key that will be included in the TDF for the Policy KAS to use
+            let updatedPolicyKeyAccess = PolicyKeyAccess(
+                resourceLocator: keyAccess.resourceLocator,
+                ephemeralPublicKey: policyEphemeralKeyPair.publicKey
+            )
+
+            // Derive a shared secret between our ephemeral private key and the Policy KAS public key
+            guard let policySharedSecret = try await cryptoHelper.deriveSharedSecret(
+                keyPair: policyEphemeralKeyPair,
+                recipientPublicKey: policyKasPublicKey
+            ) else {
+                throw CryptoHelperError.keyDerivationFailed
+            }
+
+            // Derive symmetric key for policy encryption
+            let policySymmetricKey = await cryptoHelper.deriveSymmetricKey(
+                sharedSecret: policySharedSecret,
+                salt: Data("L1L".utf8), // Use standard NanoTDF salt for consistency
+                info: Data("policy_encryption".utf8), // Specific context for policy encryption
+                outputByteCount: 32
+            )
+
+            // NanoTDF spec requires IV of 0x000000 for policy encryption
+            let policyIV = Data([0, 0, 0])
+            let adjustedIV = await cryptoHelper.adjustNonce(policyIV, to: 12)
+
+            // Encrypt the policy data
+            let (encryptedPolicyData, _) = try await cryptoHelper.encryptPayload(
+                plaintext: body.body,
+                symmetricKey: policySymmetricKey,
+                nonce: adjustedIV
+            )
+
+            // Create new encrypted policy body with the encrypted data and updated key access
+            let encryptedBody = EmbeddedPolicyBody(
+                body: encryptedPolicyData,
+                keyAccess: updatedPolicyKeyAccess
+            )
+
+            // Update policy with encrypted body
+            policy.body = encryptedBody
+            policyBody = encryptedBody.toData()
+
+        } else if policy.type == .embeddedEncrypted {
+            // For embedded encrypted policy without PolicyKeyAccess
+            // The policy should be encrypted with the main TDF symmetric key
+
+            // NanoTDF spec requires IV of 0x000000 for policy encryption
+            let policyIV = Data([0, 0, 0])
+            let adjustedIV = await cryptoHelper.adjustNonce(policyIV, to: 12)
+
+            // Encrypt the policy data using the main TDF symmetric key
+            let (encryptedPolicyData, _) = try await cryptoHelper.encryptPayload(
+                plaintext: body.body,
+                symmetricKey: tdfSymmetricKey, // Use the main TDF symmetric key
+                nonce: adjustedIV
+            )
+
+            // Create new encrypted policy body with the encrypted data
+            let encryptedBody = EmbeddedPolicyBody(
+                body: encryptedPolicyData,
+                keyAccess: nil // No key access for .embeddedEncrypted
+            )
+
+            // Update policy with encrypted body
+            policy.body = encryptedBody
+            policyBody = encryptedBody.toData()
+
+        } else {
+            // For plaintext policies, just use the body as is
+            policyBody = body.toData()
+        }
     }
 
     // Create the GMAC policy binding using the derived TDF symmetric key
@@ -410,7 +509,7 @@ public struct Policy: Sendable {
     /// The type of the policy.
     public let type: PolicyType
     /// The body of the policy if it's embedded (`embeddedPlaintext`, `embeddedEncrypted`, etc.).
-    public let body: EmbeddedPolicyBody?
+    public var body: EmbeddedPolicyBody? // Mutable to allow encrypted policy updates
     /// The resource locator if the policy is remote (`remote`).
     public let remote: ResourceLocator?
     /// The policy binding (GMAC tag or ECDSA signature) calculated over the policy body/locator.
@@ -441,7 +540,17 @@ public struct Policy: Sendable {
                 data.append(remote.toData())
             }
         // Else: Potentially invalid state if type is remote but remote is nil.
-        case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
+        case .embeddedPlaintext:
+            if let body {
+                data.append(body.toData())
+            }
+        // Else: Potentially invalid state if type is embedded but body is nil.
+        case .embeddedEncrypted:
+            if let body {
+                data.append(body.toData())
+            }
+        // Else: Potentially invalid state if type is embedded but body is nil.
+        case .embeddedEncryptedWithPolicyKeyAccess:
             if let body {
                 data.append(body.toData())
             }
@@ -504,6 +613,12 @@ public struct PolicyKeyAccess: Sendable {
         data.append(ephemeralPublicKey)
         return data
     }
+
+    /// Gets the public key for key agreement
+    /// - Returns: The public key data
+    func getPublicKey() -> Data {
+        ephemeralPublicKey
+    }
 }
 
 /// Enumeration of supported Elliptic Curves.
@@ -518,6 +633,8 @@ public enum Curve: UInt8, Sendable {
     /// SECG secp256k1 curve (commonly used in Bitcoin). Marked as unsupported in this implementation context.
     case xsecp256k1 = 0x03
     // END in-spec unsupported
+
+    // publicKeyLength is already defined in KeyStore.swift
 }
 
 /// Enumeration of supported Symmetric Ciphers for payload encryption.
@@ -556,6 +673,8 @@ public enum SignatureError: Error {
 public enum PolicyError: Error {
     case missingRemoteLocator
     case missingEmbeddedBody
+    case missingPolicyKeyAccess
+    case invalidPolicyEncryption
     // Add other policy-related error cases as needed
 }
 

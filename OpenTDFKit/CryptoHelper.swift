@@ -22,12 +22,14 @@ public enum CryptoHelperError: Error {
     case invalidState
     /// Indicates a failure during key derivation processes like ECDH or HKDF.
     case keyDerivationFailed
+    /// Indicates a failure during key pair generation.
+    case keyGenerationFailed
     /// Indicates that an expected session or key pair was not found (if session management is used).
     case sessionNotFound
 }
 
 /// Constants used within the CryptoHelper and related cryptographic operations.
-struct CryptoConstants {
+enum CryptoConstants {
     /// Standard salt used for HKDF key derivation in NanoTDF context.
     static let hkdfSalt = Data("L1L".utf8)
     /// Standard info tag used for HKDF key derivation for encryption keys in NanoTDF context.
@@ -57,6 +59,7 @@ actor CryptoHelper {
         // Extract raw bytes from the SharedSecret object
         return sharedSecret.withUnsafeBytes { Data($0) }
     }
+
     /// Performs ECDH key agreement for P384 curve.
     /// - Parameters:
     ///   - privateKey: The P384 private key.
@@ -67,6 +70,7 @@ actor CryptoHelper {
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
         return sharedSecret.withUnsafeBytes { Data($0) }
     }
+
     /// Performs ECDH key agreement for P521 curve.
     /// - Parameters:
     ///   - privateKey: The P521 private key.
@@ -221,7 +225,7 @@ actor CryptoHelper {
         return (sealedBox.ciphertext, sealedBox.tag)
     }
 
-        /// Encrypts plaintext data using AES-GCM, taking nonce as `Data`.
+    /// Encrypts plaintext data using AES-GCM, taking nonce as `Data`.
     /// Note: Internally converts `Data` nonce to `AES.GCM.Nonce`. Ensure input nonce `Data` is the correct size (e.g., 12 bytes).
     /// - Parameters:
     ///   - plaintext: The data to encrypt.
@@ -265,7 +269,6 @@ actor CryptoHelper {
         let sealedBox = try AES.GCM.SealedBox(nonce: aesNonce, ciphertext: ciphertext, tag: tag)
         return try AES.GCM.open(sealedBox, using: symmetricKey)
     }
-
 
     /// Generates an ECDSA signature (specifically P256) for a given message.
     /// Extracts the raw R and S components from the DER-encoded signature provided by CryptoKit.
@@ -364,5 +367,4 @@ actor CryptoHelper {
         // Return the derived key data
         return okm.withUnsafeBytes { Data($0) }
     }
-
 }

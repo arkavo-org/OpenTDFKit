@@ -62,7 +62,7 @@ public class BinaryParser {
                 print("Failed to read Remote Policy binding")
                 return nil
             }
-            return Policy(type: .embeddedPlaintext, body: policyData, remote: nil, binding: binding)
+            return Policy(type: policyType, body: policyData, remote: nil, binding: binding)
         }
     }
 
@@ -266,10 +266,14 @@ public class BinaryParser {
         // cipherText
         let cipherTextLength = Int(length) - payloadMACSize - FieldSize.payloadIvSize
 //        print("cipherTextLength", cipherTextLength)
+        guard cipherTextLength >= 0 else {
+            throw ParsingError.invalidPayload("Calculated ciphertext length is negative")
+        }
+
         guard let ciphertext = read(length: cipherTextLength),
               let payloadMAC = read(length: payloadMACSize)
         else {
-            throw ParsingError.invalidPayload
+            throw ParsingError.invalidPayload("Failed to read ciphertext or payload MAC")
         }
         let payload = Payload(length: length, iv: iv, ciphertext: ciphertext, mac: payloadMAC)
         return payload
@@ -335,7 +339,7 @@ public enum ParsingError: Error {
     case invalidPayloadSigMode
     case invalidPolicy
     case invalidEphemeralKey
-    case invalidPayload
+    case invalidPayload(String = "Invalid payload")
     case invalidPublicKeyLength
     case invalidSignatureLength
     case invalidSigning
