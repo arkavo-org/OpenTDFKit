@@ -33,7 +33,7 @@ actor CryptoHelper {
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
         return sharedSecret.withUnsafeBytes { Data($0) }
     }
-    
+
     /// Performs ECDH (Elliptic Curve Diffie-Hellman) key agreement.
     ///
     /// - Parameters:
@@ -45,7 +45,7 @@ actor CryptoHelper {
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
         return sharedSecret.withUnsafeBytes { Data($0) }
     }
-    
+
     /// Performs ECDH (Elliptic Curve Diffie-Hellman) key agreement.
     ///
     /// - Parameters:
@@ -57,7 +57,7 @@ actor CryptoHelper {
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
         return sharedSecret.withUnsafeBytes { Data($0) }
     }
-    
+
     /// Performs HKDF (HMAC-based Key Derivation Function) key derivation.
     ///
     /// - Parameters:
@@ -74,7 +74,7 @@ actor CryptoHelper {
         )
         return symmetricKey.withUnsafeBytes { Data($0) }
     }
-    
+
     private var activeSessions: [String: EphemeralKeyPair] = [:]
 
     func generateEphemeralKeyPair(curveType: Curve) -> EphemeralKeyPair? {
