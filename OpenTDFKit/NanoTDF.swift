@@ -334,7 +334,12 @@ public struct PolicyKeyAccess: Sendable {
     public let resourceLocator: ResourceLocator
     public let ephemeralPublicKey: Data
 
-    func toData() -> Data {
+    public init(resourceLocator: ResourceLocator, ephemeralPublicKey: Data) {
+        self.resourceLocator = resourceLocator
+        self.ephemeralPublicKey = ephemeralPublicKey
+    }
+
+    public func toData() -> Data {
         var data = Data()
         data.append(resourceLocator.toData())
         data.append(ephemeralPublicKey)
