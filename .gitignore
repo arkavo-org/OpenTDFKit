@@ -95,3 +95,4 @@ fastlane/test_output
 /.swiftpm/xcode/xcshareddata/xcschemes/OpenTDFKitTests.xcscheme
 
 **/.claude/settings.local.json
+.aider*

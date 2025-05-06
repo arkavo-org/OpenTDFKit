@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 /// A store containing only public keys to be shared with peers
-@preconcurrency public final class PublicKeyStore: Sendable {
+public final class PublicKeyStore: Sendable {
     public let curve: Curve
     private actor InternalStore {
         var keys: [Data] = []

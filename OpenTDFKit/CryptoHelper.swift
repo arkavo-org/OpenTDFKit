@@ -99,35 +99,35 @@ actor CryptoHelper {
     /// - Parameter curve: The `KasKeyCurve` enum value.
     /// - Returns: The `UInt8` byte value for the curve.
     public static func kasKeyCurveByte(for curve: KasKeyCurve) -> UInt8 {
-        return curve.rawValue
+        curve.rawValue
     }
 
     /// Returns the `KasKeyCurve` enum value for a given byte.
     /// - Parameter byte: The `UInt8` byte value representing the curve.
     /// - Returns: An optional `KasKeyCurve` if the byte corresponds to a defined curve, otherwise `nil`.
     public static func curve(fromKasKeyCurveByte byte: UInt8) -> KasKeyCurve? {
-        return KasKeyCurve(rawValue: byte)
+        KasKeyCurve(rawValue: byte)
     }
 
     /// Returns the X9.62 compressed representation of a P256 public key.
     /// - Parameter publicKey: The `P256.KeyAgreement.PublicKey`.
     /// - Returns: The compressed public key as `Data`.
     public static func getCompressedRepresentation(for publicKey: P256.KeyAgreement.PublicKey) -> Data {
-        return publicKey.compressedRepresentation
+        publicKey.compressedRepresentation
     }
 
     /// Returns the X9.62 compressed representation of a P384 public key.
     /// - Parameter publicKey: The `P384.KeyAgreement.PublicKey`.
     /// - Returns: The compressed public key as `Data`.
     public static func getCompressedRepresentation(for publicKey: P384.KeyAgreement.PublicKey) -> Data {
-        return publicKey.compressedRepresentation
+        publicKey.compressedRepresentation
     }
 
     /// Returns the X9.62 compressed representation of a P521 public key.
     /// - Parameter publicKey: The `P521.KeyAgreement.PublicKey`.
     /// - Returns: The compressed public key as `Data`.
     public static func getCompressedRepresentation(for publicKey: P521.KeyAgreement.PublicKey) -> Data {
-        return publicKey.compressedRepresentation
+        publicKey.compressedRepresentation
     }
 
     // Note: `activeSessions` is declared but not currently used in the provided methods.
