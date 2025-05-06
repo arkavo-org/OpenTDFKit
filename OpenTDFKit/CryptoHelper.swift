@@ -1,6 +1,19 @@
 import CryptoKit
 import Foundation
 
+/// Enum representing the KAS key curves supported for NanoTDF Payload Key Access.
+/// These values align with the NanoTDF specification for KAS Key Curve Enum.
+public enum KasKeyCurve: UInt8, Sendable, CaseIterable {
+    /// NIST P-256 curve (secp256r1).
+    case secp256r1 = 0x00
+    /// NIST P-384 curve (secp384r1).
+    case secp384r1 = 0x01
+    /// NIST P-521 curve (secp521r1).
+    case secp521r1 = 0x02
+    // Note: secp256k1 (0x03) is specified in NanoTDF KAS Key Curve Enum but omitted here
+    // as it's not directly supported by CryptoKit for key agreement and not in the proposal's enum example.
+}
+
 // Define a Sendable key pair struct
 struct EphemeralKeyPair: Sendable {
     let privateKey: Data // Store as raw data
@@ -80,6 +93,41 @@ actor CryptoHelper {
     public static func customECDH(privateKey: P521.KeyAgreement.PrivateKey, publicKey: P521.KeyAgreement.PublicKey) throws -> Data {
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
         return sharedSecret.withUnsafeBytes { Data($0) }
+    }
+
+    /// Returns the byte representation for a given KAS key curve.
+    /// - Parameter curve: The `KasKeyCurve` enum value.
+    /// - Returns: The `UInt8` byte value for the curve.
+    public static func kasKeyCurveByte(for curve: KasKeyCurve) -> UInt8 {
+        return curve.rawValue
+    }
+
+    /// Returns the `KasKeyCurve` enum value for a given byte.
+    /// - Parameter byte: The `UInt8` byte value representing the curve.
+    /// - Returns: An optional `KasKeyCurve` if the byte corresponds to a defined curve, otherwise `nil`.
+    public static func curve(fromKasKeyCurveByte byte: UInt8) -> KasKeyCurve? {
+        return KasKeyCurve(rawValue: byte)
+    }
+
+    /// Returns the X9.62 compressed representation of a P256 public key.
+    /// - Parameter publicKey: The `P256.KeyAgreement.PublicKey`.
+    /// - Returns: The compressed public key as `Data`.
+    public static func getCompressedRepresentation(for publicKey: P256.KeyAgreement.PublicKey) -> Data {
+        return publicKey.compressedRepresentation
+    }
+
+    /// Returns the X9.62 compressed representation of a P384 public key.
+    /// - Parameter publicKey: The `P384.KeyAgreement.PublicKey`.
+    /// - Returns: The compressed public key as `Data`.
+    public static func getCompressedRepresentation(for publicKey: P384.KeyAgreement.PublicKey) -> Data {
+        return publicKey.compressedRepresentation
+    }
+
+    /// Returns the X9.62 compressed representation of a P521 public key.
+    /// - Parameter publicKey: The `P521.KeyAgreement.PublicKey`.
+    /// - Returns: The compressed public key as `Data`.
+    public static func getCompressedRepresentation(for publicKey: P521.KeyAgreement.PublicKey) -> Data {
+        return publicKey.compressedRepresentation
     }
 
     // Note: `activeSessions` is declared but not currently used in the provided methods.
