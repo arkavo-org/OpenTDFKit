@@ -4,13 +4,34 @@ Swift toolkit for OpenTDF (community)
 
 ## Usage
 
-Decrypt after rewrap
+### Decrypt NanoTDF
+
+After obtaining the symmetric key, decrypt the NanoTDF payload:
 
 ```swift
 let decryptedData = try nanoTDF.getPayloadPlaintext(symmetricKey: symmetricKey)
 ```
 
-Create
+### Unwrap Keys from Shared PublicKeyStore
+
+For NanoTDFs created with keys from a shared PublicKeyStore:
+
+```swift
+// Extract the ephemeral public key from PolicyKeyAccess
+let ephemeralPublicKey = policyKeyAccess.ephemeralPublicKey
+let encryptedKey = encryptedKeyData
+
+// Unwrap the key using the KeyStore containing the matching private key
+let symmetricKey = try await keyStore.rewrapKey(
+    ephemeralPublicKey: ephemeralPublicKey,
+    encryptedKey: encryptedKey
+)
+
+// Use the unwrapped key to decrypt the payload
+let decryptedData = try nanoTDF.getPayloadPlaintext(symmetricKey: symmetricKey)
+```
+
+### Create NanoTDF
 
 ```swift
 let kasRL = ResourceLocator(protocolEnum: .http, body: "kas.arkavo.net")
@@ -20,9 +41,12 @@ var policy = Policy(type: .remote, body: nil, remote: remotePolicy, binding: nil
 let nanoTDF = try createNanoTDF(kas: kasMetadata, policy: &policy, plaintext: "hello".data(using: .utf8)!)
 ```
 
-## Feature
+## Features
 
-- [OpenTDF nanotdf specification](https://github.com/opentdf/spec/tree/main/schema/nanotdf)
+- Complete [OpenTDF nanotdf specification](https://github.com/opentdf/spec/tree/main/schema/nanotdf) implementation
+- Shared key distribution with PublicKeyStore
+- Key unwrapping for secure decryption
+- Support for multiple elliptic curves (secp256r1, secp384r1, secp521r1)
 
 ## NanoTDF creation
 

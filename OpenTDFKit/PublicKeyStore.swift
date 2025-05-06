@@ -3,7 +3,7 @@ import Foundation
 
 /// A store containing only public keys to be shared with peers
 @preconcurrency public final class PublicKeyStore: Sendable {
-    private let curve: Curve
+    public let curve: Curve
     private actor InternalStore {
         var keys: [Data] = []
 
@@ -158,4 +158,13 @@ public enum PublicKeyStoreError: Error {
     case invalidData
     case curveTypeMismatch
     case unsupportedCurve
+}
+
+// For testing purposes only
+extension PublicKeyStore {
+    var keys: [Data] {
+        get async {
+            await store.getKeys()
+        }
+    }
 }

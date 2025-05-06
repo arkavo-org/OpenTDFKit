@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 
+
 // MARK: - Key Types and Storage
 
 public struct KeyPairIdentifier: Hashable, Sendable {
@@ -142,12 +143,16 @@ public actor KeyStore {
                 privateKey: privateKey.rawRepresentation
             )
         case .xsecp256k1:
-            fatalError("Unsupported curve")
+            fatalError("Unsupported curve for KeyStore")
         }
     }
-
+    
+    /// Serializes the key store data into a Data object.
+    /// - Returns: A Data object containing the serialized key store data.
     public func serialize() -> Data {
         let estimatedSize = keyPairs.count * (curve.publicKeyLength + curve.privateKeyLength) + 5
+        // Create a Data object with an initial capacity based on the estimated size.
+        // This can help improve performance by reducing the number of reallocations.
         var data = Data(capacity: estimatedSize)
 
         // Store curve type
@@ -156,6 +161,8 @@ public actor KeyStore {
         // Store count
         let count = UInt32(keyPairs.count)
         withUnsafeBytes(of: count.bigEndian) { data.append(contentsOf: $0) }
+        // Append the big-endian representation of the key pair count to the data.
+
 
         // Store key pairs - no need for length prefixes since sizes are fixed per curve
         for keyPair in keyPairs.values {
@@ -166,6 +173,9 @@ public actor KeyStore {
         return data
     }
 
+    /// Deserializes key store data from a Data object.
+    /// - Parameter data: The Data object containing the serialized key store data.
+    /// - Throws: `KeyStoreError.invalidKeyData` if the data is invalid.
     public func deserialize(from data: Data) throws {
         guard data.count >= 5 else { throw KeyStoreError.invalidKeyData }
 
@@ -209,6 +219,115 @@ public actor KeyStore {
             keyPairs[identifier] = keyPair
 
             offset += pairSize
+        }
+    }
+    
+    /// Rewraps a key using the stored KAS private key and helper functions.
+    /// - Parameters:
+    ///   - ephemeralPublicKey: The ephemeral public key from PolicyKeyAccess.ephemeralPublicKey in the NanoTDF
+    ///   - encryptedKey: The encrypted key data to be unwrapped
+    /// - Returns: The rewrapped key data for decrypting the NanoTDF content
+    /// - Throws: KeyStore errors if key operations fail
+    public func rewrapKey(ephemeralPublicKey: Data, encryptedKey: Data) async throws -> Data {
+        // Find the matching private key for the provided ephemeral public key
+        guard let kasPrivateKeyData = getPrivateKey(forPublicKey: ephemeralPublicKey) else {
+            throw KeyStoreError.keyNotFound
+        }
+        
+        // Process based on curve type
+        switch curve {
+        case .secp256r1:
+            let kasPrivateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData)
+            let tdfEphemeralPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
+            
+            // Derive shared secret with ECDH
+            let dekSharedSecret = try CryptoHelper.customECDH(
+                privateKey: kasPrivateKey, 
+                publicKey: tdfEphemeralPublicKey
+            )
+            
+            // Use the actual shared secret for key derivation with standard salt
+            let sessionSalt = Data("L1L".utf8)
+            let symmetricKey = CryptoHelper.hkdf(salt: sessionSalt, ikm: dekSharedSecret, info: "rewrappedKey")
+            
+            // Encrypt with AES-GCM - use local variable for nonce to avoid overlapping access
+            var nonceData = Data(count: 12)
+            let nonceCount = 12
+            _ = nonceData.withUnsafeMutableBytes { 
+                SecRandomCopyBytes(kSecRandomDefault, nonceCount, $0.baseAddress!) 
+            }
+            let aesKey = SymmetricKey(data: symmetricKey)
+            let gcmNonce = try AES.GCM.Nonce(data: nonceData)
+            let sealedBox = try AES.GCM.seal(dekSharedSecret, using: aesKey, nonce: gcmNonce)
+            
+            guard let combined = sealedBox.combined else {
+                throw KeyStoreError.encryptionFailed
+            }
+            
+            return combined
+            
+        case .secp384r1:
+            let kasPrivateKey = try P384.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData)
+            let tdfEphemeralPublicKey = try P384.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
+            
+            // Derive shared secret with ECDH
+            let dekSharedSecret = try CryptoHelper.customECDH(
+                privateKey: kasPrivateKey,
+                publicKey: tdfEphemeralPublicKey
+            )
+            
+            // Use the actual shared secret for key derivation with standard salt
+            let sessionSalt = Data("L1L".utf8)
+            let symmetricKey = CryptoHelper.hkdf(salt: sessionSalt, ikm: dekSharedSecret, info: "rewrappedKey")
+            
+            // Encrypt with AES-GCM - use local variable for nonce to avoid overlapping access
+            var nonceData = Data(count: 12)
+            let nonceCount = 12
+            _ = nonceData.withUnsafeMutableBytes { 
+                SecRandomCopyBytes(kSecRandomDefault, nonceCount, $0.baseAddress!) 
+            }
+            let aesKey = SymmetricKey(data: symmetricKey)
+            let gcmNonce = try AES.GCM.Nonce(data: nonceData)
+            let sealedBox = try AES.GCM.seal(dekSharedSecret, using: aesKey, nonce: gcmNonce)
+            
+            guard let combined = sealedBox.combined else {
+                throw KeyStoreError.encryptionFailed
+            }
+            
+            return combined
+            
+        case .secp521r1:
+            let kasPrivateKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData)
+            let tdfEphemeralPublicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
+            
+            // Derive shared secret with ECDH
+            let dekSharedSecret = try CryptoHelper.customECDH(
+                privateKey: kasPrivateKey,
+                publicKey: tdfEphemeralPublicKey
+            )
+            
+            // Use the actual shared secret for key derivation with standard salt
+            let sessionSalt = Data("L1L".utf8)
+            let symmetricKey = CryptoHelper.hkdf(salt: sessionSalt, ikm: dekSharedSecret, info: "rewrappedKey")
+            
+            // Encrypt with AES-GCM - use local variable for nonce to avoid overlapping access
+            var nonceData = Data(count: 12)
+            let nonceCount = 12
+            _ = nonceData.withUnsafeMutableBytes { 
+                SecRandomCopyBytes(kSecRandomDefault, nonceCount, $0.baseAddress!) 
+            }
+            let aesKey = SymmetricKey(data: symmetricKey)
+            let gcmNonce = try AES.GCM.Nonce(data: nonceData)
+            let sealedBox = try AES.GCM.seal(dekSharedSecret, using: aesKey, nonce: gcmNonce)
+            
+            guard let combined = sealedBox.combined else {
+                throw KeyStoreError.encryptionFailed
+            }
+            
+            return combined
+            
+        case .xsecp256k1:
+            throw KeyStoreError.unsupportedCurve
         }
     }
 
@@ -281,10 +400,19 @@ public actor KeyStore {
     }
 }
 
+// Helper extension for testing
+extension KeyStore {
+    func getAllPublicKeys() -> [Data] {
+        Array(keyPairs.values.map(\.publicKey))
+    }
+}
+
 public enum KeyStoreError: Error {
     case unsupportedCurve
     case invalidKeyData
     case keyNotFound
+    case invalidKeyFormat
+    case encryptionFailed
 }
 
 // Helper extension

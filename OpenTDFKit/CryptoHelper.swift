@@ -22,6 +22,59 @@ public enum CryptoHelperError: Error {
 }
 
 actor CryptoHelper {
+    /// Performs ECDH (Elliptic Curve Diffie-Hellman) key agreement.
+    ///
+    /// - Parameters:
+    ///   - privateKey: The private key for the key agreement.
+    ///   - publicKey: The public key for the key agreement.
+    /// - Returns: The shared secret as `Data`.
+    /// - Throws: An error if the key agreement fails.
+    public static func customECDH(privateKey: P256.KeyAgreement.PrivateKey, publicKey: P256.KeyAgreement.PublicKey) throws -> Data {
+        let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
+        return sharedSecret.withUnsafeBytes { Data($0) }
+    }
+    
+    /// Performs ECDH (Elliptic Curve Diffie-Hellman) key agreement.
+    ///
+    /// - Parameters:
+    ///   - privateKey: The private key for the key agreement.
+    ///   - publicKey: The public key for the key agreement.
+    /// - Returns: The shared secret as `Data`.
+    /// - Throws: An error if the key agreement fails.
+    public static func customECDH(privateKey: P384.KeyAgreement.PrivateKey, publicKey: P384.KeyAgreement.PublicKey) throws -> Data {
+        let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
+        return sharedSecret.withUnsafeBytes { Data($0) }
+    }
+    
+    /// Performs ECDH (Elliptic Curve Diffie-Hellman) key agreement.
+    ///
+    /// - Parameters:
+    ///   - privateKey: The private key for the key agreement.
+    ///   - publicKey: The public key for the key agreement.
+    /// - Returns: The shared secret as `Data`.
+    /// - Throws: An error if the key agreement fails.
+    public static func customECDH(privateKey: P521.KeyAgreement.PrivateKey, publicKey: P521.KeyAgreement.PublicKey) throws -> Data {
+        let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
+        return sharedSecret.withUnsafeBytes { Data($0) }
+    }
+    
+    /// Performs HKDF (HMAC-based Key Derivation Function) key derivation.
+    ///
+    /// - Parameters:
+    ///   - salt: The salt for the HKDF.
+    ///   - ikm: The input keying material.
+    ///   - info: The info parameter for HKDF.
+    /// - Returns: The derived key as `Data`.
+    public static func hkdf(salt: Data, ikm: Data, info: String) -> Data {
+        let symmetricKey = HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: SymmetricKey(data: ikm),
+            salt: salt,
+            info: Data(info.utf8),
+            outputByteCount: 32
+        )
+        return symmetricKey.withUnsafeBytes { Data($0) }
+    }
+    
     private var activeSessions: [String: EphemeralKeyPair] = [:]
 
     func generateEphemeralKeyPair(curveType: Curve) -> EphemeralKeyPair? {
