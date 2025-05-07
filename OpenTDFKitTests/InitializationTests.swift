@@ -1,6 +1,43 @@
 @testable import OpenTDFKit
 import XCTest
 
+/// Initializes a basic, small NanoTDF object, primarily useful for testing or simple examples.
+/// Uses placeholder values for ephemeral keys and payload.
+/// - Parameter kasResourceLocator: The `ResourceLocator` for the KAS.
+/// - Returns: A minimally initialized `NanoTDF` object.
+func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoTDF {
+    let curve: Curve = .secp256r1 // Default curve for this example
+    
+    // Create a PayloadKeyAccess structure with the KAS ResourceLocator
+    let payloadKeyAccess = PayloadKeyAccess(
+        kasEndpointLocator: kasResourceLocator,
+        kasKeyCurve: curve,
+        kasPublicKey: Data([0x02, 0x03, 0x04]) // Placeholder compressed public key
+    )
+    
+    // Create a placeholder header
+    let header = Header(
+        payloadKeyAccess: payloadKeyAccess,
+        policyBindingConfig: PolicyBindingConfig(ecdsaBinding: false, curve: curve), // GMAC binding
+        payloadSignatureConfig: SignatureAndPayloadConfig(signed: false, signatureCurve: curve, payloadCipher: .aes256GCM128), // Not signed, AES-256-GCM-128
+        policy: Policy(type: .remote, body: nil, remote: kasResourceLocator, binding: nil), // Remote policy pointing to KAS URL, no binding yet
+        ephemeralPublicKey: Data([0x04, 0x05, 0x06]) // Placeholder ephemeral public key
+    )
+
+    // Create a placeholder payload
+    let payload = Payload(
+        length: 7, // Minimal length (3 IV + 1 Ciphertext + 3 Placeholder MAC)
+        iv: Data([0x07, 0x08, 0x09]), // Placeholder IV
+        ciphertext: Data([0x00]), // Placeholder ciphertext
+        mac: Data([0x13, 0x14, 0x15]) // Placeholder MAC tag (incorrect size for AES-GCM-128)
+    )
+
+    // Return the NanoTDF object
+    return NanoTDF(header: header,
+                   payload: payload,
+                   signature: nil) // No signature
+}
+
 final class InitializationTests: XCTestCase {
     override func setUpWithError() throws {
         // Put setup code here. This method is called before the invocation of each test method in the class.
@@ -25,21 +62,21 @@ final class InitializationTests: XCTestCase {
     }
 
     func testInitializeSmallNanoTDFNegative() throws {
-        // out of spec - too small
-        var locator = ResourceLocator(protocolEnum: .http, body: "")
-        XCTAssertNil(locator)
-
+        // Empty body is now allowed for HTTP and HTTPS due to "None" identifier support
+        // We'll just test the too-large case
+        
         // out of spec - too large
         let body256Bytes = String(repeating: "a", count: 256)
-        locator = ResourceLocator(protocolEnum: .http, body: body256Bytes)
+        let locator = ResourceLocator(protocolEnum: .http, body: body256Bytes)
         XCTAssertNil(locator)
 
-        locator = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
-        XCTAssertNotNil(locator)
+        // Create a valid locator
+        let validLocator = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
+        XCTAssertNotNil(validLocator)
 
         // Test valid header creation
         XCTAssertNoThrow(Header(
-            kas: locator!,
+            kas: validLocator!,
             policyBindingConfig: PolicyBindingConfig(ecdsaBinding: false, curve: .secp256r1),
             payloadSignatureConfig: SignatureAndPayloadConfig(signed: false, signatureCurve: nil, payloadCipher: .aes256GCM128),
             policy: Policy(type: .embeddedPlaintext, body: nil, remote: nil, binding: nil),
