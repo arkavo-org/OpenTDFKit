@@ -337,13 +337,13 @@ public struct PayloadKeyAccess: Sendable {
         // As per spec 3.4.1, Body Length is 1 byte, Body is 1-255 bytes.
         // ResourceLocator.init? validates body.utf8.count (1 to 255).
         // If bodyLength is 0, ResourceLocator.init? will return nil.
-        guard bodyLength >= 0 && bodyLength <= 255 else { return nil } // bodyLength itself is UInt8
+        guard bodyLength >= 0, bodyLength <= 255 else { return nil } // bodyLength itself is UInt8
         data.formIndex(after: &currentIndex)
 
         // 1.3. Body (variable length: bodyLength bytes)
         let bodyEndIndex = data.index(currentIndex, offsetBy: bodyLength, limitedBy: data.endIndex)
         guard let actualBodyEndIndex = bodyEndIndex, currentIndex <= actualBodyEndIndex else { return nil }
-        let bodyData = data[currentIndex..<actualBodyEndIndex]
+        let bodyData = data[currentIndex ..< actualBodyEndIndex]
         guard let bodyString = String(data: bodyData, encoding: .utf8) else { return nil }
         currentIndex = actualBodyEndIndex
 
@@ -364,12 +364,11 @@ public struct PayloadKeyAccess: Sendable {
 
         let publicKeyEndIndex = data.index(currentIndex, offsetBy: expectedPublicKeyLength, limitedBy: data.endIndex)
         guard let actualPublicKeyEndIndex = publicKeyEndIndex, currentIndex <= actualPublicKeyEndIndex else { return nil }
-        let kasPublicKey = data[currentIndex..<actualPublicKeyEndIndex]
+        let kasPublicKey = data[currentIndex ..< actualPublicKeyEndIndex]
         currentIndex = actualPublicKeyEndIndex
-        
+
         // Final check that we read the correct amount of data for the public key
         guard kasPublicKey.count == expectedPublicKeyLength else { return nil }
-
 
         return PayloadKeyAccess(kasEndpointLocator: kasEndpointLocator,
                                 kasKeyCurve: kasKeyCurve,
@@ -564,10 +563,10 @@ public struct ResourceLocator: Sendable {
             // The spec for KAS Endpoint Locator says: "The `Identifier` part of this `ResourceLocator` will likely be "None" (`0x0`)."
             // "None" (0x0) for ResourceLocator body means length 0.
             // Let's adjust to allow empty body, as ResourceLocator.toData() handles it.
-            if body.isEmpty && body.utf8.count == 0 {
+            if body.isEmpty, body.utf8.count == 0 {
                 // Allow empty body
             } else if body.utf8.count > 255 {
-                 return nil
+                return nil
             }
             // If body is not empty, it must be <= 255.
             // If body is empty, it's allowed.
