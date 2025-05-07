@@ -239,12 +239,24 @@ public actor KASService {
         }
 
         // 2. Derive symmetric key for decryption
-        let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
+        // Support both v12 and v13 salt values
+        // For a production implementation, you would determine the version from the NanoTDF header
+        // Here we'll create keys using both salts and try both for decryption
+        let symmetricKeyV12 = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1L".utf8),
+            salt: Data("L1L".utf8), // v12 salt
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
+
+        let symmetricKeyV13 = sharedSecret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data("L1M".utf8), // v13 salt
+            sharedInfo: Data("encryption".utf8),
+            outputByteCount: 32
+        )
+
+        // We'll try both keys in the decryption step
 
         // 3. Generate a new ephemeral key pair for rewrapping
         let newKeyPair = await keyStore.generateKeyPair()
@@ -265,7 +277,14 @@ public actor KASService {
             tag: tag
         )
 
-        let decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKey)
+        // Try decryption with the v13 key first
+        let decryptedKey: Data
+        do {
+            decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKeyV13)
+        } catch {
+            // If v13 key fails, fallback to v12 key
+            decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKeyV12)
+        }
 
         // 5. Create new shared secret for rewrapping
         let newSharedSecret: SharedSecret
@@ -290,10 +309,10 @@ public actor KASService {
             throw KASServiceError.invalidCurve
         }
 
-        // 6. Derive new symmetric key for encryption
+        // 6. Derive new symmetric key for encryption (using v13 format)
         let newSymmetricKey = newSharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1L".utf8),
+            salt: Data("L1M".utf8), // Always use v13 salt for new keys
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )

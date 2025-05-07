@@ -180,25 +180,33 @@ public class BinaryParser {
     }
 
     public func parseHeader() throws -> Header {
-//        print("Starting to parse header")
-
+        // Read the Magic Number first
         guard let magicNumber = read(length: FieldSize.magicNumberSize) else {
             throw ParsingError.invalidFormat
         }
-//        print("Read Magic Number: \(magicNumber), Expected: \(Header.magicNumber)")
         guard magicNumber == Header.magicNumber else {
             throw ParsingError.invalidMagicNumber
         }
 
+        // Read the Version
         guard let versionData = read(length: FieldSize.versionSize) else {
             throw ParsingError.invalidFormat
         }
-        let versionDataInt = Int(versionData[0])
-        guard versionDataInt == Header.version else {
+        let version = versionData[0]
+
+        // Branch based on version
+        switch version {
+        case 0x4C: // v12 "L1L"
+            return try parseHeaderV12()
+        case 0x4D: // v13 "L1M"
+            return try parseHeaderV13()
+        default:
             throw ParsingError.invalidVersion
         }
-//        let version = versionData[0]
-//        print("Version: \(String(format: "%02X", version))")
+    }
+
+    private func parseHeaderV12() throws -> Header {
+        // Parse the legacy single-field ResourceLocator KAS for v12
         guard let kas = readResourceLocator(),
               let policyBindingConfig = readEccAndBindingMode(),
               let payloadSignatureConfig = readSymmetricAndPayloadConfig(),
@@ -221,8 +229,55 @@ public class BinaryParser {
             throw ParsingError.invalidFormat
         }
 
+        // Create a PayloadKeyAccess from the legacy KAS ResourceLocator
+        // Use a default curve of secp256r1 and empty public key data
+        // since v12 didn't have explicit curve and public key fields
+        let payloadKeyAccess = PayloadKeyAccess(
+            kasEndpointLocator: kas,
+            kasKeyCurve: policyBindingConfig.curve, // Infer KAS curve from the policy binding config
+            kasPublicKey: Data() // Empty data - in v12 the KAS public key wasn't included
+        )
+
         return Header(
-            kas: kas,
+            payloadKeyAccess: payloadKeyAccess,
+            policyBindingConfig: policyBindingConfig,
+            payloadSignatureConfig: payloadSignatureConfig,
+            policy: policy,
+            ephemeralPublicKey: ephemeralPublicKey
+        )
+    }
+
+    private func parseHeaderV13() throws -> Header {
+        // Parse the new three-field PayloadKeyAccess structure for v13
+        var currentIndex = cursor
+        guard let payloadKeyAccess = PayloadKeyAccess.parse(from: data, currentIndex: &currentIndex) else {
+            throw ParsingError.invalidKAS
+        }
+        cursor = currentIndex
+
+        guard let policyBindingConfig = readEccAndBindingMode(),
+              let payloadSignatureConfig = readSymmetricAndPayloadConfig(),
+              let policy = readPolicyField(bindingMode: policyBindingConfig)
+        else {
+            throw ParsingError.invalidFormat
+        }
+
+        let ephemeralPublicKeySize = switch policyBindingConfig.curve {
+        case .secp256r1:
+            33
+        case .secp384r1:
+            49
+        case .secp521r1:
+            67
+        case .xsecp256k1:
+            33
+        }
+        guard let ephemeralPublicKey = read(length: ephemeralPublicKeySize) else {
+            throw ParsingError.invalidFormat
+        }
+
+        return Header(
+            payloadKeyAccess: payloadKeyAccess,
             policyBindingConfig: policyBindingConfig,
             payloadSignatureConfig: payloadSignatureConfig,
             policy: policy,

@@ -280,8 +280,8 @@ public actor KeyStore {
     /// - Returns: The encrypted key data
     /// - Throws: KeyStoreError.encryptionFailed if encryption fails
     private func rewrapKeyWithSharedSecret(dekSharedSecret: Data) throws -> Data {
-        // Use the shared secret for key derivation with standard salt
-        let sessionSalt = Data("L1L".utf8)
+        // Use the shared secret for key derivation with v13 salt (for new key generation)
+        let sessionSalt = Data("L1M".utf8) // Use v13 format for new keys
         let symmetricKey = CryptoHelper.hkdf(salt: sessionSalt, ikm: dekSharedSecret, info: "rewrappedKey")
 
         // Encrypt with AES-GCM - use local variable for nonce to avoid overlapping access
