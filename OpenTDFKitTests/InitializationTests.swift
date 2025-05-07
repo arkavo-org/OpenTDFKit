@@ -7,14 +7,14 @@ import XCTest
 /// - Returns: A minimally initialized `NanoTDF` object.
 func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoTDF {
     let curve: Curve = .secp256r1 // Default curve for this example
-    
+
     // Create a PayloadKeyAccess structure with the KAS ResourceLocator
     let payloadKeyAccess = PayloadKeyAccess(
         kasEndpointLocator: kasResourceLocator,
         kasKeyCurve: curve,
         kasPublicKey: Data([0x02, 0x03, 0x04]) // Placeholder compressed public key
     )
-    
+
     // Create a placeholder header
     let header = Header(
         payloadKeyAccess: payloadKeyAccess,
@@ -64,7 +64,7 @@ final class InitializationTests: XCTestCase {
     func testInitializeSmallNanoTDFNegative() throws {
         // Empty body is now allowed for HTTP and HTTPS due to "None" identifier support
         // We'll just test the too-large case
-        
+
         // out of spec - too large
         let body256Bytes = String(repeating: "a", count: 256)
         let locator = ResourceLocator(protocolEnum: .http, body: body256Bytes)

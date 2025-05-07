@@ -818,7 +818,6 @@ public enum PolicyError: Error {
     // Add other policy-related error cases as needed
 }
 
-
 /// Represents the type of a public key, storing its compressed data representation.
 /// This avoids holding onto specific CryptoKit key objects directly, aiding `Sendable` conformance.
 public enum PublicKeyType: Sendable {
