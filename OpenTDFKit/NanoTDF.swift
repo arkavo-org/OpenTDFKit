@@ -744,10 +744,19 @@ public struct PolicyKeyAccess: Sendable {
     /// Ephemeral public key potentially needed for key agreement to decrypt the policy.
     public let ephemeralPublicKey: Data
 
+    /// Initializes a PolicyKeyAccess object with the given resource locator and ephemeral public key.
+    /// - Parameters:
+    ///   - resourceLocator: The ResourceLocator for the key access service.
+    ///   - ephemeralPublicKey: The ephemeral public key data.
+    public init(resourceLocator: ResourceLocator, ephemeralPublicKey: Data) {
+        self.resourceLocator = resourceLocator
+        self.ephemeralPublicKey = ephemeralPublicKey
+    }
+
     /// Serializes the PolicyKeyAccess into its binary `Data` representation.
     /// Format: Resource Locator Data || Ephemeral Public Key Data.
     /// - Returns: A `Data` object representing the serialized policy key access info.
-    func toData() -> Data {
+    public func toData() -> Data {
         var data = Data()
         data.append(resourceLocator.toData())
         data.append(ephemeralPublicKey)
@@ -756,7 +765,7 @@ public struct PolicyKeyAccess: Sendable {
 
     /// Gets the public key for key agreement
     /// - Returns: The public key data
-    func getPublicKey() -> Data {
+    public func getPublicKey() -> Data {
         ephemeralPublicKey
     }
 }
