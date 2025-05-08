@@ -407,13 +407,25 @@ public struct Header: Sendable {
     }
 
     /// Serializes the Header into its binary `Data` representation according to the NanoTDF specification.
-    /// Always creates a v13 format header for new NanoTDFs.
+    /// Conditionally creates a v12 or v13 format header based on the state of `payloadKeyAccess.kasPublicKey`.
     /// - Returns: A `Data` object representing the serialized header.
     public func toData() -> Data {
         var data = Data()
         data.append(Header.magicNumber)
-        data.append(Header.version) // Always use v13 for new NanoTDFs
-        data.append(payloadKeyAccess.toData())
+
+        // If kasPublicKey is empty, this indicates a v12 style header structure
+        // (e.g., as parsed by BinaryParser for v12, or if explicitly constructed for v12).
+        if payloadKeyAccess.kasPublicKey.isEmpty {
+            // Serialize as v12 "L1L"
+            data.append(Header.versionV12) // Use 0x4C
+            data.append(payloadKeyAccess.kasLocator.toData()) // KAS URL only
+        } else {
+            // Serialize as v13 "L1M"
+            data.append(Header.version) // Use 0x4D
+            data.append(payloadKeyAccess.toData()) // KAS URL + Curve + KAS Public Key
+        }
+
+        // Common parts for both v12 and v13
         data.append(policyBindingConfig.toData())
         data.append(payloadSignatureConfig.toData())
         data.append(policy.toData())
