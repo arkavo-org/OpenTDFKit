@@ -1,4 +1,4 @@
-import CryptoKit
+@preconcurrency import CryptoKit
 import Foundation
 
 /// Represents a NanoTDF (Nano Trusted Data Format) object, containing a header, payload, and optional signature.
