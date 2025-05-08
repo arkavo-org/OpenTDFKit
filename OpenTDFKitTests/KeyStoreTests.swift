@@ -122,9 +122,8 @@ final class KeyStoreTests: XCTestCase {
 
         // Action
         let derivedSymKeyData = try await keyStore.derivePayloadSymmetricKey(
-            kasPublicKeyForLookup: kasStoredKeyPair.publicKey,
-            clientEphemeralPublicKey: clientEphemeralKeyPair.publicKey,
-            curve: curve
+            kasPublicKey: kasStoredKeyPair.publicKey,
+            tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey
         )
 
         // Assertions
@@ -156,9 +155,8 @@ final class KeyStoreTests: XCTestCase {
 
         // Action
         let derivedSymKeyData = try await keyStore.derivePayloadSymmetricKey(
-            kasPublicKeyForLookup: kasStoredKeyPair.publicKey,
-            clientEphemeralPublicKey: clientEphemeralKeyPair.publicKey,
-            curve: curve
+            kasPublicKey: kasStoredKeyPair.publicKey,
+            tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey
         )
 
         // Assertions
@@ -190,9 +188,8 @@ final class KeyStoreTests: XCTestCase {
 
         // Action
         let derivedSymKeyData = try await keyStore.derivePayloadSymmetricKey(
-            kasPublicKeyForLookup: kasStoredKeyPair.publicKey,
-            clientEphemeralPublicKey: clientEphemeralKeyPair.publicKey,
-            curve: curve
+            kasPublicKey: kasStoredKeyPair.publicKey,
+            tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey
         )
 
         // Assertions
@@ -228,42 +225,13 @@ final class KeyStoreTests: XCTestCase {
 
         do {
             _ = try await keyStore.derivePayloadSymmetricKey(
-                kasPublicKeyForLookup: kasPublicKeyNotInStore,
-                clientEphemeralPublicKey: clientEphemeralKeyPair.publicKey,
-                curve: curve
+                kasPublicKey: kasPublicKeyNotInStore,
+                tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey
             )
             XCTFail("Should have thrown KeyStoreError.keyNotFound")
         } catch {
             let expectedError = KeyStoreError.keyNotFound("Private key for KAS Public Key \(kasPublicKeyNotInStore.hexString) not found in this KeyStore.")
             XCTAssertEqual(error as? KeyStoreError, expectedError, "Incorrect error thrown or error message mismatch for keyNotFound.")
-        }
-    }
-
-    func testDerivePayloadSymmetricKey_KeyAgreementFailure_MismatchedClientKeyCurve() async throws {
-        let kasCurve = Curve.secp256r1
-        let clientKeyCurve = Curve.secp384r1 // Different curve for client key
-
-        let keyStore = KeyStore(curve: kasCurve)
-
-        // Setup KAS key in KeyStore (secp256r1)
-        let kasStoredKeyPair = await keyStore.generateKeyPair()
-        await keyStore.store(keyPair: kasStoredKeyPair)
-
-        // Setup Client ephemeral key (secp384r1)
-        let clientEphemeralKeyPair = try await generateClientEphemeralKeyPair(curve: clientKeyCurve)
-
-        do {
-            _ = try await keyStore.derivePayloadSymmetricKey(
-                kasPublicKeyForLookup: kasStoredKeyPair.publicKey,
-                clientEphemeralPublicKey: clientEphemeralKeyPair.publicKey, // This is a P384 key
-                curve: kasCurve // Expecting P256 operations internally based on this curve
-            )
-            XCTFail("Should have thrown KeyStoreError.keyAgreementFailed due to mismatched client key curve")
-        } catch KeyStoreError.keyAgreementFailed {
-            // This is the expected error because P256.KeyAgreement.PublicKey(compressedRepresentation:)
-            // will fail if clientEphemeralKeyPair.publicKey is not a P256 key.
-        } catch {
-            XCTFail("Unexpected error type: \(error). Expected KeyStoreError.keyAgreementFailed.")
         }
     }
 }

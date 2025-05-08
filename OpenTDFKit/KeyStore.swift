@@ -230,14 +230,13 @@ public actor KeyStore {
     /// - Returns: The derived symmetric key for AES-256-GCM as Data.
     /// - Throws: KeyStoreError or other errors if key derivation fails.
     public func derivePayloadSymmetricKey(
-        kasPublicKeyForLookup: Data,
-        clientEphemeralPublicKey: Data,
-        curve: Curve
+        kasPublicKey: Data,
+        tdfEphemeralPublicKey: Data,
     ) async throws -> Data {
         // 1. Get the KAS's private key from this KeyStore
         // The kasPublicKeyForLookup is the KAS's own public key, used to identify its private key.
-        guard let kasPrivateKeyData = getPrivateKey(forPublicKey: kasPublicKeyForLookup) else {
-            throw KeyStoreError.keyNotFound("Private key for KAS Public Key \(kasPublicKeyForLookup.hexString) not found in this KeyStore.")
+        guard let kasPrivateKeyData = getPrivateKey(forPublicKey: kasPublicKey) else {
+            throw KeyStoreError.keyNotFound("Private key for KAS Public Key \(kasPublicKey.hexString) not found in this KeyStore.")
         }
 
         // 2. Perform Elliptic Curve Diffie-Hellman (ECDH) Key Agreement
@@ -246,15 +245,15 @@ public actor KeyStore {
             switch curve {
             case .secp256r1:
                 let kasPrivKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData)
-                let clientPubKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: clientEphemeralPublicKey)
+                let clientPubKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: tdfEphemeralPublicKey)
                 sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
             case .secp384r1:
                 let kasPrivKey = try P384.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData)
-                let clientPubKey = try P384.KeyAgreement.PublicKey(compressedRepresentation: clientEphemeralPublicKey)
+                let clientPubKey = try P384.KeyAgreement.PublicKey(compressedRepresentation: tdfEphemeralPublicKey)
                 sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
             case .secp521r1:
                 let kasPrivKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData)
-                let clientPubKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: clientEphemeralPublicKey)
+                let clientPubKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: tdfEphemeralPublicKey)
                 sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
             }
         } catch {
