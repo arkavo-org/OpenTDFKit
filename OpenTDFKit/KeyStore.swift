@@ -331,7 +331,7 @@ extension KeyStore {
     }
 }
 
-public enum KeyStoreError: Error {
+public enum KeyStoreError: Error, Equatable {
     case unsupportedCurve
     case invalidKeyData
     case keyNotFound(String? = nil) // Added optional message
@@ -343,6 +343,36 @@ public enum KeyStoreError: Error {
     case unknownError
     case keyAgreementFailed(String? = nil)
     case keyDerivationFailed(String? = nil)
+
+    // Equatable conformance
+    public static func == (lhs: KeyStoreError, rhs: KeyStoreError) -> Bool {
+        switch (lhs, rhs) {
+        case (.unsupportedCurve, .unsupportedCurve):
+            return true
+        case (.invalidKeyData, .invalidKeyData):
+            return true
+        case (.keyNotFound(let lhsMsg), .keyNotFound(let rhsMsg)):
+            return lhsMsg == rhsMsg
+        case (.invalidKeyFormat, .invalidKeyFormat):
+            return true
+        case (.encryptionFailed, .encryptionFailed):
+            return true
+        case (.keyGenerationFailed, .keyGenerationFailed):
+            return true
+        case (.signingFailed, .signingFailed):
+            return true
+        case (.decryptionFailed, .decryptionFailed):
+            return true
+        case (.unknownError, .unknownError):
+            return true
+        case (.keyAgreementFailed(let lhsMsg), .keyAgreementFailed(let rhsMsg)):
+            return lhsMsg == rhsMsg
+        case (.keyDerivationFailed(let lhsMsg), .keyDerivationFailed(let rhsMsg)):
+            return lhsMsg == rhsMsg
+        default:
+            return false
+        }
+    }
 }
 
 // Helper extension for Data to hex string (for debugging/errors)
