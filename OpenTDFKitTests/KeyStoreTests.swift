@@ -5,7 +5,7 @@ import XCTest
 final class KeyStoreTests: XCTestCase {
     func testGenerateAndStoreSingleKey() async throws {
         let keyStore = KeyStore(curve: .secp256r1)
-        let keyPair = await keyStore.generateKeyPair()
+        let keyPair = try await keyStore.generateKeyPair() // Added try
         await keyStore.store(keyPair: keyPair)
 
         // Test existence check

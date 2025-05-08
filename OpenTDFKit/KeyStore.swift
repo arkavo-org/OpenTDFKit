@@ -103,7 +103,7 @@ public actor KeyStore {
         try await withThrowingTaskGroup(of: StoredKeyPair.self) { group in
             for _ in 0 ..< count {
                 group.addTask {
-                    await self.generateKeyPair()
+                    try await self.generateKeyPair() // Now calling a throwing function
                 }
             }
 
@@ -120,7 +120,7 @@ public actor KeyStore {
         }
     }
 
-    public func generateKeyPair() -> StoredKeyPair {
+    public func generateKeyPair() throws -> StoredKeyPair { // Made throwing
         // Since curve is a stored property, no need for switch
         switch curve {
         case .secp521r1:
@@ -142,7 +142,7 @@ public actor KeyStore {
                 privateKey: privateKey.rawRepresentation
             )
         case .xsecp256k1:
-            fatalError("Unsupported curve for KeyStore")
+            throw KeyStoreError.unsupportedCurve // Throw error instead of fatalError
         }
     }
 
