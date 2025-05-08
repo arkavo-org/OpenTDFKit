@@ -146,8 +146,6 @@ public final class PublicKeyStore: Sendable {
         case .secp521r1:
             let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: publicKeyData)
             return try KasMetadata(resourceLocator: resourceLocator, publicKey: publicKey, curve: .secp521r1)
-        case .xsecp256k1:
-            throw PublicKeyStoreError.unsupportedCurve
         }
     }
 }

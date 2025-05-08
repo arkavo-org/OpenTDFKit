@@ -143,7 +143,7 @@ public class BinaryParser {
             = if bindingMode.ecdsaBinding
         {
             switch bindingMode.curve {
-            case .secp256r1, .xsecp256k1:
+            case .secp256r1:
                 64
             case .secp384r1:
                 96
@@ -166,8 +166,6 @@ public class BinaryParser {
             97
         case .secp521r1:
             133
-        case .xsecp256k1:
-            65
         }
 
         guard let resourceLocator = readResourceLocator(),
@@ -255,8 +253,6 @@ public class BinaryParser {
             49
         case .secp521r1:
             67
-        case .xsecp256k1:
-            33
         }
         guard let ephemeralPublicKey = read(length: ephemeralPublicKeySize) else {
             throw ParsingError.invalidFormat
@@ -300,8 +296,6 @@ public class BinaryParser {
             49
         case .secp521r1:
             67
-        case .xsecp256k1:
-            33
         }
         guard let ephemeralPublicKey = read(length: ephemeralPublicKeySize) else {
             throw ParsingError.invalidFormat
@@ -373,7 +367,7 @@ public class BinaryParser {
         let signatureLength: Int
 //        print("config.signatureECCMode", config)
         switch config.signatureCurve {
-        case .secp256r1, .xsecp256k1:
+        case .secp256r1:
             publicKeyLength = 33
             signatureLength = 64
         case .secp384r1:

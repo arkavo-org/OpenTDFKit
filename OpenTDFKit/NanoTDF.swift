@@ -758,7 +758,8 @@ public enum Curve: UInt8, Sendable {
     case secp521r1 = 0x02
     // BEGIN in-spec unsupported
     /// SECG secp256k1 curve (commonly used in Bitcoin). Marked as unsupported in this implementation context.
-    case xsecp256k1 = 0x03
+    // case xsecp256k1 = 0x03
+    // removed to simplify
     // END in-spec unsupported
 
     // publicKeyLength is defined as an extension in KeyStore.swift
@@ -854,9 +855,6 @@ public struct KasMetadata: Sendable {
                 throw CryptoHelperError.unsupportedCurve // Type mismatch
             }
             publicKeyType = .p521(key.compressedRepresentation)
-        case .xsecp256k1:
-            // Explicitly disallow xsecp256k1 as it's marked unsupported
-            throw CryptoHelperError.unsupportedCurve
         }
     }
 

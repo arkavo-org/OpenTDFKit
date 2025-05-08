@@ -160,9 +160,6 @@ actor CryptoHelper {
                 publicKey: privateKey.publicKey.compressedRepresentation,
                 curve: curveType
             )
-        case .xsecp256k1:
-            // xsecp256k1 is not supported by CryptoKit for KeyAgreement directly.
-            return nil
         }
     }
 
@@ -187,9 +184,6 @@ actor CryptoHelper {
             let privateKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: keyPair.privateKey)
             let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: recipientPublicKey)
             return try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
-        case .xsecp256k1:
-            // Curve not supported for key agreement here.
-            return nil
         }
     }
 
