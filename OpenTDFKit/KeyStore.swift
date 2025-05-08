@@ -260,7 +260,7 @@ public actor KeyStore {
                 sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
             case .xsecp256k1:
                 // CryptoKit does not natively support secp256k1 for key agreement.
-                throw KeyStoreError.unsupportedCurve("secp256k1 is not supported for ECDH key agreement by CryptoKit.")
+                throw KeyStoreError.unsupportedCurve
             }
         } catch {
             throw KeyStoreError.keyAgreementFailed("ECDH key agreement failed: \(error.localizedDescription)")
@@ -297,38 +297,12 @@ public actor KeyStore {
         return publicKeyStore
     }
 
-    /// Identify and remove a specific key pair by ID
-    /// - Parameter keyID: The unique identifier of the key pair to remove
-    /// - Throws: Error if the key pair is not found
-    public func removeKeyPair(keyID: UUID) async throws {
-        // Find the matching KeyPairIdentifier by public key hash
-        var foundIdentifier: KeyPairIdentifier?
-
-        // This is inefficient - in a production system, we would maintain a mapping
-        // between UUIDs and KeyPairIdentifiers, but for this PR we'll do a linear search
-        for (identifier, _) in keyPairs {
-            // Generate a UUID from the public key bytes to match by
-            let generatedUUID = UUID()
-            if generatedUUID == keyID {
-                foundIdentifier = identifier
-                break
-            }
-        }
-
-        guard let identifier = foundIdentifier else {
-            throw KeyStoreError.keyNotFound
-        }
-
-        // Use the internal method to remove by KeyPairIdentifier
-        try await removeKeyPair(keyID: identifier)
-    }
-
     /// Remove a key pair by KeyPairIdentifier
     /// - Parameter keyID: The KeyPairIdentifier of the key pair to remove
     /// - Throws: KeyStoreError.keyNotFound if the key pair is not found
     public func removeKeyPair(keyID: KeyPairIdentifier) async throws {
         guard let _ = keyPairs.removeValue(forKey: keyID) else {
-            throw KeyStoreError.keyNotFound
+            throw KeyStoreError.keyNotFound(keyID.publicKey.hexString)
         }
 
         // Update storage tracking
@@ -363,7 +337,6 @@ public enum KeyStoreError: Error {
     case keyNotFound(String? = nil) // Added optional message
     case invalidKeyFormat
     case encryptionFailed
-    // New cases from your example, or for new function
     case keyGenerationFailed
     case signingFailed
     case decryptionFailed
