@@ -9,11 +9,10 @@ on:
 
 env:
   DERIVED_DATA_PATH: ".build"
-  MACOSX_DEPLOYMENT_TARGET: "14.0"
 
 jobs:
   lint:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
