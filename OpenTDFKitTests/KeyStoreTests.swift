@@ -5,7 +5,7 @@ import XCTest
 final class KeyStoreTests: XCTestCase {
     func testGenerateAndStoreSingleKey() async throws {
         let keyStore = KeyStore(curve: .secp256r1)
-        let keyPair = try await keyStore.generateKeyPair() // Added try
+        let keyPair = await keyStore.generateKeyPair()
         await keyStore.store(keyPair: keyPair)
 
         // Test existence check
@@ -114,7 +114,7 @@ final class KeyStoreTests: XCTestCase {
         let keyStore = KeyStore(curve: curve)
 
         // Setup KAS key in KeyStore
-        let kasStoredKeyPair = keyStore.generateKeyPair() // Not async, not throws per provided KeyStore.swift
+        let kasStoredKeyPair = await keyStore.generateKeyPair() // Not async, not throws per provided KeyStore.swift
         await keyStore.store(keyPair: kasStoredKeyPair)
 
         // Setup Client ephemeral key
@@ -148,7 +148,7 @@ final class KeyStoreTests: XCTestCase {
         let keyStore = KeyStore(curve: curve)
 
         // Setup KAS key in KeyStore
-        let kasStoredKeyPair = keyStore.generateKeyPair()
+        let kasStoredKeyPair = await keyStore.generateKeyPair()
         await keyStore.store(keyPair: kasStoredKeyPair)
 
         // Setup Client ephemeral key
@@ -182,7 +182,7 @@ final class KeyStoreTests: XCTestCase {
         let keyStore = KeyStore(curve: curve)
 
         // Setup KAS key in KeyStore
-        let kasStoredKeyPair = keyStore.generateKeyPair()
+        let kasStoredKeyPair = await keyStore.generateKeyPair()
         await keyStore.store(keyPair: kasStoredKeyPair)
 
         // Setup Client ephemeral key
@@ -246,7 +246,7 @@ final class KeyStoreTests: XCTestCase {
         let keyStore = KeyStore(curve: kasCurve)
 
         // Setup KAS key in KeyStore (secp256r1)
-        let kasStoredKeyPair = keyStore.generateKeyPair()
+        let kasStoredKeyPair = await keyStore.generateKeyPair()
         await keyStore.store(keyPair: kasStoredKeyPair)
 
         // Setup Client ephemeral key (secp384r1)

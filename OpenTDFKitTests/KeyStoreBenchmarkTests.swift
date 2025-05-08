@@ -20,7 +20,7 @@ final class KeyStoreBenchmarkTests: XCTestCase {
         print("Average bytes per key pair: \(Double(serializedData.count) / 8192)")
 
         // Test key lookup
-        let testKeyPair = try await keyStore.generateKeyPair()
+        let testKeyPair = await keyStore.generateKeyPair()
         await keyStore.store(keyPair: testKeyPair)
 
         // Test hasKey performance
