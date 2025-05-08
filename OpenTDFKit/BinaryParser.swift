@@ -159,14 +159,7 @@ public class BinaryParser {
     }
 
     func readPolicyKeyAccess(bindingMode: PolicyBindingConfig) -> PolicyKeyAccess? {
-        let keySize = switch bindingMode.curve {
-        case .secp256r1:
-            65
-        case .secp384r1:
-            97
-        case .secp521r1:
-            133
-        }
+        let keySize = bindingMode.curve.publicKeyLength // Use compressed key length
 
         guard let resourceLocator = readResourceLocator(),
               let ephemeralPublicKey = read(length: keySize)
