@@ -220,85 +220,65 @@ public actor KeyStore {
         }
     }
 
-    /// Rewraps a key using the stored KAS private key and helper functions.
+    /// Derives the symmetric key for NanoTDF v13 payload decryption using ECDH.
+    /// This function assumes the KeyStore holds the KAS's private key.
+    ///
     /// - Parameters:
-    ///   - ephemeralPublicKey: The ephemeral public key from PolicyKeyAccess.ephemeralPublicKey in the NanoTDF
-    ///   - encryptedKey: The encrypted key data to be unwrapped
-    /// - Returns: The rewrapped key data for decrypting the NanoTDF content
-    /// - Throws: KeyStore errors if key operations fail
-    public func rewrapKey(ephemeralPublicKey: Data, encryptedKey _: Data) async throws -> Data {
-        // Find the matching private key for the provided ephemeral public key
-        guard let kasPrivateKeyData = getPrivateKey(forPublicKey: ephemeralPublicKey) else {
-            throw KeyStoreError.keyNotFound
+    ///   - kasPublicKeyForLookup: The public key of the KAS, used to retrieve its private key from this KeyStore.
+    ///                            This corresponds to `header.payloadKeyAccess.kasPublicKey`.
+    ///   - clientEphemeralPublicKey: The ephemeral public key from the NanoTDF Header's main ephemeral key field.
+    ///                               This corresponds to `header.ephemeralPublicKey`.
+    ///   - curve: The elliptic curve used for the key agreement (e.g., from `header.payloadKeyAccess.kasKeyCurve`).
+    /// - Returns: The derived symmetric key for AES-256-GCM as Data.
+    /// - Throws: KeyStoreError or other errors if key derivation fails.
+    public func derivePayloadSymmetricKeyForV13(
+        kasPublicKeyForLookup: Data,
+        clientEphemeralPublicKey: Data,
+        curve: Curve
+    ) async throws -> Data {
+        // 1. Get the KAS's private key from this KeyStore
+        // The kasPublicKeyForLookup is the KAS's own public key, used to identify its private key.
+        guard let kasPrivateKeyData = getPrivateKey(forPublicKey: kasPublicKeyForLookup) else {
+            throw KeyStoreError.keyNotFound("Private key for KAS Public Key \(kasPublicKeyForLookup.hexString) not found in this KeyStore.")
         }
 
-        // Process based on curve type
-        switch curve {
-        case .secp256r1:
-            let kasPrivateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData)
-            let tdfEphemeralPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
-
-            // Process with common encryption function
-            return try rewrapKeyWithSharedSecret(
-                dekSharedSecret: CryptoHelper.customECDH(
-                    privateKey: kasPrivateKey,
-                    publicKey: tdfEphemeralPublicKey
-                )
-            )
-
-        case .secp384r1:
-            let kasPrivateKey = try P384.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData)
-            let tdfEphemeralPublicKey = try P384.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
-
-            // Process with common encryption function
-            return try rewrapKeyWithSharedSecret(
-                dekSharedSecret: CryptoHelper.customECDH(
-                    privateKey: kasPrivateKey,
-                    publicKey: tdfEphemeralPublicKey
-                )
-            )
-
-        case .secp521r1:
-            let kasPrivateKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData)
-            let tdfEphemeralPublicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
-
-            // Process with common encryption function
-            return try rewrapKeyWithSharedSecret(
-                dekSharedSecret: CryptoHelper.customECDH(
-                    privateKey: kasPrivateKey,
-                    publicKey: tdfEphemeralPublicKey
-                )
-            )
-
-        case .xsecp256k1:
-            throw KeyStoreError.unsupportedCurve
-        }
-    }
-
-    /// Helper method to handle the common encryption process for all curve types
-    /// - Parameter dekSharedSecret: The shared secret derived from ECDH
-    /// - Returns: The encrypted key data
-    /// - Throws: KeyStoreError.encryptionFailed if encryption fails
-    private func rewrapKeyWithSharedSecret(dekSharedSecret: Data) throws -> Data {
-        // Use the shared secret for key derivation with v13 salt (for new key generation)
-        let sessionSalt = Data("L1M".utf8) // Use v13 format for new keys
-        let symmetricKey = CryptoHelper.hkdf(salt: sessionSalt, ikm: dekSharedSecret, info: "rewrappedKey")
-
-        // Encrypt with AES-GCM - use local variable for nonce to avoid overlapping access
-        var nonceData = Data(count: 12)
-        let nonceCount = 12
-        _ = nonceData.withUnsafeMutableBytes {
-            SecRandomCopyBytes(kSecRandomDefault, nonceCount, $0.baseAddress!)
-        }
-        let aesKey = SymmetricKey(data: symmetricKey)
-        let gcmNonce = try AES.GCM.Nonce(data: nonceData)
-        let sealedBox = try AES.GCM.seal(dekSharedSecret, using: aesKey, nonce: gcmNonce)
-
-        guard let combined = sealedBox.combined else {
-            throw KeyStoreError.encryptionFailed
+        // 2. Perform Elliptic Curve Diffie-Hellman (ECDH) Key Agreement
+        let sharedSecret: SharedSecret
+        do {
+            switch curve {
+            case .secp256r1:
+                let kasPrivKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData)
+                let clientPubKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: clientEphemeralPublicKey)
+                sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
+            case .secp384r1:
+                let kasPrivKey = try P384.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData)
+                let clientPubKey = try P384.KeyAgreement.PublicKey(compressedRepresentation: clientEphemeralPublicKey)
+                sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
+            case .secp521r1:
+                let kasPrivKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData)
+                let clientPubKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: clientEphemeralPublicKey)
+                sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
+            case .xsecp256k1:
+                // CryptoKit does not natively support secp256k1 for key agreement.
+                throw KeyStoreError.unsupportedCurve("secp256k1 is not supported for ECDH key agreement by CryptoKit.")
+            }
+        } catch {
+            throw KeyStoreError.keyAgreementFailed("ECDH key agreement failed: \(error.localizedDescription)")
         }
 
-        return combined
+        // 3. Derive the symmetric key using HKDF (v13 specific)
+        //    Salt: "L1M" for v13
+        //    Info: "encryption" for payload symmetric key
+        //    Output Byte Count: 32 (for AES-256)
+        let symmetricKeyCryptoKit = sharedSecret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data("L1M".utf8), // v13 salt
+            sharedInfo: Data("encryption".utf8), // Standard info for payload encryption
+            outputByteCount: 32 // For AES-256
+        )
+
+        // Convert SymmetricKey to Data
+        return symmetricKeyCryptoKit.withUnsafeBytes { Data($0) }
     }
 
     // MARK: - One-Time TDF Extensions
@@ -380,9 +360,23 @@ extension KeyStore {
 public enum KeyStoreError: Error {
     case unsupportedCurve
     case invalidKeyData
-    case keyNotFound
+    case keyNotFound(String? = nil) // Added optional message
     case invalidKeyFormat
     case encryptionFailed
+    // New cases from your example, or for new function
+    case keyGenerationFailed
+    case signingFailed
+    case decryptionFailed
+    case unknownError
+    case keyAgreementFailed(String? = nil)
+    case keyDerivationFailed(String? = nil)
+}
+
+// Helper extension for Data to hex string (for debugging/errors)
+public extension Data {
+    var hexString: String {
+        map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 // Helper extension
