@@ -11,7 +11,6 @@ func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoTDF {
     // Create a PayloadKeyAccess structure with the KAS ResourceLocator
     let payloadKeyAccess = PayloadKeyAccess(
         kasEndpointLocator: kasResourceLocator,
-        kasKeyCurve: curve,
         kasPublicKey: Data([0x02, 0x03, 0x04]) // Placeholder compressed public key
     )
 

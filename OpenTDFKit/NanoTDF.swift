@@ -1,4 +1,4 @@
-@preconcurrency import CryptoKit
+import CryptoKit
 import Foundation
 
 /// Represents a NanoTDF (Nano Trusted Data Format) object, containing a header, payload, and optional signature.
@@ -240,7 +240,6 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
     // Create the PayloadKeyAccess structure for v13 header
     let payloadKeyAccess = PayloadKeyAccess(
         kasEndpointLocator: kas.resourceLocator,
-        kasKeyCurve: kas.curve,
         kasPublicKey: kasPublicKey // Include the KAS public key in the header
     )
 
@@ -300,84 +299,49 @@ public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signi
 /// as per NanoTDF Spec v13 ("L1M").
 public struct PayloadKeyAccess: Sendable {
     /// Locator for the KAS endpoint.
-    public let kasEndpointLocator: ResourceLocator
-    /// The elliptic curve of the KAS Public Key.
-    public let kasKeyCurve: Curve
+    public let kasLocator: ResourceLocator
     /// The compressed public key of the KAS.
     public let kasPublicKey: Data
 
-    public init(kasEndpointLocator: ResourceLocator, kasKeyCurve: Curve, kasPublicKey: Data) {
-        self.kasEndpointLocator = kasEndpointLocator
-        self.kasKeyCurve = kasKeyCurve
+    /// The elliptic curve of the KAS Public Key, inferred from the public key size.
+    /// This is not stored as a separate field but computed from the public key length.
+    public var kasKeyCurve: Curve {
+        switch kasPublicKey.count {
+        case 33: return .secp256r1
+        case 49: return .secp384r1
+        case 67: return .secp521r1
+        case 0: return .secp256r1 // Default for empty keys (v12 format)
+        default:
+            print("Warning: Invalid KAS public key size: \(kasPublicKey.count)")
+            return .secp256r1 // Default to P-256 as a fallback
+        }
+    }
+
+    /// Initializes a PayloadKeyAccess with a ResourceLocator and public key.
+    /// - Parameters:
+    ///   - kasEndpointLocator: The ResourceLocator for the KAS endpoint.
+    ///   - kasPublicKey: The compressed public key of the KAS.
+    public init(kasEndpointLocator: ResourceLocator, kasPublicKey: Data) {
+        kasLocator = kasEndpointLocator
         self.kasPublicKey = kasPublicKey
     }
 
     /// Serializes the PayloadKeyAccess into its binary `Data` representation.
     /// Format: KAS Endpoint Locator || KAS Key Curve Enum || KAS Public Key
+    /// Note: For backward compatibility with existing implementations, we include the curve byte.
     public func toData() -> Data {
         var data = Data()
-        data.append(kasEndpointLocator.toData())
+        data.append(kasLocator.toData())
+        // For backward compatibility, we include the curve byte
         data.append(kasKeyCurve.rawValue)
         data.append(kasPublicKey)
         return data
     }
 
-    /// Parses a PayloadKeyAccess structure from the given data at the current index.
-    /// Advances the `currentIndex` past the parsed bytes.
-    /// - Parameters:
-    ///   - data: The `Data` object containing the NanoTDF header bytes.
-    ///   - currentIndex: An `inout` `Data.Index` pointing to the start of the PayloadKeyAccess structure.
-    /// - Returns: An initialized `PayloadKeyAccess` object if parsing is successful, otherwise `nil`.
-    public static func parse(from data: Data, currentIndex: inout Data.Index) -> PayloadKeyAccess? {
-        // 1. Parse KAS Endpoint Locator (ResourceLocator)
-        // 1.1. Protocol Enum (1 byte)
-        guard currentIndex < data.endIndex else { return nil }
-        let protocolByte = data[currentIndex]
-        guard let protocolEnum = ProtocolEnum(rawValue: protocolByte) else { return nil }
-        data.formIndex(after: &currentIndex)
-
-        // 1.2. Body Length (1 byte)
-        guard currentIndex < data.endIndex else { return nil }
-        let bodyLength = Int(data[currentIndex])
-        // As per spec 3.4.1, Body Length is 1 byte, Body is 1-255 bytes.
-        // ResourceLocator.init? validates body.utf8.count (1 to 255).
-        // If bodyLength is 0, ResourceLocator.init? will return nil.
-        guard bodyLength >= 0, bodyLength <= 255 else { return nil } // bodyLength itself is UInt8
-        data.formIndex(after: &currentIndex)
-
-        // 1.3. Body (variable length: bodyLength bytes)
-        let bodyEndIndex = data.index(currentIndex, offsetBy: bodyLength, limitedBy: data.endIndex)
-        guard let actualBodyEndIndex = bodyEndIndex, currentIndex <= actualBodyEndIndex else { return nil }
-        let bodyData = data[currentIndex ..< actualBodyEndIndex]
-        guard let bodyString = String(data: bodyData, encoding: .utf8) else { return nil }
-        currentIndex = actualBodyEndIndex
-
-        guard let kasEndpointLocator = ResourceLocator(protocolEnum: protocolEnum, body: bodyString) else {
-            return nil
-        }
-
-        // 2. Parse KAS Key Curve Enum (1 byte)
-        guard currentIndex < data.endIndex else { return nil }
-        let curveByte = data[currentIndex]
-        guard let kasKeyCurve = Curve(rawValue: curveByte) else { return nil }
-        data.formIndex(after: &currentIndex)
-
-        // 3. Parse KAS Public Key (length determined by kasKeyCurve)
-        let expectedPublicKeyLength = kasKeyCurve.publicKeyLength
-        // Ensure publicKeyLength is valid (e.g., not 0 if a curve was invalidly defined, though current ones are fine)
-        guard expectedPublicKeyLength > 0 else { return nil }
-
-        let publicKeyEndIndex = data.index(currentIndex, offsetBy: expectedPublicKeyLength, limitedBy: data.endIndex)
-        guard let actualPublicKeyEndIndex = publicKeyEndIndex, currentIndex <= actualPublicKeyEndIndex else { return nil }
-        let kasPublicKey = data[currentIndex ..< actualPublicKeyEndIndex]
-        currentIndex = actualPublicKeyEndIndex
-
-        // Final check that we read the correct amount of data for the public key
-        guard kasPublicKey.count == expectedPublicKeyLength else { return nil }
-
-        return PayloadKeyAccess(kasEndpointLocator: kasEndpointLocator,
-                                kasKeyCurve: kasKeyCurve,
-                                kasPublicKey: kasPublicKey)
+    /// Gets the public key for key agreement
+    /// - Returns: The public key data
+    public func getPublicKey() -> Data {
+        kasPublicKey
     }
 }
 
@@ -411,7 +375,7 @@ public struct Header: Sendable {
     /// Legacy KAS ResourceLocator for backward compatibility with v12 format.
     @available(*, deprecated, message: "Only used for backward compatibility")
     public var kas: ResourceLocator {
-        payloadKeyAccess.kasEndpointLocator
+        payloadKeyAccess.kasLocator
     }
 
     /// Initializes a Header object.
@@ -429,10 +393,12 @@ public struct Header: Sendable {
     @available(*, deprecated, message: "Use init(payloadKeyAccess:...) instead")
     public init(kas: ResourceLocator, policyBindingConfig: PolicyBindingConfig, payloadSignatureConfig: SignatureAndPayloadConfig, policy: Policy, ephemeralPublicKey: Data) {
         // Convert the legacy KAS format to the new PayloadKeyAccess format
+        // For v12 format, we create a dummy public key of the correct size based on the curve
+        let dummyPublicKey = Data(count: policyBindingConfig.curve.publicKeyLength)
+
         payloadKeyAccess = PayloadKeyAccess(
             kasEndpointLocator: kas,
-            kasKeyCurve: policyBindingConfig.curve, // Infer KAS curve from the policy binding config
-            kasPublicKey: Data() // Empty data - in v12 the KAS public key wasn't included
+            kasPublicKey: dummyPublicKey // For v12, we create a dummy key of the right size
         )
         self.policyBindingConfig = policyBindingConfig
         self.payloadSignatureConfig = payloadSignatureConfig
@@ -751,6 +717,18 @@ public struct PolicyKeyAccess: Sendable {
     public init(resourceLocator: ResourceLocator, ephemeralPublicKey: Data) {
         self.resourceLocator = resourceLocator
         self.ephemeralPublicKey = ephemeralPublicKey
+    }
+
+    /// The curve used by this key access, inferred from the public key size.
+    public var curve: Curve {
+        switch ephemeralPublicKey.count {
+        case 33: return .secp256r1
+        case 49: return .secp384r1
+        case 67: return .secp521r1
+        default:
+            print("Warning: Invalid ephemeral public key size: \(ephemeralPublicKey.count)")
+            return .secp256r1 // Default to P-256 as a fallback
+        }
     }
 
     /// Serializes the PolicyKeyAccess into its binary `Data` representation.

@@ -179,6 +179,39 @@ public class BinaryParser {
         return PolicyKeyAccess(resourceLocator: resourceLocator, ephemeralPublicKey: ephemeralPublicKey)
     }
 
+    /// Reads a PayloadKeyAccess structure and advances the cursor.
+    /// - Parameter version: The version of the NanoTDF format (v12 or v13)
+    /// - Returns: An initialized `PayloadKeyAccess` object if parsing is successful, otherwise `nil`.
+    func readPayloadKeyAccess(version: UInt8? = nil) -> PayloadKeyAccess? {
+        // 1. Parse KAS Endpoint Locator (ResourceLocator)
+        guard let kasEndpointLocator = readResourceLocator() else {
+            return nil
+        }
+
+        // 2. Read the curve byte
+        guard let curveByte = read(length: 1),
+              let curve = Curve(rawValue: curveByte[0])
+        else {
+            return nil
+        }
+
+        // For v12 format, we don't have a public key
+        if version == 0x4C { // v12 "L1L"
+            return PayloadKeyAccess(kasEndpointLocator: kasEndpointLocator, kasPublicKey: Data())
+        }
+
+        // For v13 format, read the key based on the curve size
+        let expectedPublicKeyLength = curve.publicKeyLength
+        guard expectedPublicKeyLength > 0 else { return nil }
+
+        // Read the public key
+        guard let kasPublicKey = read(length: expectedPublicKeyLength) else {
+            return nil
+        }
+
+        return PayloadKeyAccess(kasEndpointLocator: kasEndpointLocator, kasPublicKey: kasPublicKey)
+    }
+
     public func parseHeader() throws -> Header {
         // Read the Magic Number first
         guard let magicNumber = read(length: FieldSize.magicNumberSize) else {
@@ -230,12 +263,12 @@ public class BinaryParser {
         }
 
         // Create a PayloadKeyAccess from the legacy KAS ResourceLocator
-        // Use a default curve of secp256r1 and empty public key data
-        // since v12 didn't have explicit curve and public key fields
+        // For v12 format, create a dummy public key of the correct size based on curve
+        let dummyPublicKey = Data(count: policyBindingConfig.curve.publicKeyLength)
+
         let payloadKeyAccess = PayloadKeyAccess(
             kasEndpointLocator: kas,
-            kasKeyCurve: policyBindingConfig.curve, // Infer KAS curve from the policy binding config
-            kasPublicKey: Data() // Empty data - in v12 the KAS public key wasn't included
+            kasPublicKey: dummyPublicKey // For v12, create a dummy key of the right size
         )
 
         return Header(
@@ -249,11 +282,9 @@ public class BinaryParser {
 
     private func parseHeaderV13() throws -> Header {
         // Parse the new three-field PayloadKeyAccess structure for v13
-        var currentIndex = cursor
-        guard let payloadKeyAccess = PayloadKeyAccess.parse(from: data, currentIndex: &currentIndex) else {
+        guard let payloadKeyAccess = readPayloadKeyAccess(version: 0x4D) else {
             throw ParsingError.invalidKAS
         }
-        cursor = currentIndex
 
         guard let policyBindingConfig = readEccAndBindingMode(),
               let payloadSignatureConfig = readSymmetricAndPayloadConfig(),
