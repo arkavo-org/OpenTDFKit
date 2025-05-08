@@ -39,7 +39,7 @@ final class KASServiceTests: XCTestCase {
         // Verify the NanoTDF was created successfully
         XCTAssertNotNil(nanoTDF)
         XCTAssertEqual(nanoTDF.header.toData()[2], Header.version, "NanoTDF header should be v13")
-        XCTAssertEqual(nanoTDF.header.kas.body, kasMetadata.resourceLocator.body)
+        XCTAssertEqual(nanoTDF.header.payloadKeyAccess.kasLocator.body, kasMetadata.resourceLocator.body)
         XCTAssertNotNil(nanoTDF.payload.ciphertext)
 
         // 6. Extract the ephemeral public key from the NanoTDF
@@ -64,7 +64,7 @@ final class KASServiceTests: XCTestCase {
         // Derive symmetric key using the same parameters as in createNanoTDF
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1L".utf8),
+            salt: Data("L1M".utf8), // Use v13 salt
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
@@ -145,7 +145,7 @@ final class KASServiceTests: XCTestCase {
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
         let derivedSymmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1L".utf8),
+            salt: Data("L1M".utf8), // Use v13 salt
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
