@@ -229,7 +229,7 @@ public actor KeyStore {
     ///   - curve: The elliptic curve used for the key agreement (e.g., from `header.payloadKeyAccess.kasKeyCurve`).
     /// - Returns: The derived symmetric key for AES-256-GCM as Data.
     /// - Throws: KeyStoreError or other errors if key derivation fails.
-    public func derivePayloadSymmetricKeyForV13(
+    public func derivePayloadSymmetricKey(
         kasPublicKeyForLookup: Data,
         clientEphemeralPublicKey: Data,
         curve: Curve
