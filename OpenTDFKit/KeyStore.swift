@@ -103,7 +103,7 @@ public actor KeyStore {
         try await withThrowingTaskGroup(of: StoredKeyPair.self) { group in
             for _ in 0 ..< count {
                 group.addTask {
-                    try await self.generateKeyPair() // Now calling a throwing function
+                    await self.generateKeyPair() // Now calling a throwing function
                 }
             }
 
@@ -120,7 +120,7 @@ public actor KeyStore {
         }
     }
 
-    public func generateKeyPair() throws -> StoredKeyPair { // Made throwing
+    public func generateKeyPair() -> StoredKeyPair { // Made throwing
         // Since curve is a stored property, no need for switch
         switch curve {
         case .secp521r1:
@@ -141,8 +141,6 @@ public actor KeyStore {
                 publicKey: privateKey.publicKey.compressedRepresentation,
                 privateKey: privateKey.rawRepresentation
             )
-        case .xsecp256k1:
-            throw KeyStoreError.unsupportedCurve // Throw error instead of fatalError
         }
     }
 
@@ -258,9 +256,6 @@ public actor KeyStore {
                 let kasPrivKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData)
                 let clientPubKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: clientEphemeralPublicKey)
                 sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
-            case .xsecp256k1:
-                // CryptoKit does not natively support secp256k1 for key agreement.
-                throw KeyStoreError.unsupportedCurve
             }
         } catch {
             throw KeyStoreError.keyAgreementFailed("ECDH key agreement failed: \(error.localizedDescription)")
@@ -348,29 +343,29 @@ public enum KeyStoreError: Error, Equatable {
     public static func == (lhs: KeyStoreError, rhs: KeyStoreError) -> Bool {
         switch (lhs, rhs) {
         case (.unsupportedCurve, .unsupportedCurve):
-            return true
+            true
         case (.invalidKeyData, .invalidKeyData):
-            return true
-        case (.keyNotFound(let lhsMsg), .keyNotFound(let rhsMsg)):
-            return lhsMsg == rhsMsg
+            true
+        case let (.keyNotFound(lhsMsg), .keyNotFound(rhsMsg)):
+            lhsMsg == rhsMsg
         case (.invalidKeyFormat, .invalidKeyFormat):
-            return true
+            true
         case (.encryptionFailed, .encryptionFailed):
-            return true
+            true
         case (.keyGenerationFailed, .keyGenerationFailed):
-            return true
+            true
         case (.signingFailed, .signingFailed):
-            return true
+            true
         case (.decryptionFailed, .decryptionFailed):
-            return true
+            true
         case (.unknownError, .unknownError):
-            return true
-        case (.keyAgreementFailed(let lhsMsg), .keyAgreementFailed(let rhsMsg)):
-            return lhsMsg == rhsMsg
-        case (.keyDerivationFailed(let lhsMsg), .keyDerivationFailed(let rhsMsg)):
-            return lhsMsg == rhsMsg
+            true
+        case let (.keyAgreementFailed(lhsMsg), .keyAgreementFailed(rhsMsg)):
+            lhsMsg == rhsMsg
+        case let (.keyDerivationFailed(lhsMsg), .keyDerivationFailed(rhsMsg)):
+            lhsMsg == rhsMsg
         default:
-            return false
+            false
         }
     }
 }
@@ -389,7 +384,6 @@ extension Curve {
         case .secp256r1: 33 // compressed format
         case .secp384r1: 49
         case .secp521r1: 67
-        case .xsecp256k1: 33
         }
     }
 
@@ -398,7 +392,6 @@ extension Curve {
         case .secp256r1: 32
         case .secp384r1: 48
         case .secp521r1: 66
-        case .xsecp256k1: 32
         }
     }
 }

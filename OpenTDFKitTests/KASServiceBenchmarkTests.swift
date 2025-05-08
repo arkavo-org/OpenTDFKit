@@ -169,7 +169,7 @@ final class KASServiceBenchmarkTests: XCTestCase {
             // Generate random test keys outside of timing measurement
             var testKeys: [Data] = []
             for _ in 0 ..< iterations {
-                let keyPair = await keyStore.generateKeyPair()
+                let keyPair = try await keyStore.generateKeyPair()
                 await keyStore.store(keyPair: keyPair)
                 testKeys.append(keyPair.publicKey)
             }

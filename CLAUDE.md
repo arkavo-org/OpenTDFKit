@@ -1,5 +1,7 @@
 # OpenTDFKit Guide for Claude
 
+This is a production library.
+
 ## Commands
 ```bash
 # Format code

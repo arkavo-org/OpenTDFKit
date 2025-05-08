@@ -136,9 +136,6 @@ public actor KASService {
         case .secp521r1:
             let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: keyPair.publicKey)
             return try KasMetadata(resourceLocator: resourceLocator, publicKey: publicKey, curve: .secp521r1)
-
-        case .xsecp256k1:
-            throw KASServiceError.invalidCurve
         }
     }
 
@@ -233,9 +230,6 @@ public actor KASService {
             let privateKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData)
             let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
             sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
-
-        case .xsecp256k1:
-            throw KASServiceError.invalidCurve
         }
 
         // 2. Derive symmetric key for decryption
@@ -304,9 +298,6 @@ public actor KASService {
             let privateKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: newKeyPair.privateKey)
             let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
             newSharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
-
-        case .xsecp256k1:
-            throw KASServiceError.invalidCurve
         }
 
         // 6. Derive new symmetric key for encryption (using v13 format)
