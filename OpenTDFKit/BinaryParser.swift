@@ -130,11 +130,12 @@ public class BinaryParser {
         let signatureECCMode = Curve(rawValue: (byte & 0b0111_0000) >> 4)
         let cipher = Cipher(rawValue: byte & 0b0000_1111)
 
-        guard let signatureMode = signatureECCMode, let symmetricCipher = cipher else {
+        // FIXME: signatureECCMode can be nil if curve is not supported by SDK - secp256k1 0x03
+        guard let symmetricCipher = cipher else {
             return nil
         }
 
-        return SignatureAndPayloadConfig(signed: signed, signatureCurve: signatureMode, payloadCipher: symmetricCipher)
+        return SignatureAndPayloadConfig(signed: signed, signatureCurve: signatureECCMode, payloadCipher: symmetricCipher)
     }
 
     func readPolicyBinding(bindingMode: PolicyBindingConfig) -> Data? {
