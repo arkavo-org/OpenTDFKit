@@ -38,6 +38,7 @@ final class KASServiceTests: XCTestCase {
 
         // Verify the NanoTDF was created successfully
         XCTAssertNotNil(nanoTDF)
+        XCTAssertEqual(nanoTDF.header.toData()[2], Header.version, "NanoTDF header should be v13")
         XCTAssertEqual(nanoTDF.header.kas.body, kasMetadata.resourceLocator.body)
         XCTAssertNotNil(nanoTDF.payload.ciphertext)
 
@@ -122,6 +123,7 @@ final class KASServiceTests: XCTestCase {
             policy: &policy,
             plaintext: plaintext
         )
+        XCTAssertEqual(nanoTDF.header.toData()[2], Header.version, "NanoTDF header should be v13")
 
         // Extract the ephemeral public key from the NanoTDF
         let ephemeralPublicKey = nanoTDF.header.ephemeralPublicKey
