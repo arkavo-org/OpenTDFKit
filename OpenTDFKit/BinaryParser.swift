@@ -253,12 +253,11 @@ public class BinaryParser {
         }
 
         // Create a PayloadKeyAccess from the legacy KAS ResourceLocator
-        // For v12 format, create a dummy public key of the correct size based on curve
-        let dummyPublicKey = Data(count: policyBindingConfig.curve.publicKeyLength)
-
+        // For v12 format, the KAS public key is not present in the header.
+        // We represent this with an empty Data object for kasPublicKey.
         let payloadKeyAccess = PayloadKeyAccess(
             kasEndpointLocator: kas,
-            kasPublicKey: dummyPublicKey // For v12, create a dummy key of the right size
+            kasPublicKey: Data() // For v12, KAS public key is empty.
         )
 
         return Header(
