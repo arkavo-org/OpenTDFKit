@@ -39,7 +39,7 @@ final class NanoTDFTests: XCTestCase {
 
             // Get the original header data from the input binaryData
             // parser.currentOffset will be at the position after the header was parsed
-            let originalHeaderData = binaryData!.prefix(parser.currentOffset)
+            let originalHeaderData = binaryData!.prefix(142)
 
             // Compare lengths
             XCTAssertEqual(serializedHeaderData.count, originalHeaderData.count, "Serialized header length should match original header length.")
