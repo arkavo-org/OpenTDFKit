@@ -239,22 +239,33 @@ final class KeyStoreTests: XCTestCase {
         // 1. Create KeyStore with 100 keys
         let keyStore = KeyStore(curve: .secp256r1, capacity: 100)
         try await keyStore.generateAndStoreKeyPairs(count: 100)
-        XCTAssertEqual(await keyStore.getKeyCount(), 100)
+        let keyStoreCount = await keyStore.getKeyCount()
+        XCTAssertEqual(keyStoreCount, 100)
 
         // 2. Create a PublicKeyStore
         let publicKeyStore = await keyStore.exportPublicKeyStore()
         let publicKeysFromStore = await publicKeyStore.publicKeys
         XCTAssertEqual(publicKeysFromStore.count, 100)
 
+        let serialzed = await publicKeyStore.serialize()
+        let dePublicKeyStore = PublicKeyStore(curve: .secp256r1)
+        try await dePublicKeyStore.deserialize(from: serialzed)
+        let deKeyStoreCount = await dePublicKeyStore.publicKeys
+        XCTAssertEqual(deKeyStoreCount.count, 100)
+        
         // 3. Get a public key from said PublicKeyStore.
-        guard let aPublicKeyFromPublicKeyStore = publicKeysFromStore.first else {
-            XCTFail("PublicKeyStore should not be empty")
-            return
-        }
+        var aPublicKeyFromPublicKeyStore = try await dePublicKeyStore.getAndRemovePublicKey()
 
         // 4. Should be found in the original KeyStore
         let privateKey = await keyStore.getPrivateKey(forPublicKey: aPublicKeyFromPublicKeyStore)
         XCTAssertNotNil(privateKey, "The public key from PublicKeyStore should be found in the original KeyStore")
+        
+        aPublicKeyFromPublicKeyStore = try await publicKeyStore.getAndRemovePublicKey()
+        let dummyTdfPrivateKey = P256.KeyAgreement.PrivateKey()
+        let dummyTdfPublicKey = dummyTdfPrivateKey.publicKey.compressedRepresentation
+        
+        let symmetricKey = try await keyStore.derivePayloadSymmetricKey(kasPublicKey: aPublicKeyFromPublicKeyStore, tdfEphemeralPublicKey: dummyTdfPublicKey)
+        XCTAssertNotNil(symmetricKey, "The symmetric key from KeyStore should be found derived")
     }
 }
 
