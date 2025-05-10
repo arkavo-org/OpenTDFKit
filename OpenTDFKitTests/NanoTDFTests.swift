@@ -33,10 +33,24 @@ final class NanoTDFTests: XCTestCase {
         do {
             let header = try parser.parseHeader()
             print("Parsed Header:", header)
+
+            // Serialize the parsed header back to Data
+            let serializedHeaderData = header.toData()
+
+            // Get the original header data from the input binaryData
+            // parser.currentOffset will be at the position after the header was parsed
+            let originalHeaderData = binaryData!.prefix(parser.currentOffset)
+
+            // Compare lengths
+            XCTAssertEqual(serializedHeaderData.count, originalHeaderData.count, "Serialized header length should match original header length.")
+
+            // Compare byte content
+            XCTAssertEqual(serializedHeaderData, originalHeaderData, "Serialized header content should match original header content.")
+
             // KAS
             print("KAS:", header.kas.body)
             if header.kas.body != "kas.virtru.com" {
-                XCTFail("")
+                XCTFail("KAS body does not match expected value.")
             }
             // Ephemeral Key
             let ephemeralKeyHexString = header.ephemeralPublicKey.map { String(format: "%02x", $0) }.joined(separator: " ")
@@ -48,7 +62,7 @@ final class NanoTDFTests: XCTestCase {
             if ephemeralKeyHexString == compareHexString {
                 print("Ephemeral Key equals comparison string.")
             } else {
-                XCTFail("Ephemeral Key does not equal comparison string.")
+                XCTFail("Ephemeral Key does not equal comparison string. Actual: \(ephemeralKeyHexString), Expected: \(compareHexString)")
             }
         } catch {
             XCTFail("Failed to parse data: \(error)")
