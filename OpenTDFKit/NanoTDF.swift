@@ -392,13 +392,12 @@ public struct Header: Sendable {
     /// New code should use the primary initializer with `payloadKeyAccess`.
     @available(*, deprecated, message: "Use init(payloadKeyAccess:...) instead")
     public init(kas: ResourceLocator, policyBindingConfig: PolicyBindingConfig, payloadSignatureConfig: SignatureAndPayloadConfig, policy: Policy, ephemeralPublicKey: Data) {
-        // Convert the legacy KAS format to the new PayloadKeyAccess format
-        // For v12 format, we create a dummy public key of the correct size based on the curve
-        let dummyPublicKey = Data(count: policyBindingConfig.curve.publicKeyLength)
-
+        // Convert the legacy KAS format to the new PayloadKeyAccess format.
+        // For v12 format, the KAS public key is not present in the header.
+        // We represent this with an empty Data object for kasPublicKey.
         payloadKeyAccess = PayloadKeyAccess(
             kasEndpointLocator: kas,
-            kasPublicKey: dummyPublicKey // For v12, we create a dummy key of the right size
+            kasPublicKey: Data() // For v12, KAS public key is empty.
         )
         self.policyBindingConfig = policyBindingConfig
         self.payloadSignatureConfig = payloadSignatureConfig
