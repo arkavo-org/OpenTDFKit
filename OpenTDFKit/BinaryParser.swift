@@ -62,7 +62,7 @@ public class BinaryParser {
                 print("Failed to read Remote Policy binding")
                 return nil
             }
-            return Policy(type: .embeddedPlaintext, body: policyData, remote: nil, binding: binding)
+            return Policy(type: policyType, body: policyData, remote: nil, binding: binding)
         }
     }
 
@@ -130,11 +130,12 @@ public class BinaryParser {
         let signatureECCMode = Curve(rawValue: (byte & 0b0111_0000) >> 4)
         let cipher = Cipher(rawValue: byte & 0b0000_1111)
 
-        guard let signatureMode = signatureECCMode, let symmetricCipher = cipher else {
+        // FIXME: signatureECCMode can be nil if curve is not supported by SDK - secp256k1 0x03
+        guard let symmetricCipher = cipher else {
             return nil
         }
 
-        return SignatureAndPayloadConfig(signed: signed, signatureCurve: signatureMode, payloadCipher: symmetricCipher)
+        return SignatureAndPayloadConfig(signed: signed, signatureCurve: signatureECCMode, payloadCipher: symmetricCipher)
     }
 
     func readPolicyBinding(bindingMode: PolicyBindingConfig) -> Data? {
@@ -143,7 +144,7 @@ public class BinaryParser {
             = if bindingMode.ecdsaBinding
         {
             switch bindingMode.curve {
-            case .secp256r1, .xsecp256k1:
+            case .secp256r1:
                 64
             case .secp384r1:
                 96
@@ -159,16 +160,7 @@ public class BinaryParser {
     }
 
     func readPolicyKeyAccess(bindingMode: PolicyBindingConfig) -> PolicyKeyAccess? {
-        let keySize = switch bindingMode.curve {
-        case .secp256r1:
-            65
-        case .secp384r1:
-            97
-        case .secp521r1:
-            133
-        case .xsecp256k1:
-            65
-        }
+        let keySize = bindingMode.curve.publicKeyLength // Use compressed key length
 
         guard let resourceLocator = readResourceLocator(),
               let ephemeralPublicKey = read(length: keySize)
@@ -179,26 +171,67 @@ public class BinaryParser {
         return PolicyKeyAccess(resourceLocator: resourceLocator, ephemeralPublicKey: ephemeralPublicKey)
     }
 
-    public func parseHeader() throws -> Header {
-//        print("Starting to parse header")
+    /// Reads a PayloadKeyAccess structure and advances the cursor.
+    /// - Parameter version: The version of the NanoTDF format (v12 or v13)
+    /// - Returns: An initialized `PayloadKeyAccess` object if parsing is successful, otherwise `nil`.
+    func readPayloadKeyAccess(version: UInt8? = nil) -> PayloadKeyAccess? {
+        // 1. Parse KAS Endpoint Locator (ResourceLocator)
+        guard let kasEndpointLocator = readResourceLocator() else {
+            return nil
+        }
 
+        // 2. Read the curve byte
+        guard let curveByte = read(length: 1),
+              let curve = Curve(rawValue: curveByte[0])
+        else {
+            return nil
+        }
+
+        // For v12 format, we don't have a public key
+        if version == 0x4C { // v12 "L1L"
+            return PayloadKeyAccess(kasEndpointLocator: kasEndpointLocator, kasPublicKey: Data())
+        }
+
+        // For v13 format, read the key based on the curve size
+        let expectedPublicKeyLength = curve.publicKeyLength
+        guard expectedPublicKeyLength > 0 else { return nil }
+
+        // Read the public key
+        guard let kasPublicKey = read(length: expectedPublicKeyLength) else {
+            return nil
+        }
+
+        return PayloadKeyAccess(kasEndpointLocator: kasEndpointLocator, kasPublicKey: kasPublicKey)
+    }
+
+    public func parseHeader() throws -> Header {
+        // Read the Magic Number first
         guard let magicNumber = read(length: FieldSize.magicNumberSize) else {
             throw ParsingError.invalidFormat
         }
-//        print("Read Magic Number: \(magicNumber), Expected: \(Header.magicNumber)")
         guard magicNumber == Header.magicNumber else {
             throw ParsingError.invalidMagicNumber
         }
 
+        // Read the Version
         guard let versionData = read(length: FieldSize.versionSize) else {
             throw ParsingError.invalidFormat
         }
-        let versionDataInt = Int(versionData[0])
-        guard versionDataInt == Header.version else {
+        let version = versionData[0]
+
+        // Branch based on version
+        switch version {
+        case 0x4C: // v12 "L1L"
+            return try parseHeaderV12()
+        case 0x4D: // v13 "L1M"
+            return try parseHeaderV13()
+        default:
             throw ParsingError.invalidVersion
         }
-//        let version = versionData[0]
-//        print("Version: \(String(format: "%02X", version))")
+    }
+
+    private func parseHeaderV12() throws -> Header {
+        // Parse the legacy single-field ResourceLocator KAS for v12
         guard let kas = readResourceLocator(),
               let policyBindingConfig = readEccAndBindingMode(),
               let payloadSignatureConfig = readSymmetricAndPayloadConfig(),
@@ -214,15 +247,55 @@ public class BinaryParser {
             49
         case .secp521r1:
             67
-        case .xsecp256k1:
+        }
+        guard let ephemeralPublicKey = read(length: ephemeralPublicKeySize) else {
+            throw ParsingError.invalidFormat
+        }
+
+        // Create a PayloadKeyAccess from the legacy KAS ResourceLocator
+        // For v12 format, the KAS public key is not present in the header.
+        // We represent this with an empty Data object for kasPublicKey.
+        let payloadKeyAccess = PayloadKeyAccess(
+            kasEndpointLocator: kas,
+            kasPublicKey: Data() // For v12, KAS public key is empty.
+        )
+
+        return Header(
+            payloadKeyAccess: payloadKeyAccess,
+            policyBindingConfig: policyBindingConfig,
+            payloadSignatureConfig: payloadSignatureConfig,
+            policy: policy,
+            ephemeralPublicKey: ephemeralPublicKey
+        )
+    }
+
+    private func parseHeaderV13() throws -> Header {
+        // Parse the new three-field PayloadKeyAccess structure for v13
+        guard let payloadKeyAccess = readPayloadKeyAccess(version: 0x4D) else {
+            throw ParsingError.invalidKAS
+        }
+
+        guard let policyBindingConfig = readEccAndBindingMode(),
+              let payloadSignatureConfig = readSymmetricAndPayloadConfig(),
+              let policy = readPolicyField(bindingMode: policyBindingConfig)
+        else {
+            throw ParsingError.invalidFormat
+        }
+
+        let ephemeralPublicKeySize = switch policyBindingConfig.curve {
+        case .secp256r1:
             33
+        case .secp384r1:
+            49
+        case .secp521r1:
+            67
         }
         guard let ephemeralPublicKey = read(length: ephemeralPublicKeySize) else {
             throw ParsingError.invalidFormat
         }
 
         return Header(
-            kas: kas,
+            payloadKeyAccess: payloadKeyAccess,
             policyBindingConfig: policyBindingConfig,
             payloadSignatureConfig: payloadSignatureConfig,
             policy: policy,
@@ -266,10 +339,14 @@ public class BinaryParser {
         // cipherText
         let cipherTextLength = Int(length) - payloadMACSize - FieldSize.payloadIvSize
 //        print("cipherTextLength", cipherTextLength)
+        guard cipherTextLength >= 0 else {
+            throw ParsingError.invalidPayload("Calculated ciphertext length is negative")
+        }
+
         guard let ciphertext = read(length: cipherTextLength),
               let payloadMAC = read(length: payloadMACSize)
         else {
-            throw ParsingError.invalidPayload
+            throw ParsingError.invalidPayload("Failed to read ciphertext or payload MAC")
         }
         let payload = Payload(length: length, iv: iv, ciphertext: ciphertext, mac: payloadMAC)
         return payload
@@ -283,7 +360,7 @@ public class BinaryParser {
         let signatureLength: Int
 //        print("config.signatureECCMode", config)
         switch config.signatureCurve {
-        case .secp256r1, .xsecp256k1:
+        case .secp256r1:
             publicKeyLength = 33
             signatureLength = 64
         case .secp384r1:
@@ -335,7 +412,7 @@ public enum ParsingError: Error {
     case invalidPayloadSigMode
     case invalidPolicy
     case invalidEphemeralKey
-    case invalidPayload
+    case invalidPayload(String = "Invalid payload")
     case invalidPublicKeyLength
     case invalidSignatureLength
     case invalidSigning

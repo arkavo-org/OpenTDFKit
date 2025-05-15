@@ -5,7 +5,7 @@ let package = Package(
     name: "OpenTDFKit",
     platforms: [
         .iOS(.v18),
-        .macOS(.v15),
+        .macOS(.v14),
         .tvOS(.v18),
         .watchOS(.v11),
     ],
@@ -14,6 +14,10 @@ let package = Package(
             name: "OpenTDFKit",
             targets: ["OpenTDFKit"]
         ),
+        .executable(
+            name: "OpenTDFKitProfiler",
+            targets: ["OpenTDFKitProfiler"]
+        ),
     ],
     dependencies: [],
     targets: [
@@ -21,6 +25,11 @@ let package = Package(
             name: "OpenTDFKit",
             dependencies: [],
             path: "OpenTDFKit"
+        ),
+        .executableTarget(
+            name: "OpenTDFKitProfiler",
+            dependencies: ["OpenTDFKit"],
+            path: "OpenTDFKitProfiler"
         ),
         .testTarget(
             name: "OpenTDFKitTests",

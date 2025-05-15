@@ -81,7 +81,7 @@ extension CryptoHelper {
         // Derive symmetric key
         let symmetricKey = deriveSymmetricKey(
             sharedSecret: sharedSecret,
-            salt: Data("L1L".utf8),
+            salt: Data("L1M".utf8), // Updated to v13 salt
             info: Data("encryption".utf8),
             outputByteCount: 32
         )
@@ -128,7 +128,7 @@ extension CryptoHelper {
         // Derive symmetric key
         let symmetricKey = deriveSymmetricKey(
             sharedSecret: sharedSecret,
-            salt: Data("L1L".utf8),
+            salt: Data("L1M".utf8), // Updated to v13 salt
             info: Data("encryption".utf8),
             outputByteCount: 32
         )
