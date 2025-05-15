@@ -121,13 +121,14 @@ final class KeyStoreTests: XCTestCase {
         let clientEphemeralKeyPair = try await generateClientEphemeralKeyPair(curve: curve)
 
         // Action
-        let derivedSymKeyData = try await keyStore.derivePayloadSymmetricKey(
+        let derivedSymKey = try await keyStore.derivePayloadSymmetricKey(
             kasPublicKey: kasStoredKeyPair.publicKey,
             tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey
         )
 
         // Assertions
-        XCTAssertEqual(derivedSymKeyData.count, 32, "Derived symmetric key should be 32 bytes for AES-256")
+        // Can't check size of SymmetricKey directly, but we can verify it works for decryption
+        XCTAssertNotNil(derivedSymKey, "Derived symmetric key should not be nil")
 
         // Manual derivation for comparison
         let kasPrivKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: kasStoredKeyPair.privateKey)
@@ -139,7 +140,10 @@ final class KeyStoreTests: XCTestCase {
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
-        XCTAssertEqual(derivedSymKeyData, expectedSymKey.withUnsafeBytes { Data($0) })
+        // Convert both to data for comparison
+        let derivedSymKeyData = derivedSymKey.withUnsafeBytes { Data($0) }
+        let expectedSymKeyData = expectedSymKey.withUnsafeBytes { Data($0) }
+        XCTAssertEqual(derivedSymKeyData, expectedSymKeyData)
     }
 
     func testDerivePayloadSymmetricKey_Secp384r1_Success() async throws {
@@ -154,13 +158,13 @@ final class KeyStoreTests: XCTestCase {
         let clientEphemeralKeyPair = try await generateClientEphemeralKeyPair(curve: curve)
 
         // Action
-        let derivedSymKeyData = try await keyStore.derivePayloadSymmetricKey(
+        let derivedSymKey = try await keyStore.derivePayloadSymmetricKey(
             kasPublicKey: kasStoredKeyPair.publicKey,
             tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey
         )
 
         // Assertions
-        XCTAssertEqual(derivedSymKeyData.count, 32, "Derived symmetric key should be 32 bytes for AES-256")
+        XCTAssertNotNil(derivedSymKey, "Derived symmetric key should not be nil")
 
         // Manual derivation for comparison
         let kasPrivKey = try P384.KeyAgreement.PrivateKey(rawRepresentation: kasStoredKeyPair.privateKey)
@@ -172,7 +176,10 @@ final class KeyStoreTests: XCTestCase {
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
-        XCTAssertEqual(derivedSymKeyData, expectedSymKey.withUnsafeBytes { Data($0) })
+        // Convert both to data for comparison
+        let derivedSymKeyData = derivedSymKey.withUnsafeBytes { Data($0) }
+        let expectedSymKeyData = expectedSymKey.withUnsafeBytes { Data($0) }
+        XCTAssertEqual(derivedSymKeyData, expectedSymKeyData)
     }
 
     func testDerivePayloadSymmetricKey_Secp521r1_Success() async throws {
@@ -187,13 +194,13 @@ final class KeyStoreTests: XCTestCase {
         let clientEphemeralKeyPair = try await generateClientEphemeralKeyPair(curve: curve)
 
         // Action
-        let derivedSymKeyData = try await keyStore.derivePayloadSymmetricKey(
+        let derivedSymKey = try await keyStore.derivePayloadSymmetricKey(
             kasPublicKey: kasStoredKeyPair.publicKey,
             tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey
         )
 
         // Assertions
-        XCTAssertEqual(derivedSymKeyData.count, 32, "Derived symmetric key should be 32 bytes for AES-256")
+        XCTAssertNotNil(derivedSymKey, "Derived symmetric key should not be nil")
 
         // Manual derivation for comparison
         let kasPrivKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: kasStoredKeyPair.privateKey)
@@ -205,7 +212,10 @@ final class KeyStoreTests: XCTestCase {
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
-        XCTAssertEqual(derivedSymKeyData, expectedSymKey.withUnsafeBytes { Data($0) })
+        // Convert both to data for comparison
+        let derivedSymKeyData = derivedSymKey.withUnsafeBytes { Data($0) }
+        let expectedSymKeyData = expectedSymKey.withUnsafeBytes { Data($0) }
+        XCTAssertEqual(derivedSymKeyData, expectedSymKeyData)
     }
 
     func testDerivePayloadSymmetricKey_KasKeyNotFound() async throws {
@@ -252,18 +262,18 @@ final class KeyStoreTests: XCTestCase {
         try await dePublicKeyStore.deserialize(from: serialzed)
         let deKeyStoreCount = await dePublicKeyStore.publicKeys
         XCTAssertEqual(deKeyStoreCount.count, 100)
-        
+
         // 3. Get a public key from said PublicKeyStore.
         var aPublicKeyFromPublicKeyStore = try await dePublicKeyStore.getAndRemovePublicKey()
 
         // 4. Should be found in the original KeyStore
         let privateKey = await keyStore.getPrivateKey(forPublicKey: aPublicKeyFromPublicKeyStore)
         XCTAssertNotNil(privateKey, "The public key from PublicKeyStore should be found in the original KeyStore")
-        
+
         aPublicKeyFromPublicKeyStore = try await publicKeyStore.getAndRemovePublicKey()
         let dummyTdfPrivateKey = P256.KeyAgreement.PrivateKey()
         let dummyTdfPublicKey = dummyTdfPrivateKey.publicKey.compressedRepresentation
-        
+
         let symmetricKey = try await keyStore.derivePayloadSymmetricKey(kasPublicKey: aPublicKeyFromPublicKeyStore, tdfEphemeralPublicKey: dummyTdfPublicKey)
         XCTAssertNotNil(symmetricKey, "The symmetric key from KeyStore should be found derived")
     }

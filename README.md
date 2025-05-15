@@ -12,23 +12,23 @@ After obtaining the symmetric key, decrypt the NanoTDF payload:
 let decryptedData = try nanoTDF.getPayloadPlaintext(symmetricKey: symmetricKey)
 ```
 
-### Unwrap Keys from Shared PublicKeyStore
+### Decrypt NanoTDF with KeyStore
 
-For NanoTDFs created with keys from a shared PublicKeyStore:
+For decrypting NanoTDFs using a KeyStore containing the appropriate private key:
 
 ```swift
-// Extract the ephemeral public key from PolicyKeyAccess
-let ephemeralPublicKey = policyKeyAccess.ephemeralPublicKey
-let encryptedKey = encryptedKeyData
+// Most efficient way - single line decryption
+let decryptedData = try await nanoTDF.getPlaintext(using: keyStore)
+```
 
-// Unwrap the key using the KeyStore containing the matching private key
-let symmetricKey = try await keyStore.rewrapKey(
-    ephemeralPublicKey: ephemeralPublicKey,
-    encryptedKey: encryptedKey
-)
+You can also use the stepped approach if you need access to the symmetric key:
 
-// Use the unwrapped key to decrypt the payload
-let decryptedData = try nanoTDF.getPayloadPlaintext(symmetricKey: symmetricKey)
+```swift
+// Step 1: Derive the symmetric key using the header
+let symmetricKey = try await keyStore.derivePayloadSymmetricKey(header: nanoTDF.header)
+
+// Step 2: Use the symmetric key to decrypt the payload
+let decryptedData = try await nanoTDF.getPayloadPlaintext(symmetricKey: symmetricKey)
 ```
 
 ### Create NanoTDF

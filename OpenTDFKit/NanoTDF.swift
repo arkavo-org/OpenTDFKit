@@ -11,6 +11,19 @@ public struct NanoTDF: Sendable {
     /// An optional signature section for verifying the integrity and authenticity of the header and payload.
     public var signature: Signature?
 
+    /// Decrypts the NanoTDF payload using a KeyStore and returns the plaintext.
+    /// This is a convenience method that combines key derivation and payload decryption.
+    /// - Parameter keyStore: The KeyStore containing the private key corresponding to the KAS public key in the header.
+    /// - Returns: The decrypted plaintext data.
+    /// - Throws: KeyStoreError, CryptoHelper errors, or other cryptographic errors.
+    public func getPlaintext(using keyStore: KeyStore) async throws -> Data {
+        // 1. Derive the symmetric key from the header information
+        let symmetricKey = try await keyStore.derivePayloadSymmetricKey(header: header)
+
+        // 2. Use the symmetric key to decrypt the payload
+        return try await getPayloadPlaintext(symmetricKey: symmetricKey)
+    }
+
     /// Initializes a NanoTDF object.
     /// - Parameters:
     ///   - header: The `Header` struct.

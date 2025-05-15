@@ -222,17 +222,30 @@ public actor KeyStore {
     /// This function assumes the KeyStore holds the KAS's private key.
     ///
     /// - Parameters:
-    ///   - kasPublicKeyForLookup: The public key of the KAS, used to retrieve its private key from this KeyStore.
-    ///                            This corresponds to `header.payloadKeyAccess.kasPublicKey`.
-    ///   - clientEphemeralPublicKey: The ephemeral public key from the NanoTDF Header's main ephemeral key field.
-    ///                               This corresponds to `header.ephemeralPublicKey`.
-    ///   - curve: The elliptic curve used for the key agreement (e.g., from `header.payloadKeyAccess.kasKeyCurve`).
-    /// - Returns: The derived symmetric key for AES-256-GCM as Data.
+    ///   - header: The NanoTDF header containing the necessary keys for decryption.
+    /// - Returns: The derived symmetric key for AES-256-GCM as SymmetricKey.
+    /// - Throws: KeyStoreError or other errors if key derivation fails.
+    public func derivePayloadSymmetricKey(header: Header) async throws -> SymmetricKey {
+        let kasPublicKey = header.payloadKeyAccess.kasPublicKey
+        let tdfEphemeralPublicKey = header.ephemeralPublicKey
+
+        return try await derivePayloadSymmetricKey(kasPublicKey: kasPublicKey, tdfEphemeralPublicKey: tdfEphemeralPublicKey)
+    }
+
+    /// Derives the symmetric key for NanoTDF v13 payload decryption using ECDH.
+    /// This function assumes the KeyStore holds the KAS's private key.
+    ///
+    /// - Parameters:
+    ///   - kasPublicKey: The public key of the KAS, used to retrieve its private key from this KeyStore.
+    ///                   This corresponds to `header.payloadKeyAccess.kasPublicKey`.
+    ///   - tdfEphemeralPublicKey: The ephemeral public key from the NanoTDF Header's main ephemeral key field.
+    ///                            This corresponds to `header.ephemeralPublicKey`.
+    /// - Returns: The derived symmetric key for AES-256-GCM as SymmetricKey.
     /// - Throws: KeyStoreError or other errors if key derivation fails.
     public func derivePayloadSymmetricKey(
         kasPublicKey: Data,
-        tdfEphemeralPublicKey: Data,
-    ) async throws -> Data {
+        tdfEphemeralPublicKey: Data
+    ) async throws -> SymmetricKey {
         // 1. Get the KAS's private key from this KeyStore
         // The kasPublicKeyForLookup is the KAS's own public key, used to identify its private key.
         guard let kasPrivateKeyData = getPrivateKey(forPublicKey: kasPublicKey) else {
@@ -271,8 +284,7 @@ public actor KeyStore {
             outputByteCount: 32 // For AES-256
         )
 
-        // Convert SymmetricKey to Data
-        return symmetricKeyCryptoKit.withUnsafeBytes { Data($0) }
+        return symmetricKeyCryptoKit
     }
 
     // MARK: - One-Time TDF Extensions
