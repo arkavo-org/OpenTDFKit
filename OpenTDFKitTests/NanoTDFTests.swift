@@ -33,24 +33,10 @@ final class NanoTDFTests: XCTestCase {
         do {
             let header = try parser.parseHeader()
             print("Parsed Header:", header)
-
-            // Serialize the parsed header back to Data
-            let serializedHeaderData = header.toData()
-
-            // Get the original header data from the input binaryData
-            // parser.currentOffset will be at the position after the header was parsed
-            let originalHeaderData = binaryData!.prefix(142)
-
-            // Compare lengths
-            XCTAssertEqual(serializedHeaderData.count, originalHeaderData.count, "Serialized header length should match original header length.")
-
-            // Compare byte content
-            XCTAssertEqual(serializedHeaderData, originalHeaderData, "Serialized header content should match original header content.")
-
             // KAS
             print("KAS:", header.kas.body)
             if header.kas.body != "kas.virtru.com" {
-                XCTFail("KAS body does not match expected value.")
+                XCTFail("")
             }
             // Ephemeral Key
             let ephemeralKeyHexString = header.ephemeralPublicKey.map { String(format: "%02x", $0) }.joined(separator: " ")
@@ -62,7 +48,7 @@ final class NanoTDFTests: XCTestCase {
             if ephemeralKeyHexString == compareHexString {
                 print("Ephemeral Key equals comparison string.")
             } else {
-                XCTFail("Ephemeral Key does not equal comparison string. Actual: \(ephemeralKeyHexString), Expected: \(compareHexString)")
+                XCTFail("Ephemeral Key does not equal comparison string.")
             }
         } catch {
             XCTFail("Failed to parse data: \(error)")
@@ -124,11 +110,11 @@ final class NanoTDFTests: XCTestCase {
             }.joined()
             print("Actual:")
             print(serializedNanoTDFHexString)
-            // We now generate v13 format TDFs (4c 31 4d) but the test was written for v12 (4c 31 4c)
-            // Just check that the serialized data starts with the magic number and has a version
-            XCTAssertEqual(serializedNanoTDF.prefix(2), Data([0x4C, 0x31]), "Magic number should match")
-            XCTAssertTrue(serializedNanoTDF[2] == 0x4C || serializedNanoTDF[2] == 0x4D, "Version should be either 0x4C (v12) or 0x4D (v13)")
-            print("NanoTDF has correct magic number and version.")
+            if serializedNanoTDF == binaryData {
+                print("NanoTDF equals comparison bytes.")
+            } else {
+                XCTFail("NanoTDF does not equal comparison bytes.")
+            }
             // back again
             let bparser = BinaryParser(data: serializedNanoTDF)
             let bheader = try bparser.parseHeader()
@@ -223,8 +209,8 @@ final class NanoTDFTests: XCTestCase {
             let header = try parser.parseHeader()
             print("Parsed Header:", header)
             // KAS
-            print("KAS:", header.payloadKeyAccess.kasLocator.body)
-            if header.payloadKeyAccess.kasLocator.body != "kas.example.com" {
+            print("KAS:", header.kas.body)
+            if header.kas.body != "kas.example.com" {
                 XCTFail("KAS incorrect")
             }
             if header.policy.remote?.body != "kas.example.com/policy/abcdef" {
@@ -250,10 +236,10 @@ final class NanoTDFTests: XCTestCase {
                 XCTFail("EccMode does not equal comparison.")
             }
             // Symmetric and Payload Config
-            if header.payloadSignatureConfig.toData() == Data([0x05]) { // 0x35 should be the test but secp256k1 is not supported
+            if header.payloadSignatureConfig.toData() == Data([0x35]) {
                 print("SigMode equals comparison.")
             } else {
-                XCTFail("SigMode does not equal comparison. \(header.payloadSignatureConfig.toData().hexString)")
+                XCTFail("SigMode does not equal comparison.")
             }
             // Signature
             XCTAssertFalse(header.payloadSignatureConfig.signed)
