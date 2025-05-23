@@ -46,30 +46,52 @@ public class BinaryParser {
         switch policyType {
         case .remote:
             guard let resourceLocator = readResourceLocator() else {
-                print("Failed to read Remote Policy resource locator")
                 return nil
+            }
+            // Read salt if present
+            var salt: Data?
+            guard let saltLengthData = read(length: 1) else {
+                return nil
+            }
+            let saltLength = Int(saltLengthData[0])
+            if saltLength > 0 {
+                guard let saltData = read(length: saltLength) else {
+                    return nil
+                }
+                salt = saltData
             }
             // Binding
             guard let binding = readPolicyBinding(bindingMode: bindingMode) else {
-                print("Failed to read Remote Policy binding")
                 return nil
             }
-            return Policy(type: .remote, body: nil, remote: resourceLocator, binding: binding)
+            return Policy(type: .remote, body: nil, remote: resourceLocator, binding: binding, salt: salt)
         case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
-            let policyData = readEmbeddedPolicyBody(policyType: policyType, bindingMode: bindingMode)
-            // Binding
-            guard let binding = readPolicyBinding(bindingMode: bindingMode) else {
-                print("Failed to read Remote Policy binding")
+            guard let policyData = readEmbeddedPolicyBody(policyType: policyType, bindingMode: bindingMode) else {
                 return nil
             }
-            return Policy(type: policyType, body: policyData, remote: nil, binding: binding)
+            // Read salt if present
+            var salt: Data?
+            guard let saltLengthData = read(length: 1) else {
+                return nil
+            }
+            let saltLength = Int(saltLengthData[0])
+            if saltLength > 0 {
+                guard let saltData = read(length: saltLength) else {
+                    return nil
+                }
+                salt = saltData
+            }
+            // Binding
+            guard let binding = readPolicyBinding(bindingMode: bindingMode) else {
+                return nil
+            }
+            return Policy(type: policyType, body: policyData, remote: nil, binding: binding, salt: salt)
         }
     }
 
     private func readEmbeddedPolicyBody(policyType: Policy.PolicyType, bindingMode: PolicyBindingConfig) -> EmbeddedPolicyBody? {
         guard let contentLengthData = read(length: 2)
         else {
-            print("Failed to read Embedded Policy content length")
             return nil
         }
         let plaintextCiphertextLengthData = contentLengthData.prefix(2) // contentLengthData.first
@@ -86,7 +108,6 @@ public class BinaryParser {
         }
 
         guard let plaintextCiphertext = read(length: Int(contentLength)) else {
-            print("Failed to read Embedded Policy plaintext / ciphertext")
             return nil
         }
         // Policy Key Access
@@ -99,16 +120,15 @@ public class BinaryParser {
         guard let eccAndBindingModeData = read(length: 1),
               let eccAndBindingMode = eccAndBindingModeData.first
         else {
-            print("Failed to read BindingMode")
             return nil
         }
 //        let eccModeHex = String(format: "%02x", eccAndBindingMode)
 //        print("ECC Mode Hex:", eccModeHex)
         let ecdsaBinding = (eccAndBindingMode & (1 << 7)) != 0
-        let ephemeralECCParamsEnumValue = Curve(rawValue: eccAndBindingMode & 0x7)
+        let curveRawValue = eccAndBindingMode & 0x7
+        let ephemeralECCParamsEnumValue = Curve(rawValue: curveRawValue)
 
         guard let ephemeralECCParamsEnum = ephemeralECCParamsEnumValue else {
-            print("Unsupported Ephemeral ECC Params Enum value")
             return nil
         }
 

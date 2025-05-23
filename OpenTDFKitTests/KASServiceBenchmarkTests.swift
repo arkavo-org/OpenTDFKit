@@ -48,7 +48,7 @@ final class KASServiceBenchmarkTests: XCTestCase {
             let kasPublicKey = try kasMetadata.getPublicKey()
 
             // Get private key directly from the KeyStore
-            guard let privateKey = await keyStore.getPrivateKey(forPublicKey: kasPublicKey) else {
+            guard await keyStore.getPrivateKey(forPublicKey: kasPublicKey) != nil else {
                 print("Failed to retrieve private key for \(curve)")
                 continue
             }

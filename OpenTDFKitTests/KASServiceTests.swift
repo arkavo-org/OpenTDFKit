@@ -60,10 +60,13 @@ final class KASServiceTests: XCTestCase {
         // Generate shared secret
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
 
+        // Extract salt from the NanoTDF's policy
+        let salt = nanoTDF.header.policy.salt ?? Data("L1L".utf8)
+
         // Derive symmetric key using the same parameters as in createNanoTDF
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1L".utf8),
+            salt: salt,
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
@@ -139,11 +142,14 @@ final class KASServiceTests: XCTestCase {
         let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData!)
         let clientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
 
+        // Extract salt from the NanoTDF's policy
+        let salt = nanoTDF.header.policy.salt ?? Data("L1L".utf8)
+
         // Derive the same shared secret that would be used in the TDF creation
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
         let derivedSymmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1L".utf8),
+            salt: salt,
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
@@ -164,7 +170,8 @@ final class KASServiceTests: XCTestCase {
         let rewrappedKey = try await kasService.processKeyAccess(
             ephemeralPublicKey: ephemeralPublicKey,
             encryptedKey: encryptedKey,
-            kasPublicKey: kasPublicKey
+            kasPublicKey: kasPublicKey,
+            salt: salt
         )
 
         // Verify the rewrapped key is not empty
@@ -215,17 +222,24 @@ final class KASServiceTests: XCTestCase {
         let clientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: nanoTDF.header.ephemeralPublicKey)
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
 
+        // Extract salt from the NanoTDF's policy
+        let salt = nanoTDF.header.policy.salt ?? Data("L1L".utf8)
+
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1L".utf8),
+            salt: salt,
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
 
+        // Get the actual policy body data that was used for binding
+        // For embedded policies, this includes the serialized EmbeddedPolicyBody
+        let policyBodyData = nanoTDF.header.policy.body!.toData()
+
         // Verify the binding
         let isValid = try await kasService.verifyPolicyBinding(
             policyBinding: policyBinding!,
-            policyData: policyData,
+            policyData: policyBodyData,
             symmetricKey: symmetricKey
         )
 
@@ -235,7 +249,7 @@ final class KASServiceTests: XCTestCase {
         let invalidBinding = Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08])
         let isInvalid = try await kasService.verifyPolicyBinding(
             policyBinding: invalidBinding,
-            policyData: policyData,
+            policyData: policyBodyData,
             symmetricKey: symmetricKey
         )
 

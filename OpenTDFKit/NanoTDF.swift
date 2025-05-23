@@ -33,14 +33,14 @@ public struct NanoTDF: Sendable {
             tag: payload.mac
         )
     }
-    
+
     // New method that handles salt-based key derivation
     public func getPayloadPlaintext(withSharedSecret sharedSecret: SharedSecret) async throws -> Data {
         let cryptoHelper = CryptoHelper()
-        
+
         // Extract salt from policy (or use default if not available for backward compatibility)
         let salt = header.policy.salt ?? Data("L1L".utf8)
-        
+
         // Derive symmetric key using the same salt that was used for encryption
         let symmetricKey = await cryptoHelper.deriveSymmetricKey(
             sharedSecret: sharedSecret,
@@ -48,7 +48,7 @@ public struct NanoTDF: Sendable {
             info: Data("encryption".utf8),
             outputByteCount: 32
         )
-        
+
         return try await getPayloadPlaintext(symmetricKey: symmetricKey)
     }
 }
@@ -79,7 +79,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
         info: Data("encryption".utf8),
         outputByteCount: 32
     )
-    
+
     // Store salt in policy for use during decryption
     policy.salt = salt
 
@@ -156,6 +156,7 @@ public struct Header: Sendable {
     public static let magicNumber = Data([0x4C, 0x31]) // 0x4C31 (L1L) - first 18 bits
     public static let version: UInt8 = 0x4D // "M" (upgraded from 0x4C "L")
     public let kas: ResourceLocator
+    public let payloadKeyAccess: PayloadKeyAccess
     public let policyBindingConfig: PolicyBindingConfig
     public var payloadSignatureConfig: SignatureAndPayloadConfig
     public let policy: Policy
@@ -163,6 +164,16 @@ public struct Header: Sendable {
 
     public init(kas: ResourceLocator, policyBindingConfig: PolicyBindingConfig, payloadSignatureConfig: SignatureAndPayloadConfig, policy: Policy, ephemeralPublicKey: Data) {
         self.kas = kas
+        payloadKeyAccess = PayloadKeyAccess(kasEndpointLocator: kas, kasPublicKey: Data())
+        self.policyBindingConfig = policyBindingConfig
+        self.payloadSignatureConfig = payloadSignatureConfig
+        self.policy = policy
+        self.ephemeralPublicKey = ephemeralPublicKey
+    }
+
+    public init(payloadKeyAccess: PayloadKeyAccess, policyBindingConfig: PolicyBindingConfig, payloadSignatureConfig: SignatureAndPayloadConfig, policy: Policy, ephemeralPublicKey: Data) {
+        kas = payloadKeyAccess.kasEndpointLocator
+        self.payloadKeyAccess = payloadKeyAccess
         self.policyBindingConfig = policyBindingConfig
         self.payloadSignatureConfig = payloadSignatureConfig
         self.policy = policy
@@ -173,7 +184,21 @@ public struct Header: Sendable {
         var data = Data()
         data.append(Header.magicNumber)
         data.append(Header.version)
+
+        // For v13 format, serialize PayloadKeyAccess format:
+        // 1. KAS endpoint locator
         data.append(kas.toData())
+        // 2. Curve byte (using the curve from policyBindingConfig)
+        data.append(policyBindingConfig.curve.rawValue)
+        // 3. KAS public key (based on curve size)
+        if !payloadKeyAccess.kasPublicKey.isEmpty {
+            data.append(payloadKeyAccess.kasPublicKey)
+        } else {
+            // If no KAS public key, append zeros based on expected size
+            let keySize = policyBindingConfig.curve.publicKeyLength
+            data.append(Data(repeating: 0, count: keySize))
+        }
+
         data.append(policyBindingConfig.toData())
         data.append(payloadSignatureConfig.toData())
         data.append(policy.toData())
@@ -341,6 +366,16 @@ public struct Policy: Sendable {
     }
 }
 
+public struct PayloadKeyAccess: Sendable {
+    public let kasEndpointLocator: ResourceLocator
+    public let kasPublicKey: Data
+
+    public init(kasEndpointLocator: ResourceLocator, kasPublicKey: Data) {
+        self.kasEndpointLocator = kasEndpointLocator
+        self.kasPublicKey = kasPublicKey
+    }
+}
+
 public struct EmbeddedPolicyBody: Sendable {
     public let body: Data
     public let keyAccess: PolicyKeyAccess?
@@ -379,9 +414,6 @@ public enum Curve: UInt8, Sendable {
     case secp256r1 = 0x00
     case secp384r1 = 0x01
     case secp521r1 = 0x02
-    // BEGIN in-spec unsupported
-    case xsecp256k1 = 0x03
-    // END in-spec unsupported
 }
 
 public enum Cipher: UInt8, Sendable {
@@ -459,8 +491,6 @@ public struct KasMetadata: Sendable {
                 throw CryptoHelperError.unsupportedCurve
             }
             publicKeyType = .p521(key.compressedRepresentation)
-        case .xsecp256k1:
-            throw CryptoHelperError.unsupportedCurve
         }
     }
 

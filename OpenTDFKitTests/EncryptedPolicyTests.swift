@@ -2,6 +2,12 @@ import CryptoKit
 @testable import OpenTDFKit
 import XCTest
 
+extension Data {
+    func hexEncodedString() -> String {
+        map { String(format: "%02hhx", $0) }.joined()
+    }
+}
+
 final class EncryptedPolicyTests: XCTestCase {
     func testEmbeddedPlaintextPolicy() async throws {
         // Create KAS ResourceLocator

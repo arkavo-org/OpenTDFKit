@@ -136,7 +136,7 @@ actor CryptoHelper {
 
     /// Generates a new ephemeral key pair for the specified elliptic curve.
     /// - Parameter curveType: The `Curve` enum value specifying the desired curve (e.g., `.secp256r1`).
-    /// - Returns: An `EphemeralKeyPair` containing the raw private key and compressed public key data, or `nil` if the curve is unsupported (`.xsecp256k1`).
+    /// - Returns: An `EphemeralKeyPair` containing the raw private key and compressed public key data, or `nil` if the curve is unsupported.
     func generateEphemeralKeyPair(curveType: Curve) -> EphemeralKeyPair? {
         switch curveType {
         case .secp256r1:
@@ -219,8 +219,10 @@ actor CryptoHelper {
     /// - Returns: The calculated GMAC tag as `Data`.
     /// - Throws: `CryptoKitError` if the AES-GCM seal operation fails.
     func createGMACBinding(policyBody: Data, symmetricKey: SymmetricKey) throws -> Data {
+        // Use a fixed nonce (all zeros) for deterministic GMAC generation
+        let nonce = try AES.GCM.Nonce(data: Data(repeating: 0, count: 12))
         // Seal empty data, authenticating the policyBody. The tag is the GMAC binding.
-        let sealedBox = try AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyBody)
+        let sealedBox = try AES.GCM.seal(Data(), using: symmetricKey, nonce: nonce, authenticating: policyBody)
         return sealedBox.tag
     }
 

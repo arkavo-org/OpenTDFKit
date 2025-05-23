@@ -29,6 +29,10 @@ public final class PublicKeyStore: Sendable {
         func clear() {
             keys.removeAll()
         }
+
+        func getCount() -> Int {
+            keys.count
+        }
     }
 
     private let store = InternalStore()
@@ -147,6 +151,12 @@ public final class PublicKeyStore: Sendable {
             let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: publicKeyData)
             return try KasMetadata(resourceLocator: resourceLocator, publicKey: publicKey, curve: .secp521r1)
         }
+    }
+
+    /// Get the number of public keys currently stored
+    /// - Returns: The count of public keys
+    public func getCount() async -> Int {
+        await store.getCount()
     }
 }
 

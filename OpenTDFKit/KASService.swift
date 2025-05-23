@@ -136,9 +136,6 @@ public actor KASService {
         case .secp521r1:
             let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: keyPair.publicKey)
             return try KasMetadata(resourceLocator: resourceLocator, publicKey: publicKey, curve: .secp521r1)
-
-        case .xsecp256k1:
-            throw KASServiceError.invalidCurve
         }
     }
 
@@ -209,11 +206,13 @@ public actor KASService {
     ///   - ephemeralPublicKey: Client's ephemeral public key
     ///   - encryptedKey: The encrypted key to unwrap
     ///   - kasPublicKey: The KAS public key that was used for encryption
+    ///   - salt: The salt used for key derivation (defaults to "L1L" for backward compatibility)
     /// - Returns: Rewrapped key data
     public func processKeyAccess(
         ephemeralPublicKey: Data,
         encryptedKey: Data,
-        kasPublicKey: Data
+        kasPublicKey: Data,
+        salt: Data? = nil
     ) async throws -> Data {
         // 1. Get the KAS private key corresponding to the KAS public key
         guard let privateKeyData = await keyStore.getPrivateKey(forPublicKey: kasPublicKey) else {
@@ -238,15 +237,12 @@ public actor KASService {
             let privateKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData)
             let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
             sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
-
-        case .xsecp256k1:
-            throw KASServiceError.invalidCurve
         }
 
         // 3. Derive symmetric key for decryption
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1L".utf8),
+            salt: salt ?? Data("L1L".utf8),
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
@@ -290,15 +286,12 @@ public actor KASService {
             let privateKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: newKeyPair.privateKey)
             let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
             newSharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
-
-        case .xsecp256k1:
-            throw KASServiceError.invalidCurve
         }
 
         // 7. Derive new symmetric key for encryption
         let newSymmetricKey = newSharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1L".utf8),
+            salt: salt ?? Data("L1L".utf8),
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
@@ -332,8 +325,10 @@ public actor KASService {
         policyData: Data,
         symmetricKey: SymmetricKey
     ) async throws -> Bool {
+        // Use a fixed nonce (all zeros) for deterministic GMAC generation (same as createGMACBinding)
+        let nonce = try AES.GCM.Nonce(data: Data(repeating: 0, count: 12))
         // For GMAC binding verification, create a tag with empty ciphertext and the policy data as authenticated data
-        let expectedTag = try AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyData).tag
+        let expectedTag = try AES.GCM.seal(Data(), using: symmetricKey, nonce: nonce, authenticating: policyData).tag
         return policyBinding == expectedTag
     }
 }

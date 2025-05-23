@@ -69,7 +69,7 @@ and a high level diagram is present after the table below.
 
 | Section              | Minimum Length (B)  | Maximum Length (B)  |
 |----------------------|---------------------|---------------------|
-| Header               | 78                  | 654                 |
+| Header               | 87                  | 1042                |
 | Payload              | 14                  | 16,777,218          |
 | Signature (Optional) | 97                  | 133                 |
 
@@ -89,7 +89,7 @@ structured as follows:
 | KAS                    | 37                  | 325                 |
 | ECC Mode               | 1                   | 1                   |
 | Payload + Sig Mode     | 1                   | 1                   |
-| Policy                 | 3                   | 257                 |
+| Policy                 | 12                  | 645                 |
 | Ephemeral Key          | 33                  | 67                  |
 
 ##### 3.3.1.1 Magic Number + Version
@@ -106,6 +106,11 @@ number are (`V`'s represent the space for the version number):
 This version of the NanoTDF specification defines the 6-bit version as 13 (binary `001101`).
 The complete 3-byte "Magic Number + Version" for this specification is `4C 31 4D` (hex), which is `TDFN` when base64 encoded.
 Implementations parsing NanoTDFs should check this version. Earlier versions (e.g., version 12, `L1L`) will have a different KAS structure.
+
+**Version 13 Changes:**
+- Added Salt field to the Policy structure for enhanced security
+- The Salt field allows each NanoTDF to use a unique symmetric key even when the same key pairs are reused
+- Backward compatibility is maintained through a salt length byte (0 indicates no salt)
 
 ##### 3.3.1.2 KAS
 
@@ -370,6 +375,7 @@ The structure of the Policy is as follows:
 |---------------|---------------------|---------------------|
 | Type Enum     | 1                   | 1                   |
 | Body          | 3                   | 257                 |
+| Salt          | 1                   | 256                 |
 | Binding       | 8                   | 132                 |
 
 ##### 3.4.2.1 Type Enum
@@ -445,7 +451,19 @@ encrypts the policy.
 This contains the Ephemeral Public Key. The size of the public key is determined
 by the the ECC Mode.
 
-##### 3.4.2.4 Binding
+##### 3.4.2.4 Salt
+
+The Salt section contains the salt value used for HKDF key derivation when generating the symmetric encryption key. This field enhances security by ensuring that each NanoTDF uses a unique key even when the same KAS key pair and ephemeral key pair are used.
+
+###### 3.4.2.4.1 Salt Length
+
+The first byte specifies the length of the salt data that follows. A length of 0 indicates no salt is present (for backward compatibility).
+
+###### 3.4.2.4.2 Salt Data
+
+The actual salt bytes, with length determined by the Salt Length field. When present, this salt replaces the default salt value in the HKDF key derivation process described in [Section 4]. The recommended salt length is 16 bytes for optimal security.
+
+##### 3.4.2.5 Binding
 
 The Binding section contains a cryptographic binding of the payload key to the
 policy. The type of the binding is either a 64-bit GMAC or an ECDSA signature.
@@ -461,9 +479,12 @@ BS = BM(SHA256(PB))
 ```
 
 If the Binding method is ECC, then ECDSA is used. If the binding method is GMAC
-then the key derived from the Ephemeral Public Key is used to encrypt the policy
-and payload together and generate the GMAC tag. For key derivation details see
-[Section 4].
+then the key derived from the Ephemeral Public Key is used to generate the GMAC tag.
+The GMAC is computed using AES-GCM with:
+- An empty plaintext
+- The policy body bytes as additional authenticated data
+- A fixed all-zeros 12-byte nonce for deterministic tag generation
+For key derivation details see [Section 4].
 
 ## 4. ECC Encryption Key Derivation
 
@@ -478,11 +499,12 @@ Derivation Function with the following parameters:
 
 * `size` - Depends on the key size used for symmetric encryption
 * `hash method` - This should use `SHA256`
-* `salt` - This is a non-random value tied to the magic number and version
-  `SHA256(MAGIC_NUMBER + VERSION)`. So for this version of the nanotdf the value
-  of the salt is
-  `3de3ca1e50cf62d8b6aba603a96fca6761387a7ac86c3d3afe85ae2d1812edfc` in hex.
-* `info` - This should be an empty value.
+* `salt` - The salt value is determined by the Policy's Salt field (see [Section 3.4.2.4]):
+  * If a salt is present in the Policy, that salt value is used
+  * If no salt is present (for backward compatibility), the default value "L1L" (hex: `4c314c`) is used
+  * Note: Earlier versions used `SHA256(MAGIC_NUMBER + VERSION)` which resulted in
+    `3de3ca1e50cf62d8b6aba603a96fca6761387a7ac86c3d3afe85ae2d1812edfc` in hex
+* `info` - The string "encryption" (hex: `656e6372797074696f6e`) is used
 
 ## 5. Encodings
 
