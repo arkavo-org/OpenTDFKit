@@ -26,11 +26,11 @@ struct SaltEdgeCaseTests {
         )
         #expect(nanoTDF1.header.policy.salt != nil)
         #expect(nanoTDF1.header.policy.salt!.count == 16) // Default salt size
-        
+
         // Test that salt is properly included in header serialization
         let headerData = nanoTDF1.header.toData()
         #expect(headerData.contains(nanoTDF1.header.policy.salt!))
-        
+
         // Verify NanoTDF can be parsed
         let nanoTDFData = nanoTDF1.toData()
         let parser = BinaryParser(data: nanoTDFData)

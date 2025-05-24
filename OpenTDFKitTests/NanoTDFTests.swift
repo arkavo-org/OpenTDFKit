@@ -107,30 +107,30 @@ final class NanoTDFTests: XCTestCase {
             // 1. READ v12 format files (backwards compatibility)
             // 2. CREATE new files in v13 format only
             // It does NOT support converting existing v12 payloads to v13 format.
-            
+
             let nano = NanoTDF(header: header, payload: payload, signature: signature)
             let serializedNanoTDF = nano.toData()
-            
+
             print("Original format version:", String(format: "%02x", binaryData![2]))
             print("Serialized format version:", String(format: "%02x", serializedNanoTDF[2]))
             print("Original size: \(binaryData!.count), Serialized size: \(serializedNanoTDF.count)")
-            
+
             // Verify that we can at least parse the original v12 data correctly
             XCTAssertEqual(header.kas.body, "kas.virtru.com", "v12 KAS should parse correctly")
             XCTAssertEqual(payload.iv.count, 3, "v12 should have 3-byte nonce")
             XCTAssertEqual(payload.mac.count, 8, "v12 payload has 8-byte MAC")
             XCTAssertNil(header.policy.salt, "v12 should not have salt")
-            
+
             // The serialized data creates a v13 header but retains v12 payload structure
             // This creates an invalid hybrid that cannot be parsed
             XCTAssertEqual(serializedNanoTDF[2], 0x4D, "Header indicates v13 format")
-            
+
             // To properly convert v12 to v13, you would need to:
             // 1. Decrypt the v12 payload using the 3-byte nonce
             // 2. Re-encrypt with a 12-byte nonce
             // 3. Create a new v13 NanoTDF
             // This is beyond the scope of the parser/serializer
-            
+
             print("Test demonstrates v12 parsing works correctly")
             print("Direct v12->v13 conversion is not supported (would require re-encryption)")
         } catch {
