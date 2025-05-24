@@ -29,7 +29,7 @@ final class NanoTDFTests: XCTestCase {
         75 cd 15 95 01 0b f2 04 20 74 ac 94 de 29 76 ba 02 f3
         """.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\n", with: "")
         let binaryData = Data(hexString: hexString)
-        let parser = BinaryParser(data: binaryData!)
+        var parser = BinaryParser(data: binaryData!)
         do {
             let header = try parser.parseHeader()
             print("Parsed Header:", header)
@@ -74,7 +74,7 @@ final class NanoTDFTests: XCTestCase {
         """.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\n", with: "")
         let binaryData = Data(hexString: hexString)
         do {
-            let parser = BinaryParser(data: binaryData!)
+            var parser = BinaryParser(data: binaryData!)
             let header = try parser.parseHeader()
             // EccMode
             let serializedEccMode = header.policyBindingConfig.toData()
@@ -156,7 +156,7 @@ final class NanoTDFTests: XCTestCase {
         75 cd 15 95 01 0b f2 04 20 74 ac 94 de 29 76 ba 02 f3
         """.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\n", with: "")
         let binaryData = Data(hexString: hexString)
-        let parser = BinaryParser(data: binaryData!)
+        var parser = BinaryParser(data: binaryData!)
         do {
             let header = try parser.parseHeader()
             // Ephemeral Key
@@ -217,7 +217,7 @@ final class NanoTDFTests: XCTestCase {
         c7 9e e5 11 9b a0 92 33 3b 2c 0e ea cb 9e 2f 8d c8
         """.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\n", with: "")
         let binaryData = Data(hexString: hexString)
-        let parser = BinaryParser(data: binaryData!)
+        var parser = BinaryParser(data: binaryData!)
         do {
             let header = try parser.parseHeader()
             print("Parsed Header:", header)
@@ -277,7 +277,7 @@ final class NanoTDFTests: XCTestCase {
         """
         let hexString = stringWithSpaces.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\n", with: "")
         let binaryData = Data(hexString: hexString)
-        let parser = BinaryParser(data: binaryData!)
+        var parser = BinaryParser(data: binaryData!)
         do {
             let header = try parser.parseHeader()
             print("Parsed Header:", header)
@@ -303,7 +303,7 @@ final class NanoTDFTests: XCTestCase {
         c7 9e e5 11 9b a0 92 33 3b 2c 0e ea cb 9e 2f 8d c8
         """.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\n", with: "")
         let binaryData = Data(hexString: hexString)
-        let parser = BinaryParser(data: binaryData!)
+        var parser = BinaryParser(data: binaryData!)
         do {
             let header = try parser.parseHeader()
             let payload = try parser.parsePayload(config: header.payloadSignatureConfig)
@@ -328,7 +328,7 @@ final class NanoTDFTests: XCTestCase {
             print("Added:")
             print(serializedNanoTDFHexString)
             // round trip - parse
-            let sparser = BinaryParser(data: serializedWithSignature)
+            var sparser = BinaryParser(data: serializedWithSignature)
             let sheader = try sparser.parseHeader()
             let spayload = try sparser.parsePayload(config: sheader.payloadSignatureConfig)
             let ssignature = try sparser.parseSignature(config: sheader.payloadSignatureConfig)
@@ -370,7 +370,7 @@ final class NanoTDFTests: XCTestCase {
 //        let serializedData = nanoTDF.toData()
 //
 //        // Parse the NanoTDF
-//        let parser = BinaryParser(data: serializedData)
+//        var parser = BinaryParser(data: serializedData)
 //        let parsedHeader = try parser.parseHeader()
 //        _ = try parser.parsePayload(config: parsedHeader.payloadSignatureConfig)
 //        let signature = try parser.parseSignature(config: parsedHeader.payloadSignatureConfig)
@@ -689,7 +689,7 @@ class PayloadTests: XCTestCase {
         c7 9e e5 11 9b a0 92 33 3b 2c 0e ea cb 9e 2f 8d c8
         """.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\n", with: "")
         let binaryData = Data(hexString: hexString)
-        let parser = BinaryParser(data: binaryData!)
+        var parser = BinaryParser(data: binaryData!)
         do {
             let header = try parser.parseHeader()
             let payload = try parser.parsePayload(config: header.payloadSignatureConfig)
@@ -715,7 +715,7 @@ class PayloadTests: XCTestCase {
         c7 9e e5 11 9b a0 92 33 3b 2c 0e ea cb 9e 2f 8d c8
         """.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\n", with: "")
         let binaryData = Data(hexString: hexString)
-        let parser = BinaryParser(data: binaryData!)
+        var parser = BinaryParser(data: binaryData!)
         do {
             let header = try parser.parseHeader()
             let payload = try parser.parsePayload(config: header.payloadSignatureConfig)

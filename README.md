@@ -169,41 +169,41 @@ Below are the benchmark results showing the performance characteristics of the m
 
 | Operation | Performance |
 |-----------|------------|
-| Generate and store 8192 EC521 keys | ~23 seconds total |
-| Key lookup | ~0.002ms per lookup (440,000+ ops/sec) |
-| Private key retrieval | ~0.003ms per retrieval (370,000+ ops/sec) |
-| Serialization throughput | 408-475 MB/s (varies with key count) |
+| Generate and store 8192 EC521 keys | ~14 seconds total |
+| Key lookup | ~0.001ms per lookup (867,000+ ops/sec) |
+| Private key retrieval | ~0.001ms per retrieval (822,000+ ops/sec) |
+| Serialization throughput | 768-890 MB/s (varies with key count) |
 
 ##### NanoTDF Cryptographic Operations
 
 | Operation | Performance |
 |-----------|------------|
 | **Encryption by Curve Type:** | |
-| - secp256r1 | ~1.1ms per operation (900+ ops/sec) |
-| - secp384r1 | ~2.9ms per operation (350+ ops/sec) |
-| - secp521r1 | ~7.9ms per operation (125+ ops/sec) |
-| Decryption | ~0.003ms per operation (390,000+ ops/sec) |
-| Signature operation | ~1.6ms per operation (630+ ops/sec) |
+| - secp256r1 | ~0.6ms per operation (1,560+ ops/sec) |
+| - secp384r1 | ~1.6ms per operation (615+ ops/sec) |
+| - secp521r1 | ~4.6ms per operation (216+ ops/sec) |
+| Decryption | ~0.002ms per operation (644,000+ ops/sec) |
+| Signature operation | ~0.9ms per operation (1,085+ ops/sec) |
 
 ##### Serialization Performance
 
 | Payload Size | Throughput |
 |--------------|------------|
-| 10 bytes | ~17 MB/s |
-| 100 bytes | ~42 MB/s |
-| 1,000 bytes | ~225 MB/s |
-| 10,000 bytes | ~1.8 GB/s |
+| 10 bytes | ~42 MB/s |
+| 100 bytes | ~83 MB/s |
+| 1,000 bytes | ~353 MB/s |
+| 10,000 bytes | ~2.7 GB/s |
 
 ##### KAS Service Performance
 
 | Operation | Performance |
 |-----------|------------|
-| KAS metadata generation | ~0.4ms per operation (2,400+ ops/sec) |
+| KAS metadata generation | ~0.2ms per operation (4,600+ ops/sec) |
 | **Key access by Curve Type:** | |
-| - secp256r1 | ~1.3ms per operation (750+ ops/sec) |
-| - secp384r1 | ~3.4ms per operation (290+ ops/sec) |
-| - secp521r1 | ~9.4ms per operation (105+ ops/sec) |
-| Policy binding verification | ~0.002ms (500,000+ verifications/sec) |
+| - secp256r1 | ~0.7ms per operation (1,368+ ops/sec) |
+| - secp384r1 | ~2.0ms per operation (508+ ops/sec) |
+| - secp521r1 | ~5.7ms per operation (174+ ops/sec) |
+| Policy binding verification | ~0.005ms (197,000+ verifications/sec) |
 
 These benchmarks were measured on an Apple M1 Max processor using Swift 6.0 in release mode.
 

@@ -33,7 +33,7 @@ struct SaltEdgeCaseTests {
 
         // Verify NanoTDF can be parsed
         let nanoTDFData = nanoTDF1.toData()
-        let parser = BinaryParser(data: nanoTDFData)
+        var parser = BinaryParser(data: nanoTDFData)
         let parsedHeader = try parser.parseHeader()
         #expect(parsedHeader.policy.salt == nanoTDF1.header.policy.salt)
     }

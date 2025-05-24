@@ -40,7 +40,7 @@ class NanoTDFCreationTests: XCTestCase {
         print("Created:")
         print(serializedHexString)
         // round trip - parse
-        let parser = BinaryParser(data: serializedData)
+        var parser = BinaryParser(data: serializedData)
         let header = try parser.parseHeader()
         print("Parsed Header:", header)
         let pheader = header.toData()

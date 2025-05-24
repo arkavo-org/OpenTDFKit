@@ -1,15 +1,15 @@
 import Foundation
 
-public class BinaryParser {
-    var data: Data
-    var cursor: Int = 0
-    var version: UInt8?
+public struct BinaryParser {
+    private let data: Data
+    private var cursor: Int = 0
+    private var version: UInt8?
 
     public init(data: Data) {
         self.data = data
     }
 
-    func read(length: Int) -> Data? {
+    mutating func read(length: Int) -> Data? {
         guard cursor >= 0 else { return nil }
         guard !data.isEmpty else { return nil }
         guard cursor + length <= data.count else { return nil }
@@ -18,7 +18,7 @@ public class BinaryParser {
         return data.subdata(in: range)
     }
 
-    private func readResourceLocator() -> ResourceLocator? {
+    private mutating func readResourceLocator() -> ResourceLocator? {
         guard let protocolData = read(length: 1),
               let protocolEnum = protocolData.first,
               let protocolEnumValue = ProtocolEnum(rawValue: protocolEnum),
@@ -37,7 +37,7 @@ public class BinaryParser {
         return ResourceLocator(protocolEnum: protocolEnumValue, body: bodyString)
     }
 
-    private func readPolicyField(bindingMode: PolicyBindingConfig) -> Policy? {
+    private mutating func readPolicyField(bindingMode: PolicyBindingConfig) -> Policy? {
         guard let policyTypeData = read(length: 1),
               let policyType = Policy.PolicyType(rawValue: policyTypeData[0])
         else {
@@ -94,7 +94,7 @@ public class BinaryParser {
         }
     }
 
-    private func readEmbeddedPolicyBody(policyType: Policy.PolicyType, bindingMode: PolicyBindingConfig) -> EmbeddedPolicyBody? {
+    private mutating func readEmbeddedPolicyBody(policyType: Policy.PolicyType, bindingMode: PolicyBindingConfig) -> EmbeddedPolicyBody? {
         guard let contentLengthData = read(length: 2)
         else {
             return nil
@@ -121,7 +121,7 @@ public class BinaryParser {
         return EmbeddedPolicyBody(body: plaintextCiphertext, keyAccess: keyAccess)
     }
 
-    func readEccAndBindingMode() -> PolicyBindingConfig? {
+    mutating func readEccAndBindingMode() -> PolicyBindingConfig? {
         guard let eccAndBindingModeData = read(length: 1),
               let eccAndBindingMode = eccAndBindingModeData.first
         else {
@@ -143,7 +143,7 @@ public class BinaryParser {
         return PolicyBindingConfig(ecdsaBinding: ecdsaBinding, curve: ephemeralECCParamsEnum)
     }
 
-    func readSymmetricAndPayloadConfig() -> SignatureAndPayloadConfig? {
+    mutating func readSymmetricAndPayloadConfig() -> SignatureAndPayloadConfig? {
         guard let data = read(length: 1)
         else {
             return nil
@@ -163,7 +163,7 @@ public class BinaryParser {
         return SignatureAndPayloadConfig(signed: signed, signatureCurve: signatureECCMode, payloadCipher: symmetricCipher)
     }
 
-    func readPolicyBinding(bindingMode: PolicyBindingConfig) -> Data? {
+    mutating func readPolicyBinding(bindingMode: PolicyBindingConfig) -> Data? {
         let bindingSize
 //        print("bindingMode", bindingMode)
             = if bindingMode.ecdsaBinding
@@ -184,7 +184,7 @@ public class BinaryParser {
         return read(length: bindingSize)
     }
 
-    func readPolicyKeyAccess(bindingMode: PolicyBindingConfig) -> PolicyKeyAccess? {
+    mutating func readPolicyKeyAccess(bindingMode: PolicyBindingConfig) -> PolicyKeyAccess? {
         let keySize = bindingMode.curve.publicKeyLength // Use compressed key length
 
         guard let resourceLocator = readResourceLocator(),
@@ -199,7 +199,7 @@ public class BinaryParser {
     /// Reads a PayloadKeyAccess structure and advances the cursor.
     /// - Parameter version: The version of the NanoTDF format (v12 or v13)
     /// - Returns: An initialized `PayloadKeyAccess` object if parsing is successful, otherwise `nil`.
-    func readPayloadKeyAccess(version: UInt8? = nil) -> PayloadKeyAccess? {
+    mutating func readPayloadKeyAccess(version: UInt8? = nil) -> PayloadKeyAccess? {
         // 1. Parse KAS Endpoint Locator (ResourceLocator)
         guard let kasEndpointLocator = readResourceLocator() else {
             return nil
@@ -229,7 +229,7 @@ public class BinaryParser {
         return PayloadKeyAccess(kasEndpointLocator: kasEndpointLocator, kasPublicKey: kasPublicKey)
     }
 
-    public func parseHeader() throws -> Header {
+    public mutating func parseHeader() throws -> Header {
         // Read the Magic Number first
         guard let magicNumber = read(length: FieldSize.magicNumberSize) else {
             throw ParsingError.invalidFormat
@@ -256,7 +256,7 @@ public class BinaryParser {
         }
     }
 
-    private func parseHeaderV12() throws -> Header {
+    private mutating func parseHeaderV12() throws -> Header {
         // Parse the legacy single-field ResourceLocator KAS for v12
         guard let kas = readResourceLocator(),
               let policyBindingConfig = readEccAndBindingMode(),
@@ -295,7 +295,7 @@ public class BinaryParser {
         )
     }
 
-    private func parseHeaderV13() throws -> Header {
+    private mutating func parseHeaderV13() throws -> Header {
         // Parse the new three-field PayloadKeyAccess structure for v13
         guard let payloadKeyAccess = readPayloadKeyAccess(version: 0x4D) else {
             throw ParsingError.invalidKAS
@@ -329,7 +329,7 @@ public class BinaryParser {
         )
     }
 
-    public func parsePayload(config: SignatureAndPayloadConfig) throws -> Payload {
+    public mutating func parsePayload(config: SignatureAndPayloadConfig) throws -> Payload {
         guard let lengthData = read(length: FieldSize.payloadLengthSize)
         else {
             throw ParsingError.invalidFormat
@@ -379,7 +379,7 @@ public class BinaryParser {
         return payload
     }
 
-    public func parseSignature(config: SignatureAndPayloadConfig) throws -> Signature? {
+    public mutating func parseSignature(config: SignatureAndPayloadConfig) throws -> Signature? {
         if !config.signed {
             return nil
         }
