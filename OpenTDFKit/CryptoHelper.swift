@@ -1,4 +1,4 @@
-import CryptoKit
+@preconcurrency import CryptoKit
 import Foundation
 
 /// Enum representing the KAS key curves supported for NanoTDF Payload Key Access.
@@ -136,7 +136,7 @@ actor CryptoHelper {
 
     /// Generates a new ephemeral key pair for the specified elliptic curve.
     /// - Parameter curveType: The `Curve` enum value specifying the desired curve (e.g., `.secp256r1`).
-    /// - Returns: An `EphemeralKeyPair` containing the raw private key and compressed public key data, or `nil` if the curve is unsupported (`.xsecp256k1`).
+    /// - Returns: An `EphemeralKeyPair` containing the raw private key and compressed public key data, or `nil` if the curve is unsupported.
     func generateEphemeralKeyPair(curveType: Curve) -> EphemeralKeyPair? {
         switch curveType {
         case .secp256r1:
@@ -219,8 +219,19 @@ actor CryptoHelper {
     /// - Returns: The calculated GMAC tag as `Data`.
     /// - Throws: `CryptoKitError` if the AES-GCM seal operation fails.
     func createGMACBinding(policyBody: Data, symmetricKey: SymmetricKey) throws -> Data {
+        // Derive deterministic nonce using HKDF from policy body and symmetric key
+        let salt = SHA256.hash(data: policyBody).withUnsafeBytes { Data($0) }
+        let nonceMaterial = symmetricKey.withUnsafeBytes { keyData in
+            HKDF<SHA256>.deriveKey(
+                inputKeyMaterial: SymmetricKey(data: keyData),
+                salt: salt,
+                info: Data("GMAC-NONCE".utf8),
+                outputByteCount: 12
+            )
+        }
+        let nonce = try AES.GCM.Nonce(data: nonceMaterial.withUnsafeBytes { Data($0) })
         // Seal empty data, authenticating the policyBody. The tag is the GMAC binding.
-        let sealedBox = try AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyBody)
+        let sealedBox = try AES.GCM.seal(Data(), using: symmetricKey, nonce: nonce, authenticating: policyBody)
         return sealedBox.tag
     }
 
@@ -230,7 +241,15 @@ actor CryptoHelper {
     func generateNonce(length: Int = CryptoConstants.aesGcmNonceSize) -> Data {
         var nonce = Data(count: length)
         // Use SecRandomCopyBytes for generating secure random data.
-        _ = nonce.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, length, $0.baseAddress!) }
+        nonce.withUnsafeMutableBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else {
+                fatalError("Failed to get base address for nonce generation")
+            }
+            let status = SecRandomCopyBytes(kSecRandomDefault, length, baseAddress)
+            guard status == errSecSuccess else {
+                fatalError("Failed to generate random bytes for nonce")
+            }
+        }
         return nonce
     }
 
@@ -248,9 +267,20 @@ actor CryptoHelper {
         } else if nonce.count > length {
             return nonce.prefix(length) // Truncate if too long
         } else {
-            // Pad with zeros if too short
+            // Pad with secure random bytes if too short
             var paddedNonce = nonce
-            paddedNonce.append(contentsOf: [UInt8](repeating: 0, count: length - nonce.count))
+            let paddingLength = length - nonce.count
+            var randomPadding = Data(count: paddingLength)
+            randomPadding.withUnsafeMutableBytes { bytes in
+                guard let baseAddress = bytes.baseAddress else {
+                    fatalError("Failed to get base address for random padding")
+                }
+                let status = SecRandomCopyBytes(kSecRandomDefault, paddingLength, baseAddress)
+                guard status == errSecSuccess else {
+                    fatalError("Failed to generate random bytes for padding")
+                }
+            }
+            paddedNonce.append(randomPadding)
             return paddedNonce
         }
     }

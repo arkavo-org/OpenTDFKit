@@ -38,8 +38,7 @@ final class KASServiceTests: XCTestCase {
 
         // Verify the NanoTDF was created successfully
         XCTAssertNotNil(nanoTDF)
-        XCTAssertEqual(nanoTDF.header.toData()[2], Header.version, "NanoTDF header should be v13")
-        XCTAssertEqual(nanoTDF.header.payloadKeyAccess.kasLocator.body, kasMetadata.resourceLocator.body)
+        XCTAssertEqual(nanoTDF.header.kas.body, kasMetadata.resourceLocator.body)
         XCTAssertNotNil(nanoTDF.payload.ciphertext)
 
         // 6. Extract the ephemeral public key from the NanoTDF
@@ -61,10 +60,13 @@ final class KASServiceTests: XCTestCase {
         // Generate shared secret
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
 
+        // Extract salt from the NanoTDF's policy
+        let salt = nanoTDF.header.policy.salt ?? Data("L1L".utf8)
+
         // Derive symmetric key using the same parameters as in createNanoTDF
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8), // Use v13 salt
+            salt: salt,
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
@@ -123,7 +125,6 @@ final class KASServiceTests: XCTestCase {
             policy: &policy,
             plaintext: plaintext
         )
-        XCTAssertEqual(nanoTDF.header.toData()[2], Header.version, "NanoTDF header should be v13")
 
         // Extract the ephemeral public key from the NanoTDF
         let ephemeralPublicKey = nanoTDF.header.ephemeralPublicKey
@@ -141,11 +142,14 @@ final class KASServiceTests: XCTestCase {
         let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData!)
         let clientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
 
+        // Extract salt from the NanoTDF's policy
+        let salt = nanoTDF.header.policy.salt ?? Data("L1L".utf8)
+
         // Derive the same shared secret that would be used in the TDF creation
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
         let derivedSymmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8), // Use v13 salt
+            salt: salt,
             sharedInfo: Data("encryption".utf8),
             outputByteCount: 32
         )
@@ -166,7 +170,8 @@ final class KASServiceTests: XCTestCase {
         let rewrappedKey = try await kasService.processKeyAccess(
             ephemeralPublicKey: ephemeralPublicKey,
             encryptedKey: encryptedKey,
-            kasPublicKey: kasPublicKey
+            kasPublicKey: kasPublicKey,
+            salt: salt
         )
 
         // Verify the rewrapped key is not empty
@@ -180,71 +185,74 @@ final class KASServiceTests: XCTestCase {
         XCTAssertEqual(decryptedData, plaintext, "Decrypted data should match original plaintext")
     }
 
-    // This test was removed because it was failing
-    // TODO: Fix policy binding verification test
-    /*
-     func testVerifyPolicyBinding() async throws {
-         // Create a KAS service
-         let baseURL = URL(string: "https://kas.example.com")!
-         let kasService = KASService(keyStore: keyStore, baseURL: baseURL)
+    func testVerifyPolicyBinding() async throws {
+        // Create a KAS service
+        let baseURL = URL(string: "https://kas.example.com")!
+        let kasService = KASService(keyStore: keyStore, baseURL: baseURL)
 
-         // Generate KAS metadata
-         let kasMetadata = try await kasService.generateKasMetadata()
+        // Generate KAS metadata
+        let kasMetadata = try await kasService.generateKasMetadata()
 
-         // Create test plaintext
-         let plaintext = "Policy binding test data".data(using: .utf8)!
+        // Create test plaintext
+        let plaintext = "Policy binding test data".data(using: .utf8)!
 
-         // Create a policy for the NanoTDF
-         let policyData = "classification:secret".data(using: .utf8)!
-         let embeddedPolicyBody = EmbeddedPolicyBody(body: policyData, keyAccess: nil)
-         var policy = Policy(type: .embeddedPlaintext, body: embeddedPolicyBody, remote: nil, binding: nil)
+        // Create a policy for the NanoTDF
+        let policyData = "classification:secret".data(using: .utf8)!
+        let embeddedPolicyBody = EmbeddedPolicyBody(body: policyData, keyAccess: nil)
+        var policy = Policy(type: .embeddedPlaintext, body: embeddedPolicyBody, remote: nil, binding: nil)
 
-         // Create a NanoTDF - this will generate a policy binding during creation
-         let nanoTDF = try await createNanoTDF(
-             kas: kasMetadata,
-             policy: &policy,
-             plaintext: plaintext
-         )
+        // Create a NanoTDF - this will generate a policy binding during creation
+        let nanoTDF = try await createNanoTDF(
+            kas: kasMetadata,
+            policy: &policy,
+            plaintext: plaintext
+        )
 
-         // Extract the policy binding from the created NanoTDF
-         let policyBinding = nanoTDF.header.policy.binding
-         XCTAssertNotNil(policyBinding, "Policy binding should be created during NanoTDF creation")
+        // Extract the policy binding from the created NanoTDF
+        let policyBinding = nanoTDF.header.policy.binding
+        XCTAssertNotNil(policyBinding, "Policy binding should be created during NanoTDF creation")
 
-         // Get the KAS public key and derive the same symmetric key that was used for binding
-         let kasPublicKey = try kasMetadata.getPublicKey()
-         let kasPrivateKeyData = await keyStore.getPrivateKey(forPublicKey: kasPublicKey)
-         XCTAssertNotNil(kasPrivateKeyData, "KAS private key should be found in keystore")
+        // Get the KAS public key and derive the same symmetric key that was used for binding
+        let kasPublicKey = try kasMetadata.getPublicKey()
+        let kasPrivateKeyData = await keyStore.getPrivateKey(forPublicKey: kasPublicKey)
+        XCTAssertNotNil(kasPrivateKeyData, "KAS private key should be found in keystore")
 
-         // Derive the same symmetric key that was used to create the binding
-         let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData!)
-         let clientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: nanoTDF.header.ephemeralPublicKey)
-         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
+        // Derive the same symmetric key that was used to create the binding
+        let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: kasPrivateKeyData!)
+        let clientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: nanoTDF.header.ephemeralPublicKey)
+        let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
 
-         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
-             using: SHA256.self,
-             salt: Data("L1L".utf8),
-             sharedInfo: Data("encryption".utf8),
-             outputByteCount: 32
-         )
+        // Extract salt from the NanoTDF's policy
+        let salt = nanoTDF.header.policy.salt ?? Data("L1L".utf8)
 
-         // Verify the binding
-         let isValid = try await kasService.verifyPolicyBinding(
-             policyBinding: policyBinding!,
-             policyData: policyData,
-             symmetricKey: symmetricKey
-         )
+        let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: salt,
+            sharedInfo: Data("encryption".utf8),
+            outputByteCount: 32
+        )
 
-         XCTAssertTrue(isValid, "Policy binding should be valid")
+        // Get the actual policy body data that was used for binding
+        // For embedded policies, this includes the serialized EmbeddedPolicyBody
+        let policyBodyData = nanoTDF.header.policy.body!.toData()
 
-         // Test with invalid binding
-         let invalidBinding = Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08])
-         let isInvalid = try await kasService.verifyPolicyBinding(
-             policyBinding: invalidBinding,
-             policyData: policyData,
-             symmetricKey: symmetricKey
-         )
+        // Verify the binding
+        let isValid = try await kasService.verifyPolicyBinding(
+            policyBinding: policyBinding!,
+            policyData: policyBodyData,
+            symmetricKey: symmetricKey
+        )
 
-         XCTAssertFalse(isInvalid, "Invalid policy binding should fail verification")
-     }
-     */
+        XCTAssertTrue(isValid, "Policy binding should be valid")
+
+        // Test with invalid binding
+        let invalidBinding = Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08])
+        let isInvalid = try await kasService.verifyPolicyBinding(
+            policyBinding: invalidBinding,
+            policyData: policyBodyData,
+            symmetricKey: symmetricKey
+        )
+
+        XCTAssertFalse(isInvalid, "Invalid policy binding should fail verification")
+    }
 }

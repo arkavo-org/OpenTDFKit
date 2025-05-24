@@ -2,6 +2,12 @@ import CryptoKit
 @testable import OpenTDFKit
 import XCTest
 
+extension Data {
+    func hexEncodedString() -> String {
+        map { String(format: "%02hhx", $0) }.joined()
+    }
+}
+
 final class EncryptedPolicyTests: XCTestCase {
     func testEmbeddedPlaintextPolicy() async throws {
         // Create KAS ResourceLocator
@@ -53,7 +59,7 @@ final class EncryptedPolicyTests: XCTestCase {
         XCTAssertFalse(serializedData.isEmpty)
 
         // Round-trip: Parse the serialized data back into a NanoTDF
-        let parser = BinaryParser(data: serializedData)
+        var parser = BinaryParser(data: serializedData)
 
         // Parse the header
         let header = try parser.parseHeader()

@@ -1,4 +1,4 @@
-import CryptoKit
+@preconcurrency import CryptoKit
 import Foundation
 
 /// A store containing only public keys to be shared with peers
@@ -28,6 +28,10 @@ public final class PublicKeyStore: Sendable {
 
         func clear() {
             keys.removeAll()
+        }
+
+        func getCount() -> Int {
+            keys.count
         }
     }
 
@@ -147,6 +151,12 @@ public final class PublicKeyStore: Sendable {
             let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: publicKeyData)
             return try KasMetadata(resourceLocator: resourceLocator, publicKey: publicKey, curve: .secp521r1)
         }
+    }
+
+    /// Get the number of public keys currently stored
+    /// - Returns: The count of public keys
+    public func getCount() async -> Int {
+        await store.getCount()
     }
 }
 
