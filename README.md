@@ -47,6 +47,33 @@ let nanoTDF = try createNanoTDF(kas: kasMetadata, policy: &policy, plaintext: "h
 - Shared key distribution with PublicKeyStore
 - Key unwrapping for secure decryption
 - Support for multiple elliptic curves (secp256r1, secp384r1, secp521r1)
+- Full backwards compatibility with v12 format while creating v13 format files
+
+## Backwards Compatibility
+
+OpenTDFKit implements full backwards compatibility for the security enhancements introduced in v13:
+
+### Version Support
+
+- **v12 (0x4C)**: Original format with 3-byte nonces (for reading old files)
+- **v13 (0x4D)**: New format with 12-byte nonces (for creating new files)
+
+### What Changed
+
+The v13 format includes critical security improvements:
+- Increased nonce size from 3 to 12 bytes for proper AES-GCM security
+- HKDF-derived GMAC nonces instead of fixed zeros
+- Secure random padding for nonce adjustment
+- Optional salt field for enhanced key derivation
+
+### Migration Path
+
+1. Update to the latest version of OpenTDFKit
+2. Existing v12 files can still be read without any changes
+3. New files will automatically be created in v13 format with enhanced security
+4. No code changes required for users of the library
+
+The library automatically detects the format version during parsing and handles both formats transparently.
 
 ## NanoTDF creation
 

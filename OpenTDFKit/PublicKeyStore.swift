@@ -1,4 +1,4 @@
-import CryptoKit
+@preconcurrency import CryptoKit
 import Foundation
 
 /// A store containing only public keys to be shared with peers

@@ -25,8 +25,9 @@ class NanoTDFCreationTests: XCTestCase {
         XCTAssertNotNil(nanoTDF.header.ephemeralPublicKey, "Ephemeral PublicKey should not be nil")
         XCTAssertNotNil(nanoTDF.payload, "Payload should not be nil")
         XCTAssertNotNil(nanoTDF.payload.iv, "Payload nonce should not be nil")
+        XCTAssertEqual(nanoTDF.payload.iv.count, 12, "Payload nonce should be 12 bytes for v13")
         XCTAssertNotNil(nanoTDF.payload.ciphertext, "Payload ciphertext should not be nil")
-        XCTAssertEqual(nanoTDF.payload.length, 43)
+        XCTAssertEqual(nanoTDF.payload.length, 52) // v13 format with 12-byte nonce
         print(nanoTDF)
         // round trip - serialize
         let serializedData = nanoTDF.toData()
@@ -61,6 +62,7 @@ class NanoTDFCreationTests: XCTestCase {
         let snanoTDF = NanoTDF(header: header, payload: payload, signature: nil)
         // Print final the signature NanoTDF
         print(snanoTDF)
-        XCTAssertEqual(payload.length, 43)
+        XCTAssertEqual(payload.length, 52) // v13 format with 12-byte nonce
+        XCTAssertEqual(payload.iv.count, 12, "Parsed payload nonce should be 12 bytes for v13")
     }
 }

@@ -1,4 +1,4 @@
-import CryptoKit
+@preconcurrency import CryptoKit
 import Foundation
 
 /// Errors specific to the KAS service operations
@@ -325,8 +325,17 @@ public actor KASService {
         policyData: Data,
         symmetricKey: SymmetricKey
     ) async throws -> Bool {
-        // Use a fixed nonce (all zeros) for deterministic GMAC generation (same as createGMACBinding)
-        let nonce = try AES.GCM.Nonce(data: Data(repeating: 0, count: 12))
+        // Derive deterministic nonce using HKDF from policy data and symmetric key (same as createGMACBinding)
+        let salt = SHA256.hash(data: policyData).withUnsafeBytes { Data($0) }
+        let nonceMaterial = symmetricKey.withUnsafeBytes { keyData in
+            HKDF<SHA256>.deriveKey(
+                inputKeyMaterial: SymmetricKey(data: keyData),
+                salt: salt,
+                info: Data("GMAC-NONCE".utf8),
+                outputByteCount: 12
+            )
+        }
+        let nonce = try AES.GCM.Nonce(data: nonceMaterial.withUnsafeBytes { Data($0) })
         // For GMAC binding verification, create a tag with empty ciphertext and the policy data as authenticated data
         let expectedTag = try AES.GCM.seal(Data(), using: symmetricKey, nonce: nonce, authenticating: policyData).tag
         return policyBinding == expectedTag

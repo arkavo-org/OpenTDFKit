@@ -3,6 +3,7 @@ import Foundation
 public class BinaryParser {
     var data: Data
     var cursor: Int = 0
+    var version: UInt8?
 
     public init(data: Data) {
         self.data = data
@@ -48,17 +49,19 @@ public class BinaryParser {
             guard let resourceLocator = readResourceLocator() else {
                 return nil
             }
-            // Read salt if present
+            // Read salt if present (for v13+)
             var salt: Data?
-            guard let saltLengthData = read(length: 1) else {
-                return nil
-            }
-            let saltLength = Int(saltLengthData[0])
-            if saltLength > 0 {
-                guard let saltData = read(length: saltLength) else {
+            if version != 0x4C { // v13 and later support salt for remote policies
+                guard let saltLengthData = read(length: 1) else {
                     return nil
                 }
-                salt = saltData
+                let saltLength = Int(saltLengthData[0])
+                if saltLength > 0 {
+                    guard let saltData = read(length: saltLength) else {
+                        return nil
+                    }
+                    salt = saltData
+                }
             }
             // Binding
             guard let binding = readPolicyBinding(bindingMode: bindingMode) else {
@@ -69,17 +72,19 @@ public class BinaryParser {
             guard let policyData = readEmbeddedPolicyBody(policyType: policyType, bindingMode: bindingMode) else {
                 return nil
             }
-            // Read salt if present
+            // Read salt if present (for v13+)
             var salt: Data?
-            guard let saltLengthData = read(length: 1) else {
-                return nil
-            }
-            let saltLength = Int(saltLengthData[0])
-            if saltLength > 0 {
-                guard let saltData = read(length: saltLength) else {
+            if version != 0x4C { // v13 and later support salt for embedded policies
+                guard let saltLengthData = read(length: 1) else {
                     return nil
                 }
-                salt = saltData
+                let saltLength = Int(saltLengthData[0])
+                if saltLength > 0 {
+                    guard let saltData = read(length: saltLength) else {
+                        return nil
+                    }
+                    salt = saltData
+                }
             }
             // Binding
             guard let binding = readPolicyBinding(bindingMode: bindingMode) else {
@@ -238,6 +243,7 @@ public class BinaryParser {
             throw ParsingError.invalidFormat
         }
         let version = versionData[0]
+        self.version = version
 
         // Branch based on version
         switch version {
@@ -333,8 +339,9 @@ public class BinaryParser {
         let byte3 = UInt32(lengthData[2])
         let length: UInt32 = byte1 | byte2 | byte3
 //        print("parsePayload length", length)
-        // IV nonce
-        guard let iv = read(length: FieldSize.payloadIvSize)
+        // IV nonce - size depends on version
+        let ivSize = (version == 0x4C) ? 3 : 12 // v12 uses 3 bytes, v13+ uses 12 bytes
+        guard let iv = read(length: ivSize)
         else {
             throw ParsingError.invalidFormat
         }
@@ -357,7 +364,7 @@ public class BinaryParser {
             throw ParsingError.invalidFormat
         }
         // cipherText
-        let cipherTextLength = Int(length) - payloadMACSize - FieldSize.payloadIvSize
+        let cipherTextLength = Int(length) - payloadMACSize - ivSize
 //        print("cipherTextLength", cipherTextLength)
         guard cipherTextLength >= 0 else {
             throw ParsingError.invalidPayload("Calculated ciphertext length is negative")
@@ -418,7 +425,7 @@ enum FieldSize {
     static let minEphemeralKeySize = 33
     static let maxEphemeralKeySize = 133
     static let payloadLengthSize = 3
-    static let payloadIvSize = 3
+    static let payloadIvSize = 12
     static let minPayloadMacSize = 8
     static let maxPayloadMacSize = 32
 }

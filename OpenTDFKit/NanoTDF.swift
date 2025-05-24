@@ -84,11 +84,18 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
     policy.salt = salt
 
     // Policy
-    let policyBody: Data = switch policy.type {
+    let policyBody: Data
+    switch policy.type {
     case .remote:
-        policy.remote!.toData()
+        guard let remote = policy.remote else {
+            throw NanoTDFError.invalidConfiguration("Remote policy is nil")
+        }
+        policyBody = remote.toData()
     case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
-        policy.body!.toData()
+        guard let body = policy.body else {
+            throw NanoTDFError.invalidConfiguration("Policy body is nil")
+        }
+        policyBody = body.toData()
     }
 
     // Create GMAC binding
@@ -99,14 +106,13 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
     policy.binding = gmacTag
 
     // Step 4: Generate nonce
-    let nonce = await cryptoHelper.generateNonce(length: 3)
-    let nonce12 = await cryptoHelper.adjustNonce(nonce, to: 12)
+    let nonce = await cryptoHelper.generateNonce(length: 12)
 
     // Step 5: Encrypt payload
     let (ciphertext, tag) = try await cryptoHelper.encryptPayload(
         plaintext: plaintext,
         symmetricKey: tdfSymmetricKey,
-        nonce: nonce12
+        nonce: nonce
     )
 
     let payloadLength = ciphertext.count + tag.count + nonce.count
@@ -328,6 +334,9 @@ public struct Policy: Sendable {
     public let body: EmbeddedPolicyBody?
     public let remote: ResourceLocator?
     public var binding: Data?
+    /// The salt used for key derivation during encryption/decryption.
+    /// This is a cryptographically secure random value generated during encryption
+    /// and stored with the policy to ensure proper key derivation during decryption.
     public var salt: Data?
 
     public init(type: PolicyType, body: EmbeddedPolicyBody?, remote: ResourceLocator?, binding: Data? = nil, salt: Data? = nil) {
@@ -425,6 +434,12 @@ public enum Cipher: UInt8, Sendable {
     // CryptoKit’s AES.GCM uses a 128-bit authentication tag by default,
     // and you don't need to (nor can you) specify different tag lengths.
     case aes256GCM128 = 0x05
+}
+
+public enum NanoTDFError: Error {
+    case invalidConfiguration(String)
+    case invalidPolicyType
+    case policyNotFound
 }
 
 public enum SignatureError: Error {

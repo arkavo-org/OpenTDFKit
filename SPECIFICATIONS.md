@@ -111,6 +111,8 @@ Implementations parsing NanoTDFs should check this version. Earlier versions (e.
 - Added Salt field to the Policy structure for enhanced security
 - The Salt field allows each NanoTDF to use a unique symmetric key even when the same key pairs are reused
 - Backward compatibility is maintained through a salt length byte (0 indicates no salt)
+- Increased IV/nonce size from 3 bytes to 12 bytes for proper AES-GCM security
+- GMAC binding now uses HKDF-derived nonces instead of fixed zeros for enhanced security
 
 ##### 3.3.1.2 KAS
 
