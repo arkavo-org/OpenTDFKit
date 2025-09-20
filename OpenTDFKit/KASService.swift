@@ -211,6 +211,7 @@ public actor KASService {
         ephemeralPublicKey: Data,
         encryptedKey: Data,
         privateKeyData: Data,
+        version: UInt8? = nil
     ) async throws -> (rewrappedKey: Data, newKeyPair: StoredKeyPair) {
         // 1. Derive shared secret using the client's ephemeral public key and KAS private key
         let sharedSecret: SharedSecret
@@ -234,8 +235,25 @@ public actor KASService {
 
         // 2. Derive symmetric key for decryption
         // Support both v12 and v13 salt values (computed via spec formula)
-        let saltV12 = CryptoConstants.hkdfSaltV12
-        let saltV13 = CryptoConstants.hkdfSaltV13
+        // Use version hinting to avoid unnecessary dual derivation
+           let symmetricKey: SymmetricKey
+           let salt: Data
+           
+           if let version = version {
+               // Use version-specific salt for optimal performance
+               switch version {
+               case Header.versionV12:
+                   salt = CryptoConstants.hkdfSaltV12
+        case Header.version:
+                   salt = CryptoConstants.hkdfSaltV13
+               default:
+                   // Fallback to v13 for unknown versions
+                   salt = CryptoConstants.hkdfSaltV13
+               }
+           } else {
+               // No version hint, try v13 first (more common)
+               salt = CryptoConstants.hkdfSaltV13
+           }
 
         let symmetricKeyV12 = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
@@ -275,10 +293,18 @@ public actor KASService {
         // Try decryption with the v13 key first
         let decryptedKey: Data
         do {
-            decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKeyV13)
+            decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKey)
         } catch {
             // If v13 key fails, fallback to v12 key
-            decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKeyV12)
+            // Fallback: derive the other version's key if needed
+               let fallbackSalt = (salt == CryptoConstants.hkdfSaltV13) ? CryptoConstants.hkdfSaltV12 : CryptoConstants.hkdfSaltV13
+               let fallbackKey = sharedSecret.hkdfDerivedSymmetricKey(
+                   using: SHA256.self,
+                   salt: fallbackSalt,
+                   sharedInfo: Data(),
+                   outputByteCount: 32,
+               )
+               decryptedKey = try AES.GCM.open(sealedBox, using: fallbackKey)
         }
 
         // 5. Create new shared secret for rewrapping

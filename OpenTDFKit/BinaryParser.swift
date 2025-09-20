@@ -14,7 +14,8 @@ public class BinaryParser {
         guard cursor + length <= data.count else { return nil }
         let range = cursor ..< (cursor + length)
         cursor += length
-        return data.subdata(in: range)
+        // Use zero-copy slicing instead of subdata to avoid allocations
+        return data[range]
     }
 
     private func readResourceLocator() -> ResourceLocator? {
