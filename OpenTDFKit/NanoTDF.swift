@@ -1,15 +1,6 @@
 @preconcurrency import CryptoKit
 import Foundation
 
-/// Computes the HKDF salt according to NanoTDF spec section 4.
-/// The salt is SHA256(MAGIC_NUMBER + VERSION).
-/// - Parameter version: The NanoTDF version byte (0x4C for v12, 0x4D for v13)
-/// - Returns: The computed salt as Data
-private func computeHKDFSalt(version: UInt8) -> Data {
-    let magicAndVersion = Header.magicNumber + Data([version])
-    return Data(SHA256.hash(data: magicAndVersion))
-}
-
 /// Represents a NanoTDF (Nano Trusted Data Format) object, containing a header, payload, and optional signature.
 /// Conforms to `Sendable` for safe use in concurrent contexts.
 public struct NanoTDF: Sendable {
@@ -103,7 +94,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
 
     // Step 3: Derive the symmetric TDF key from the shared secret using HKDF
     // Salt is SHA256(MAGIC_NUMBER + VERSION) per spec section 4
-    let salt = computeHKDFSalt(version: Header.version) // v13 by default
+    let salt = CryptoHelper.computeHKDFSalt(version: Header.version) // v13 by default
     let tdfSymmetricKey = await cryptoHelper.deriveSymmetricKey(
         sharedSecret: sharedSecret,
         salt: salt,

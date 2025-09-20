@@ -33,6 +33,7 @@ final class CryptoHelperTests: XCTestCase {
 
         // Step 4: Verify the results
         XCTAssertNotNil(result.gmacTag, "GMAC tag should not be nil")
+        XCTAssertEqual(result.gmacTag.count, 8, "GMAC tag should be truncated to 8 bytes (64 bits)")
         XCTAssertNotNil(result.ciphertext, "Ciphertext should not be nil")
         XCTAssertNotNil(result.tag, "Authentication tag should not be nil")
         XCTAssertNotNil(result.nonce, "Nonce should not be nil")
@@ -81,9 +82,9 @@ extension CryptoHelper {
         // Derive symmetric key
         let symmetricKey = deriveSymmetricKey(
             sharedSecret: sharedSecret,
-            salt: Data("L1M".utf8), // Updated to v13 salt
-            info: Data("encryption".utf8),
-            outputByteCount: 32,
+            salt: CryptoConstants.hkdfSalt,
+            info: CryptoConstants.hkdfInfoEncryption,
+            outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )
 
         // Create GMAC binding
@@ -128,9 +129,9 @@ extension CryptoHelper {
         // Derive symmetric key
         let symmetricKey = deriveSymmetricKey(
             sharedSecret: sharedSecret,
-            salt: Data("L1M".utf8), // Updated to v13 salt
-            info: Data("encryption".utf8),
-            outputByteCount: 32,
+            salt: CryptoConstants.hkdfSalt,
+            info: CryptoConstants.hkdfInfoEncryption,
+            outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )
 
         // Decrypt

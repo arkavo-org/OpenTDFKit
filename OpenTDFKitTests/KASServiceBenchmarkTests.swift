@@ -77,8 +77,8 @@ final class KASServiceBenchmarkTests: XCTestCase {
                 // Derive a symmetric key
                 let symmetricKey = await cryptoHelper.deriveSymmetricKey(
                     sharedSecret: sharedSecret,
-                    salt: Data("test".utf8),
-                    info: Data("benchmark".utf8),
+                    salt: CryptoConstants.hkdfSalt,
+                    info: CryptoConstants.hkdfInfoEncryption,
                 )
 
                 // Encrypt sample data with proper format

@@ -233,13 +233,9 @@ public actor KASService {
         }
 
         // 2. Derive symmetric key for decryption
-        // Support both v12 and v13 salt values
-        // For a production implementation, you would determine the version from the NanoTDF header
-        // Here we'll create keys using both salts and try both for decryption
-        // Compute salts as SHA256(MAGIC_NUMBER + VERSION) per spec
-        let magicNumber = Data([0x4C, 0x31]) // "L1"
-        let saltV12 = Data(SHA256.hash(data: magicNumber + Data([0x4C]))) // v12: "L1L"
-        let saltV13 = Data(SHA256.hash(data: magicNumber + Data([0x4D]))) // v13: "L1M"
+        // Support both v12 and v13 salt values (computed via spec formula)
+        let saltV12 = CryptoConstants.hkdfSaltV12
+        let saltV13 = CryptoConstants.hkdfSaltV13
 
         let symmetricKeyV12 = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
@@ -369,7 +365,11 @@ public actor KASService {
         symmetricKey: SymmetricKey,
     ) async throws -> Bool {
         // For GMAC binding verification, create a tag with empty ciphertext and the policy data as authenticated data
-        let expectedTag = try AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyData).tag
+        let fullTag = try AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyData).tag
+        guard policyBinding.count == 8 || policyBinding.count == fullTag.count else {
+            return false
+        }
+        let expectedTag = Data(fullTag.prefix(policyBinding.count))
         return policyBinding == expectedTag
     }
 

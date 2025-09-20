@@ -274,14 +274,14 @@ public actor KeyStore {
         }
 
         // 3. Derive the symmetric key using HKDF (v13 specific)
-        //    Salt: "L1M" for v13
-        //    Info: "encryption" for payload symmetric key
+        //    Salt: SHA256("L1" + VERSION)
+        //    Info: empty per spec guidance
         //    Output Byte Count: 32 (for AES-256)
         let symmetricKeyCryptoKit = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8), // v13 salt
-            sharedInfo: Data("encryption".utf8), // Standard info for payload encryption
-            outputByteCount: 32, // For AES-256
+            salt: CryptoConstants.hkdfSaltV13,
+            sharedInfo: CryptoConstants.hkdfInfoEncryption,
+            outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )
 
         return symmetricKeyCryptoKit

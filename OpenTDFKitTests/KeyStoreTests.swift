@@ -136,9 +136,9 @@ final class KeyStoreTests: XCTestCase {
         let sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
         let expectedSymKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8),
-            sharedInfo: Data("encryption".utf8),
-            outputByteCount: 32,
+            salt: CryptoConstants.hkdfSaltV13,
+            sharedInfo: CryptoConstants.hkdfInfoEncryption,
+            outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )
         // Convert both to data for comparison
         let derivedSymKeyData = derivedSymKey.withUnsafeBytes { Data($0) }
@@ -172,9 +172,9 @@ final class KeyStoreTests: XCTestCase {
         let sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
         let expectedSymKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8),
-            sharedInfo: Data("encryption".utf8),
-            outputByteCount: 32,
+            salt: CryptoConstants.hkdfSaltV13,
+            sharedInfo: CryptoConstants.hkdfInfoEncryption,
+            outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )
         // Convert both to data for comparison
         let derivedSymKeyData = derivedSymKey.withUnsafeBytes { Data($0) }
@@ -208,9 +208,9 @@ final class KeyStoreTests: XCTestCase {
         let sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
         let expectedSymKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8),
-            sharedInfo: Data("encryption".utf8),
-            outputByteCount: 32,
+            salt: CryptoConstants.hkdfSaltV13,
+            sharedInfo: CryptoConstants.hkdfInfoEncryption,
+            outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )
         // Convert both to data for comparison
         let derivedSymKeyData = derivedSymKey.withUnsafeBytes { Data($0) }

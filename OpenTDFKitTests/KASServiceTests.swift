@@ -63,8 +63,7 @@ final class KASServiceTests: XCTestCase {
 
         // Derive symmetric key using the same parameters as in createNanoTDF
         // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec
-        let magicAndVersion = Header.magicNumber + Data([Header.version])
-        let salt = Data(SHA256.hash(data: magicAndVersion))
+        let salt = CryptoHelper.computeHKDFSalt(version: Header.version)
 
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
@@ -146,8 +145,7 @@ final class KASServiceTests: XCTestCase {
         let clientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
 
         // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec
-        let magicAndVersion = Header.magicNumber + Data([Header.version])
-        let salt = Data(SHA256.hash(data: magicAndVersion))
+        let salt = CryptoHelper.computeHKDFSalt(version: Header.version)
 
         // Derive the same shared secret that would be used in the TDF creation
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
@@ -215,8 +213,9 @@ final class KASServiceTests: XCTestCase {
          )
 
          // Extract the policy binding from the created NanoTDF
-         let policyBinding = nanoTDF.header.policy.binding
-         XCTAssertNotNil(policyBinding, "Policy binding should be created during NanoTDF creation")
+        let policyBinding = nanoTDF.header.policy.binding
+        XCTAssertNotNil(policyBinding, "Policy binding should be created during NanoTDF creation")
+        XCTAssertEqual(policyBinding?.count, 8, "Policy binding should be 8 bytes (64 bits)")
 
          // Get the KAS public key and derive the same symmetric key that was used for binding
          let kasPublicKey = try kasMetadata.getPublicKey()
@@ -230,8 +229,7 @@ final class KASServiceTests: XCTestCase {
 
          // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec
          // Using v13 (L1M) since createNanoTDF uses v13 by default
-         let magicAndVersion = Header.magicNumber + Data([Header.version])
-         let salt = Data(SHA256.hash(data: magicAndVersion))
+         let salt = CryptoHelper.computeHKDFSalt(version: Header.version)
 
          let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
              using: SHA256.self,

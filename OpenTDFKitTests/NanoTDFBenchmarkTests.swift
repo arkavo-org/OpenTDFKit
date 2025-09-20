@@ -226,8 +226,8 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         // 2. Derive symmetric key
         let symmetricKey = await cryptoHelper.deriveSymmetricKey(
             sharedSecret: sharedSecret,
-            salt: Data("L1L".utf8),
-            info: Data("encryption".utf8),
+            salt: CryptoConstants.hkdfSalt,
+            info: CryptoConstants.hkdfInfoEncryption,
         )
 
         // 3. Create policy binding

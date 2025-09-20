@@ -565,8 +565,7 @@ final class NanoTDFTests: XCTestCase {
 
         // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec
         // Using v12 (L1L) for this test
-        let magicAndVersion = Header.magicNumber + Data([Header.versionV12])
-        let salt = Data(SHA256.hash(data: magicAndVersion))
+        let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
 
         // Convert the shared secret to a symmetric key
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
