@@ -123,7 +123,7 @@ final class KeyStoreTests: XCTestCase {
         // Action
         let derivedSymKey = try await keyStore.derivePayloadSymmetricKey(
             kasPublicKey: kasStoredKeyPair.publicKey,
-            tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey
+            tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey,
         )
 
         // Assertions
@@ -136,9 +136,9 @@ final class KeyStoreTests: XCTestCase {
         let sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
         let expectedSymKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8),
-            sharedInfo: Data("encryption".utf8),
-            outputByteCount: 32
+            salt: CryptoConstants.hkdfSaltV13,
+            sharedInfo: CryptoConstants.hkdfInfoEncryption,
+            outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )
         // Convert both to data for comparison
         let derivedSymKeyData = derivedSymKey.withUnsafeBytes { Data($0) }
@@ -160,7 +160,7 @@ final class KeyStoreTests: XCTestCase {
         // Action
         let derivedSymKey = try await keyStore.derivePayloadSymmetricKey(
             kasPublicKey: kasStoredKeyPair.publicKey,
-            tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey
+            tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey,
         )
 
         // Assertions
@@ -172,9 +172,9 @@ final class KeyStoreTests: XCTestCase {
         let sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
         let expectedSymKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8),
-            sharedInfo: Data("encryption".utf8),
-            outputByteCount: 32
+            salt: CryptoConstants.hkdfSaltV13,
+            sharedInfo: CryptoConstants.hkdfInfoEncryption,
+            outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )
         // Convert both to data for comparison
         let derivedSymKeyData = derivedSymKey.withUnsafeBytes { Data($0) }
@@ -196,7 +196,7 @@ final class KeyStoreTests: XCTestCase {
         // Action
         let derivedSymKey = try await keyStore.derivePayloadSymmetricKey(
             kasPublicKey: kasStoredKeyPair.publicKey,
-            tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey
+            tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey,
         )
 
         // Assertions
@@ -208,9 +208,9 @@ final class KeyStoreTests: XCTestCase {
         let sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
         let expectedSymKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8),
-            sharedInfo: Data("encryption".utf8),
-            outputByteCount: 32
+            salt: CryptoConstants.hkdfSaltV13,
+            sharedInfo: CryptoConstants.hkdfInfoEncryption,
+            outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )
         // Convert both to data for comparison
         let derivedSymKeyData = derivedSymKey.withUnsafeBytes { Data($0) }
@@ -236,7 +236,7 @@ final class KeyStoreTests: XCTestCase {
         do {
             _ = try await keyStore.derivePayloadSymmetricKey(
                 kasPublicKey: kasPublicKeyNotInStore,
-                tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey
+                tdfEphemeralPublicKey: clientEphemeralKeyPair.publicKey,
             )
             XCTFail("Should have thrown KeyStoreError.keyNotFound")
         } catch {

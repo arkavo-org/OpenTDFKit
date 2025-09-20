@@ -33,7 +33,7 @@ final class KASServiceTests: XCTestCase {
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
             policy: &policy,
-            plaintext: originalPlaintext
+            plaintext: originalPlaintext,
         )
 
         // Verify the NanoTDF was created successfully
@@ -62,11 +62,14 @@ final class KASServiceTests: XCTestCase {
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
 
         // Derive symmetric key using the same parameters as in createNanoTDF
+        // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec
+        let salt = CryptoHelper.computeHKDFSalt(version: Header.version)
+
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8), // Use v13 salt
-            sharedInfo: Data("encryption".utf8),
-            outputByteCount: 32
+            salt: salt,
+            sharedInfo: Data(), // Empty per spec section 4
+            outputByteCount: 32,
         )
 
         // 10. Decrypt the NanoTDF payload
@@ -121,7 +124,7 @@ final class KASServiceTests: XCTestCase {
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
             policy: &policy,
-            plaintext: plaintext
+            plaintext: plaintext,
         )
         XCTAssertEqual(nanoTDF.header.toData()[2], Header.version, "NanoTDF header should be v13")
 
@@ -141,13 +144,16 @@ final class KASServiceTests: XCTestCase {
         let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData!)
         let clientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
 
+        // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec
+        let salt = CryptoHelper.computeHKDFSalt(version: Header.version)
+
         // Derive the same shared secret that would be used in the TDF creation
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
         let derivedSymmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8), // Use v13 salt
-            sharedInfo: Data("encryption".utf8),
-            outputByteCount: 32
+            salt: salt,
+            sharedInfo: Data(), // Empty per spec section 4
+            outputByteCount: 32,
         )
 
         // Encrypt the session key with the derived symmetric key
@@ -166,7 +172,7 @@ final class KASServiceTests: XCTestCase {
         let rewrappedKey = try await kasService.processKeyAccess(
             ephemeralPublicKey: ephemeralPublicKey,
             encryptedKey: encryptedKey,
-            kasPublicKey: kasPublicKey
+            kasPublicKey: kasPublicKey,
         )
 
         // Verify the rewrapped key is not empty
@@ -207,8 +213,9 @@ final class KASServiceTests: XCTestCase {
          )
 
          // Extract the policy binding from the created NanoTDF
-         let policyBinding = nanoTDF.header.policy.binding
-         XCTAssertNotNil(policyBinding, "Policy binding should be created during NanoTDF creation")
+        let policyBinding = nanoTDF.header.policy.binding
+        XCTAssertNotNil(policyBinding, "Policy binding should be created during NanoTDF creation")
+        XCTAssertEqual(policyBinding?.count, 8, "Policy binding should be 8 bytes (64 bits)")
 
          // Get the KAS public key and derive the same symmetric key that was used for binding
          let kasPublicKey = try kasMetadata.getPublicKey()
@@ -220,10 +227,14 @@ final class KASServiceTests: XCTestCase {
          let clientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: nanoTDF.header.ephemeralPublicKey)
          let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
 
+         // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec
+         // Using v13 (L1M) since createNanoTDF uses v13 by default
+         let salt = CryptoHelper.computeHKDFSalt(version: Header.version)
+
          let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
              using: SHA256.self,
-             salt: Data("L1L".utf8),
-             sharedInfo: Data("encryption".utf8),
+             salt: salt,
+             sharedInfo: Data(), // Empty per spec section 4
              outputByteCount: 32
          )
 

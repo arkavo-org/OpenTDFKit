@@ -61,7 +61,7 @@ public struct NanoTDF: Sendable {
             ciphertext: payload.ciphertext,
             symmetricKey: symmetricKey,
             nonce: paddedIV,
-            tag: payload.mac
+            tag: payload.mac,
         )
     }
 }
@@ -87,18 +87,19 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
 
     guard let sharedSecret = try await cryptoHelper.deriveSharedSecret(
         keyPair: keyPair,
-        recipientPublicKey: kasPublicKey
+        recipientPublicKey: kasPublicKey,
     ) else {
         throw CryptoHelperError.keyDerivationFailed
     }
 
     // Step 3: Derive the symmetric TDF key from the shared secret using HKDF
-    // Use v13 "L1M" as the version salt
+    // Salt is SHA256(MAGIC_NUMBER + VERSION) per spec section 4
+    let salt = CryptoHelper.computeHKDFSalt(version: Header.version) // v13 by default
     let tdfSymmetricKey = await cryptoHelper.deriveSymmetricKey(
         sharedSecret: sharedSecret,
-        salt: Data("L1M".utf8), // Standard salt for NanoTDF v13
-        info: Data("encryption".utf8), // Standard info for NanoTDF
-        outputByteCount: 32 // AES-256 key size
+        salt: salt,
+        info: Data(), // Empty per spec section 4
+        outputByteCount: 32, // AES-256 key size
     )
 
     // Extract and potentially encrypt the policy body based on the policy type
@@ -126,16 +127,15 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
                 throw PolicyError.missingPolicyKeyAccess
             }
 
-            // CRITICAL: For embedded encrypted policies with key access:
+            // CRITICAL FIX: For embedded encrypted policies with key access:
             // 1. Generate a new ephemeral key pair specifically for policy encryption
-            // 2. Get the Policy KAS public key (which would be provided separately)
+            // 2. Use the KAS public key (not the ephemeral key from keyAccess)
             // 3. Create a new PolicyKeyAccess with our newly generated ephemeral public key
-            // 4. Encrypt policy with the shared secret derived from our ephemeral private key and Policy KAS public key
+            // 4. Encrypt policy with the shared secret derived from our ephemeral private key and KAS public key
 
-            // Get the original Policy KAS public key
-            // Note: In a real implementation, we would look up this key from a keystore based on
-            // the keyAccess.resourceLocator, but for now we'll use the provided key
-            let policyKasPublicKey = keyAccess.ephemeralPublicKey
+            // Use the KAS public key for policy encryption (same KAS as for payload)
+            // The keyAccess.ephemeralPublicKey field should NOT be used as the KAS key
+            let policyKasPublicKey = try kas.getPublicKey()
 
             // Generate a new ephemeral key pair specifically for policy encryption
             guard let policyEphemeralKeyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
@@ -146,24 +146,24 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
             // This is the public key that will be included in the TDF for the Policy KAS to use
             let updatedPolicyKeyAccess = PolicyKeyAccess(
                 resourceLocator: keyAccess.resourceLocator,
-                ephemeralPublicKey: policyEphemeralKeyPair.publicKey
+                ephemeralPublicKey: policyEphemeralKeyPair.publicKey,
             )
 
             // Derive a shared secret between our ephemeral private key and the Policy KAS public key
             guard let policySharedSecret = try await cryptoHelper.deriveSharedSecret(
                 keyPair: policyEphemeralKeyPair,
-                recipientPublicKey: policyKasPublicKey
+                recipientPublicKey: policyKasPublicKey,
             ) else {
                 throw CryptoHelperError.keyDerivationFailed
             }
 
             // Derive symmetric key for policy encryption
-            // NOTE: For NanoTDF v13 ("L1M"), the salt should be SHA256("L1M"). This needs to be updated.
+            // Using same salt computation as payload encryption per spec
             let policySymmetricKey = await cryptoHelper.deriveSymmetricKey(
                 sharedSecret: policySharedSecret,
-                salt: Data("L1M".utf8), // Use v13 salt for policy encryption
-                info: Data("policy_encryption".utf8), // Specific context for policy encryption
-                outputByteCount: 32
+                salt: salt, // Use same computed salt as payload encryption
+                info: Data(), // Empty per spec section 4
+                outputByteCount: 32,
             )
 
             // NanoTDF spec requires IV of 0x000000 for policy encryption
@@ -174,13 +174,13 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
             let (encryptedPolicyData, _) = try await cryptoHelper.encryptPayload(
                 plaintext: body.body,
                 symmetricKey: policySymmetricKey,
-                nonce: adjustedIV
+                nonce: adjustedIV,
             )
 
             // Create new encrypted policy body with the encrypted data and updated key access
             let encryptedBody = EmbeddedPolicyBody(
                 body: encryptedPolicyData,
-                keyAccess: updatedPolicyKeyAccess
+                keyAccess: updatedPolicyKeyAccess,
             )
 
             // Update policy with encrypted body
@@ -199,13 +199,13 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
             let (encryptedPolicyData, _) = try await cryptoHelper.encryptPayload(
                 plaintext: body.body,
                 symmetricKey: tdfSymmetricKey, // Use the main TDF symmetric key
-                nonce: adjustedIV
+                nonce: adjustedIV,
             )
 
             // Create new encrypted policy body with the encrypted data
             let encryptedBody = EmbeddedPolicyBody(
                 body: encryptedPolicyData,
-                keyAccess: nil // No key access for .embeddedEncrypted
+                keyAccess: nil, // No key access for .embeddedEncrypted
             )
 
             // Update policy with encrypted body
@@ -221,7 +221,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
     // Create the GMAC policy binding using the derived TDF symmetric key
     let gmacTag = try await cryptoHelper.createGMACBinding(
         policyBody: policyBody,
-        symmetricKey: tdfSymmetricKey
+        symmetricKey: tdfSymmetricKey,
     )
     // Update the input policy struct with the calculated binding
     policy.binding = gmacTag
@@ -235,7 +235,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
     let (ciphertext, tag) = try await cryptoHelper.encryptPayload(
         plaintext: plaintext,
         symmetricKey: tdfSymmetricKey,
-        nonce: nonce12
+        nonce: nonce12,
     )
 
     // Calculate the total payload length (IV + Ciphertext + Auth Tag)
@@ -247,13 +247,13 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
         length: payloadLength,
         iv: nonce, // Store the original 3-byte IV
         ciphertext: ciphertext,
-        mac: tag // Store the 16-byte authentication tag
+        mac: tag, // Store the 16-byte authentication tag
     )
 
     // Create the PayloadKeyAccess structure for v13 header
     let payloadKeyAccess = PayloadKeyAccess(
         kasEndpointLocator: kas.resourceLocator,
-        kasPublicKey: kasPublicKey // Include the KAS public key in the header
+        kasPublicKey: kasPublicKey, // Include the KAS public key in the header
     )
 
     // Create the Header struct with v13 format
@@ -263,10 +263,10 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
         payloadSignatureConfig: SignatureAndPayloadConfig(
             signed: false, // Signature is added separately
             signatureCurve: kas.curve, // Default to KAS curve, can be overridden if signing
-            payloadCipher: .aes256GCM128 // Using AES-256-GCM with 128-bit tag
+            payloadCipher: .aes256GCM128, // Using AES-256-GCM with 128-bit tag
         ),
         policy: policy, // Use the policy object (now with binding)
-        ephemeralPublicKey: keyPair.publicKey // The compressed ephemeral public key
+        ephemeralPublicKey: keyPair.publicKey, // The compressed ephemeral public key
     )
 
     // Construct and return the final NanoTDF object (without signature initially)
@@ -289,7 +289,7 @@ public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signi
     // The helper function abstracts away DER encoding details if necessary.
     guard let signatureData = try await cryptoHelper.generateECDSASignature(
         privateKey: privateKey,
-        message: message
+        message: message,
     ) else {
         // Throw an error if signature generation unexpectedly returns nil
         throw SignatureError.invalidSigning
@@ -410,7 +410,7 @@ public struct Header: Sendable {
         // We represent this with an empty Data object for kasPublicKey.
         payloadKeyAccess = PayloadKeyAccess(
             kasEndpointLocator: kas,
-            kasPublicKey: Data() // For v12, KAS public key is empty.
+            kasPublicKey: Data(), // For v12, KAS public key is empty.
         )
         self.policyBindingConfig = policyBindingConfig
         self.payloadSignatureConfig = payloadSignatureConfig

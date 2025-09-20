@@ -152,8 +152,8 @@ public class BinaryParser {
                 132
             }
         } else {
-            // GMAC Tag Binding
-            16
+            // GMAC Tag Binding - 64 bits (8 bytes) per spec section 3.3.1.3
+            8
         }
 //        print("bindingSize", bindingSize)
         return read(length: bindingSize)
@@ -257,7 +257,7 @@ public class BinaryParser {
         // We represent this with an empty Data object for kasPublicKey.
         let payloadKeyAccess = PayloadKeyAccess(
             kasEndpointLocator: kas,
-            kasPublicKey: Data() // For v12, KAS public key is empty.
+            kasPublicKey: Data(), // For v12, KAS public key is empty.
         )
 
         return Header(
@@ -265,7 +265,7 @@ public class BinaryParser {
             policyBindingConfig: policyBindingConfig,
             payloadSignatureConfig: payloadSignatureConfig,
             policy: policy,
-            ephemeralPublicKey: ephemeralPublicKey
+            ephemeralPublicKey: ephemeralPublicKey,
         )
     }
 
@@ -299,7 +299,7 @@ public class BinaryParser {
             policyBindingConfig: policyBindingConfig,
             payloadSignatureConfig: payloadSignatureConfig,
             policy: policy,
-            ephemeralPublicKey: ephemeralPublicKey
+            ephemeralPublicKey: ephemeralPublicKey,
         )
     }
 

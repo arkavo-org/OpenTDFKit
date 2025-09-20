@@ -127,19 +127,19 @@ public actor KeyStore {
             let privateKey = P521.KeyAgreement.PrivateKey()
             return StoredKeyPair(
                 publicKey: privateKey.publicKey.compressedRepresentation,
-                privateKey: privateKey.rawRepresentation
+                privateKey: privateKey.rawRepresentation,
             )
         case .secp384r1:
             let privateKey = P384.KeyAgreement.PrivateKey()
             return StoredKeyPair(
                 publicKey: privateKey.publicKey.compressedRepresentation,
-                privateKey: privateKey.rawRepresentation
+                privateKey: privateKey.rawRepresentation,
             )
         case .secp256r1:
             let privateKey = P256.KeyAgreement.PrivateKey()
             return StoredKeyPair(
                 publicKey: privateKey.publicKey.compressedRepresentation,
-                privateKey: privateKey.rawRepresentation
+                privateKey: privateKey.rawRepresentation,
             )
         }
     }
@@ -208,7 +208,7 @@ public actor KeyStore {
 
             let keyPair = StoredKeyPair(
                 publicKey: Data(publicKey),
-                privateKey: Data(privateKey)
+                privateKey: Data(privateKey),
             )
 
             let identifier = KeyPairIdentifier(publicKey: keyPair.publicKey)
@@ -244,7 +244,7 @@ public actor KeyStore {
     /// - Throws: KeyStoreError or other errors if key derivation fails.
     public func derivePayloadSymmetricKey(
         kasPublicKey: Data,
-        tdfEphemeralPublicKey: Data
+        tdfEphemeralPublicKey: Data,
     ) async throws -> SymmetricKey {
         // 1. Get the KAS's private key from this KeyStore
         // The kasPublicKeyForLookup is the KAS's own public key, used to identify its private key.
@@ -274,14 +274,14 @@ public actor KeyStore {
         }
 
         // 3. Derive the symmetric key using HKDF (v13 specific)
-        //    Salt: "L1M" for v13
-        //    Info: "encryption" for payload symmetric key
+        //    Salt: SHA256("L1" + VERSION)
+        //    Info: empty per spec guidance
         //    Output Byte Count: 32 (for AES-256)
         let symmetricKeyCryptoKit = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8), // v13 salt
-            sharedInfo: Data("encryption".utf8), // Standard info for payload encryption
-            outputByteCount: 32 // For AES-256
+            salt: CryptoConstants.hkdfSaltV13,
+            sharedInfo: CryptoConstants.hkdfInfoEncryption,
+            outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )
 
         return symmetricKeyCryptoKit

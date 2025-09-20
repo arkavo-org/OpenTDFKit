@@ -1,4 +1,4 @@
-// swift-tools-version:6.0
+// swift-tools-version:6.2
 import PackageDescription
 
 let package = Package(
@@ -12,11 +12,11 @@ let package = Package(
     products: [
         .library(
             name: "OpenTDFKit",
-            targets: ["OpenTDFKit"]
+            targets: ["OpenTDFKit"],
         ),
         .executable(
             name: "OpenTDFKitProfiler",
-            targets: ["OpenTDFKitProfiler"]
+            targets: ["OpenTDFKitProfiler"],
         ),
     ],
     dependencies: [],
@@ -24,17 +24,17 @@ let package = Package(
         .target(
             name: "OpenTDFKit",
             dependencies: [],
-            path: "OpenTDFKit"
+            path: "OpenTDFKit",
         ),
         .executableTarget(
             name: "OpenTDFKitProfiler",
             dependencies: ["OpenTDFKit"],
-            path: "OpenTDFKitProfiler"
+            path: "OpenTDFKitProfiler",
         ),
         .testTarget(
             name: "OpenTDFKitTests",
             dependencies: ["OpenTDFKit"],
-            path: "OpenTDFKitTests"
+            path: "OpenTDFKitTests",
         ),
-    ]
+    ],
 )

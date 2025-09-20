@@ -189,7 +189,7 @@ final class NanoTDFTests: XCTestCase {
             _ = SymmetricKey(size: .bits256)
 
             // Combine the IV-nonce, ciphertext, and MAC-tag
-            let _ = payload.iv + payload.ciphertext + payload.mac
+            _ = payload.iv + payload.ciphertext + payload.mac
 
             // Decrypt the payload
 //            let sealedBox = try AES.GCM.SealedBox(combined: combinedData)
@@ -415,7 +415,7 @@ final class NanoTDFTests: XCTestCase {
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
             policy: &policy,
-            plaintext: plaintext
+            plaintext: plaintext,
         )
 
         // Verify the NanoTDF was created properly
@@ -460,7 +460,7 @@ final class NanoTDFTests: XCTestCase {
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
             policy: &policy,
-            plaintext: plaintext
+            plaintext: plaintext,
         )
 
         // Verify the NanoTDF was created properly
@@ -502,7 +502,7 @@ final class NanoTDFTests: XCTestCase {
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
             policy: &policy,
-            plaintext: plaintext
+            plaintext: plaintext,
         )
 
         // Verify the NanoTDF was created properly
@@ -544,7 +544,7 @@ final class NanoTDFTests: XCTestCase {
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
             policy: &policy,
-            plaintext: plaintext
+            plaintext: plaintext,
         )
 
         // Extract the policy binding from the created NanoTDF
@@ -563,20 +563,27 @@ final class NanoTDFTests: XCTestCase {
         let clientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: nanoTDF.header.ephemeralPublicKey)
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
 
+        // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec
+        // Using v12 (L1L) for this test
+        let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
+
         // Convert the shared secret to a symmetric key
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1L".utf8),
-            sharedInfo: Data("encryption".utf8),
-            outputByteCount: 32
+            salt: salt,
+            sharedInfo: Data(), // Empty per spec section 4
+            outputByteCount: 32,
         )
 
         // Create GMAC tag for verification - do it locally instead of using the actor method
-        let expectedTag = try AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyData).tag
+        let fullTag = try AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyData).tag
+        // Per spec, GMAC binding should be truncated to 8 bytes (64 bits)
+        let expectedTag = Data(fullTag.prefix(8))
 
         // Just verify that the binding is not empty - we can't predict the exact value
-        // in a test but we can make sure it was generated with a valid size
-        XCTAssertEqual(policyBinding!.count, expectedTag.count, "Policy binding should have the same length as a GMAC tag")
+        // in a test but we can make sure it was generated with a valid size (8 bytes per spec)
+        XCTAssertEqual(policyBinding!.count, 8, "Policy binding should be 8 bytes (64 bits) per spec")
+        XCTAssertEqual(policyBinding!.count, expectedTag.count, "Policy binding should have the same length as truncated GMAC tag")
 
         // Test with invalid binding
         let invalidBinding = Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08])
