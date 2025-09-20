@@ -20,7 +20,7 @@ jobs:
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
         with:
-          swift-version: 6.2
+          swift-version: "6.0"
         
       - name: Print Swift version
         run: swift --version
@@ -43,7 +43,7 @@ jobs:
           sudo cp .build/release/swiftformat /usr/local/bin/
 
       - name: Run SwiftFormat
-        run: swiftformat --swiftversion 6.2 . --lint
+        run: swiftformat --swiftversion 6.0 . --lint
         
 #      - name: Run SwiftLint
 #        run: swiftlint --strict
@@ -57,7 +57,7 @@ jobs:
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
         with:
-          swift-version: 6.2
+          swift-version: "6.0"
         
       - name: Print Swift version
         run: swift --version
@@ -88,7 +88,7 @@ jobs:
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
         with:
-          swift-version: 6.2
+          swift-version: "6.0"
 
       - name: Print Swift version
         run: swift --version
@@ -116,7 +116,7 @@ jobs:
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
         with:
-          swift-version: 6.2
+          swift-version: "6.0"
         
       - name: Print Swift version
         run: swift --version
