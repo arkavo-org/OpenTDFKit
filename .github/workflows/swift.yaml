@@ -12,7 +12,7 @@ env:
 
 jobs:
   lint:
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,30 +20,36 @@ jobs:
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
         with:
-          swift-version: 6
+          swift-version: 6.2
         
       - name: Print Swift version
         run: swift --version
           
-      - name: Cache Homebrew dependencies
-        id: cache-brew
+      - name: Cache SwiftFormat
+        id: cache-swiftformat
         uses: actions/cache@v4
         with:
-          path: |
-            ~/Library/Caches/Homebrew
-            /usr/local/Homebrew
-          key: ${{ runner.os }}-brew
+          path: /usr/local/bin/swiftformat
+          key: ${{ runner.os }}-swiftformat-0.54.0
           restore-keys: |
-            ${{ runner.os }}-brew-
+            ${{ runner.os }}-swiftformat-
+
+      - name: Install SwiftFormat
+        if: steps.cache-swiftformat.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch 0.54.0 https://github.com/nicklockwood/SwiftFormat.git
+          cd SwiftFormat
+          swift build -c release --disable-sandbox
+          sudo cp .build/release/swiftformat /usr/local/bin/
 
       - name: Run SwiftFormat
-        run: swiftformat --swiftversion 6.0 . --lint
+        run: swiftformat --swiftversion 6.2 . --lint
         
 #      - name: Run SwiftLint
 #        run: swiftlint --strict
 
   build:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -51,7 +57,7 @@ jobs:
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
         with:
-          swift-version: 6
+          swift-version: 6.2
         
       - name: Print Swift version
         run: swift --version
@@ -73,36 +79,36 @@ jobs:
       - name: Build Release
         run: swift build -c release -v
 
-#  test:
-#    runs-on: macos-latest
-#    steps:
-#      - name: Checkout repository
-#        uses: actions/checkout@v4
-#        
-#      - name: Setup Swift
-#        uses: swift-actions/setup-swift@v2
-#        with:
-#          swift-version: 6
-#        
-#      - name: Print Swift version
-#        run: swift --version
-#          
-#      - name: Cache Swift packages
-#        id: cache-swift
-#        uses: actions/cache@v4
-#        with:
-#          path: |
-#            .build
-#            ~/.swiftpm
-#          key: ${{ runner.os }}-swift-${{ hashFiles('Package.swift') }}
-#          restore-keys: |
-#            ${{ runner.os }}-swift-
-#            
-#      - name: Run tests
-#        run: swift test
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: 6.2
+
+      - name: Print Swift version
+        run: swift --version
+
+      - name: Cache Swift packages
+        id: cache-swift
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/.swiftpm
+          key: ${{ runner.os }}-swift-${{ hashFiles('Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swift-
+
+      - name: Run tests
+        run: swift test
 
   benchmark:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -110,7 +116,7 @@ jobs:
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
         with:
-          swift-version: 6
+          swift-version: 6.2
         
       - name: Print Swift version
         run: swift --version
