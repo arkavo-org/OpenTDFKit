@@ -54,7 +54,7 @@ public struct NanoTDF: Sendable {
     /// - Throws: Errors from `CryptoHelper` or `CryptoKit` if decryption fails (e.g., incorrect key, corrupted data).
     /// Shared CryptoHelper instance to avoid per-call instantiation overhead
     private static let sharedCryptoHelper = CryptoHelper()
-    
+
     public func getPayloadPlaintext(symmetricKey: SymmetricKey) async throws -> Data {
         // Use shared CryptoHelper instance to avoid per-call instantiation overhead
         // The NanoTDF spec uses a 3-byte IV, but AES-GCM typically requires a 12-byte nonce.

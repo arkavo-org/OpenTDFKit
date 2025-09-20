@@ -96,30 +96,9 @@ public actor KeyStore {
 
     // Batch generation method
     public func generateAndStoreKeyPairs(count: Int) async throws {
-        // Use the optimized implementation
-        try await generateAndStoreKeyPairsOptimized(count: count)
-    }< count {
-                group.addTask {
-                    await self.generateKeyPair() // Now calling a throwing function
-                }
-            }
+        // Capture immutable state before leaving the actor context
+        let curveSnapshot = curve
 
-            for try await keyPair in group {
-                let identifier = KeyPairIdentifier(publicKey: keyPair.publicKey)
-                tempPairs.append((identifier, keyPair))
-            }
-        }
-
-        // Batch insert
-        for (identifier, keyPair) in tempPairs {
-            keyPairs[identifier] = keyPair
-            totalBytesStored += curve.publicKeyLength + curve.privateKeyLength
-        }
-    }
-
-    /// Optimized batch generation method that creates keys outside the actor
-    /// for maximum concurrency, then batch inserts them into the store
-    public func generateAndStoreKeyPairsOptimized(count: Int) async throws {
         // Pre-allocate space for results
         var tempPairs: [(KeyPairIdentifier, StoredKeyPair)] = []
         tempPairs.reserveCapacity(count)
@@ -128,8 +107,7 @@ public actor KeyStore {
         try await withThrowingTaskGroup(of: StoredKeyPair.self) { group in
             for _ in 0 ..< count {
                 group.addTask {
-                    // Key generation happens outside the actor, allowing true concurrency
-                    self.generateKeyPair()
+                    KeyStore.makeKeyPair(curve: curveSnapshot)
                 }
             }
 
@@ -141,18 +119,21 @@ public actor KeyStore {
         }
 
         // Batch insert all key pairs atomically
-        // This minimizes actor hops and ensures thread-safe insertion
         let totalBytes = tempPairs.count * (curve.publicKeyLength + curve.privateKeyLength)
         keyPairs.reserveCapacity(keyPairs.count + tempPairs.count)
-        
+
         for (identifier, keyPair) in tempPairs {
             keyPairs[identifier] = keyPair
         }
-        
+
         totalBytesStored += totalBytes
     }
 
-    public func generateKeyPair() -> StoredKeyPair { // Made throwing
+    public func generateKeyPair() -> StoredKeyPair {
+        KeyStore.makeKeyPair(curve: curve)
+    }
+
+    private static func makeKeyPair(curve: Curve) -> StoredKeyPair {
         // Since curve is a stored property, no need for switch
         switch curve {
         case .secp521r1:
