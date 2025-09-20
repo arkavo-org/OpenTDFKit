@@ -79,7 +79,7 @@ actor CryptoHelper {
     ///   - publicKey: The corresponding P256 public key.
     /// - Returns: The raw shared secret as `Data`.
     /// - Throws: `CryptoKitError` if key agreement fails.
-    public static func customECDH(privateKey: P256.KeyAgreement.PrivateKey, publicKey: P256.KeyAgreement.PublicKey) throws -> Data {
+    static func customECDH(privateKey: P256.KeyAgreement.PrivateKey, publicKey: P256.KeyAgreement.PublicKey) throws -> Data {
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
         // Extract raw bytes from the SharedSecret object
         return sharedSecret.withUnsafeBytes { Data($0) }
@@ -91,7 +91,7 @@ actor CryptoHelper {
     ///   - publicKey: The corresponding P384 public key.
     /// - Returns: The raw shared secret as `Data`.
     /// - Throws: `CryptoKitError` if key agreement fails.
-    public static func customECDH(privateKey: P384.KeyAgreement.PrivateKey, publicKey: P384.KeyAgreement.PublicKey) throws -> Data {
+    static func customECDH(privateKey: P384.KeyAgreement.PrivateKey, publicKey: P384.KeyAgreement.PublicKey) throws -> Data {
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
         return sharedSecret.withUnsafeBytes { Data($0) }
     }
@@ -102,7 +102,7 @@ actor CryptoHelper {
     ///   - publicKey: The corresponding P521 public key.
     /// - Returns: The raw shared secret as `Data`.
     /// - Throws: `CryptoKitError` if key agreement fails.
-    public static func customECDH(privateKey: P521.KeyAgreement.PrivateKey, publicKey: P521.KeyAgreement.PublicKey) throws -> Data {
+    static func customECDH(privateKey: P521.KeyAgreement.PrivateKey, publicKey: P521.KeyAgreement.PublicKey) throws -> Data {
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
         return sharedSecret.withUnsafeBytes { Data($0) }
     }
@@ -110,35 +110,35 @@ actor CryptoHelper {
     /// Returns the byte representation for a given KAS key curve.
     /// - Parameter curve: The `KasKeyCurve` enum value.
     /// - Returns: The `UInt8` byte value for the curve.
-    public static func kasKeyCurveByte(for curve: KasKeyCurve) -> UInt8 {
+    static func kasKeyCurveByte(for curve: KasKeyCurve) -> UInt8 {
         curve.rawValue
     }
 
     /// Returns the `KasKeyCurve` enum value for a given byte.
     /// - Parameter byte: The `UInt8` byte value representing the curve.
     /// - Returns: An optional `KasKeyCurve` if the byte corresponds to a defined curve, otherwise `nil`.
-    public static func curve(fromKasKeyCurveByte byte: UInt8) -> KasKeyCurve? {
+    static func curve(fromKasKeyCurveByte byte: UInt8) -> KasKeyCurve? {
         KasKeyCurve(rawValue: byte)
     }
 
     /// Returns the X9.62 compressed representation of a P256 public key.
     /// - Parameter publicKey: The `P256.KeyAgreement.PublicKey`.
     /// - Returns: The compressed public key as `Data`.
-    public static func getCompressedRepresentation(for publicKey: P256.KeyAgreement.PublicKey) -> Data {
+    static func getCompressedRepresentation(for publicKey: P256.KeyAgreement.PublicKey) -> Data {
         publicKey.compressedRepresentation
     }
 
     /// Returns the X9.62 compressed representation of a P384 public key.
     /// - Parameter publicKey: The `P384.KeyAgreement.PublicKey`.
     /// - Returns: The compressed public key as `Data`.
-    public static func getCompressedRepresentation(for publicKey: P384.KeyAgreement.PublicKey) -> Data {
+    static func getCompressedRepresentation(for publicKey: P384.KeyAgreement.PublicKey) -> Data {
         publicKey.compressedRepresentation
     }
 
     /// Returns the X9.62 compressed representation of a P521 public key.
     /// - Parameter publicKey: The `P521.KeyAgreement.PublicKey`.
     /// - Returns: The compressed public key as `Data`.
-    public static func getCompressedRepresentation(for publicKey: P521.KeyAgreement.PublicKey) -> Data {
+    static func getCompressedRepresentation(for publicKey: P521.KeyAgreement.PublicKey) -> Data {
         publicKey.compressedRepresentation
     }
 
@@ -410,7 +410,7 @@ actor CryptoHelper {
     ///   - info: Optional context/application-specific info string for HKDF.
     ///   - count: The desired output length in bytes (defaults to 32).
     /// - Returns: The derived key as `Data`.
-    public static func hkdf(salt: Data, ikm: Data, info: String?, count: Int = 32) -> Data {
+    static func hkdf(salt: Data, ikm: Data, info: String?, count: Int = 32) -> Data {
         // Convert SharedSecret (as ikm) to SymmetricKey for HKDF input
         let symmetricIkm = SymmetricKey(data: ikm)
 
