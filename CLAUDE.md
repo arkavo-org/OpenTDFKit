@@ -30,7 +30,7 @@ swift build
 swift build -c release
 
 # Format code (required before submitting PRs)
-swiftformat --swiftversion 6.0 .
+swiftformat --swiftversion 6.2 .
 
 # Build for profiling
 swift build -c release

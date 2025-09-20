@@ -236,17 +236,22 @@ public actor KASService {
         // Support both v12 and v13 salt values
         // For a production implementation, you would determine the version from the NanoTDF header
         // Here we'll create keys using both salts and try both for decryption
+        // Compute salts as SHA256(MAGIC_NUMBER + VERSION) per spec
+        let magicNumber = Data([0x4C, 0x31]) // "L1"
+        let saltV12 = Data(SHA256.hash(data: magicNumber + Data([0x4C]))) // v12: "L1L"
+        let saltV13 = Data(SHA256.hash(data: magicNumber + Data([0x4D]))) // v13: "L1M"
+
         let symmetricKeyV12 = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1L".utf8), // v12 salt
-            sharedInfo: Data("encryption".utf8),
+            salt: saltV12,
+            sharedInfo: Data(), // Empty per spec section 4
             outputByteCount: 32
         )
 
         let symmetricKeyV13 = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8), // v13 salt
-            sharedInfo: Data("encryption".utf8),
+            salt: saltV13,
+            sharedInfo: Data(), // Empty per spec section 4
             outputByteCount: 32
         )
 
@@ -303,8 +308,8 @@ public actor KASService {
         // 6. Derive new symmetric key for encryption (using v13 format)
         let newSymmetricKey = newSharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8), // Always use v13 salt for new keys
-            sharedInfo: Data("encryption".utf8),
+            salt: saltV13, // Always use v13 salt for new keys
+            sharedInfo: Data(), // Empty per spec section 4
             outputByteCount: 32
         )
 

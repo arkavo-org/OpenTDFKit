@@ -62,10 +62,14 @@ final class KASServiceTests: XCTestCase {
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
 
         // Derive symmetric key using the same parameters as in createNanoTDF
+        // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec
+        let magicAndVersion = Header.magicNumber + Data([Header.version])
+        let salt = Data(SHA256.hash(data: magicAndVersion))
+
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8), // Use v13 salt
-            sharedInfo: Data("encryption".utf8),
+            salt: salt,
+            sharedInfo: Data(), // Empty per spec section 4
             outputByteCount: 32
         )
 
@@ -141,12 +145,16 @@ final class KASServiceTests: XCTestCase {
         let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData!)
         let clientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
 
+        // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec
+        let magicAndVersion = Header.magicNumber + Data([Header.version])
+        let salt = Data(SHA256.hash(data: magicAndVersion))
+
         // Derive the same shared secret that would be used in the TDF creation
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
         let derivedSymmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data("L1M".utf8), // Use v13 salt
-            sharedInfo: Data("encryption".utf8),
+            salt: salt,
+            sharedInfo: Data(), // Empty per spec section 4
             outputByteCount: 32
         )
 
@@ -220,10 +228,15 @@ final class KASServiceTests: XCTestCase {
          let clientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: nanoTDF.header.ephemeralPublicKey)
          let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
 
+         // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec
+         // Using v13 (L1M) since createNanoTDF uses v13 by default
+         let magicAndVersion = Header.magicNumber + Data([Header.version])
+         let salt = Data(SHA256.hash(data: magicAndVersion))
+
          let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
              using: SHA256.self,
-             salt: Data("L1L".utf8),
-             sharedInfo: Data("encryption".utf8),
+             salt: salt,
+             sharedInfo: Data(), // Empty per spec section 4
              outputByteCount: 32
          )
 

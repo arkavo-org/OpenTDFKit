@@ -75,22 +75,14 @@ final class EncryptedPolicyTests: XCTestCase {
         XCTAssertEqual(serializedData, reserializedData, "Serialized data should match after round-trip")
     }
 
-    // TODO: Fix encrypted policy test when the required infrastructure is in place
-    // Requires working with KeyStore and proper policy KAS setup
-    func disabled_testEncryptedPolicyWithKeyAccess() async throws {
-        // Create KAS ResourceLocator
+    // Test encrypted policy with key access using the same KAS for both payload and policy
+    func testEncryptedPolicyWithKeyAccess() async throws {
+        // Create KAS ResourceLocator (same KAS for both payload and policy)
         let kasRL = ResourceLocator(protocolEnum: .http, body: "kas.example.org")!
-
-        // Create Policy KAS ResourceLocator (could be the same or different from main KAS)
-        let policyKasRL = ResourceLocator(protocolEnum: .http, body: "policy-kas.example.org")!
 
         // Generate a key pair for the KAS
         let kasKeyPair = P256.KeyAgreement.PrivateKey()
         let kasPubKey = kasKeyPair.publicKey
-
-        // Generate a key pair for the policy KAS
-        let policyKasKeyPair = P256.KeyAgreement.PrivateKey()
-        let policyKasPubKey = policyKasKeyPair.publicKey
 
         // Create KAS metadata
         let kasMetadata = try KasMetadata(resourceLocator: kasRL, publicKey: kasPubKey, curve: .secp256r1)
@@ -104,10 +96,13 @@ final class EncryptedPolicyTests: XCTestCase {
         }
         """.data(using: .utf8)!
 
-        // Create PolicyKeyAccess with policy KAS information
+        // Create PolicyKeyAccess with a dummy ephemeral key (will be replaced during encryption)
+        // The ephemeralPublicKey here is just a placeholder - it will be replaced with the
+        // newly generated ephemeral key during policy encryption
+        let dummyEphemeralKey = P256.KeyAgreement.PrivateKey().publicKey.compressedRepresentation
         let policyKeyAccess = PolicyKeyAccess(
-            resourceLocator: policyKasRL,
-            ephemeralPublicKey: policyKasPubKey.compressedRepresentation
+            resourceLocator: kasRL, // Same KAS as for payload
+            ephemeralPublicKey: dummyEphemeralKey
         )
 
         // Create EmbeddedPolicyBody with plaintext policy and key access

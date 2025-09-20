@@ -213,15 +213,17 @@ actor CryptoHelper {
     /// Creates a GMAC (Galois/Message Authentication Code) binding tag for policy data.
     /// This is achieved by performing an AES-GCM seal operation with empty plaintext
     /// and the policy data as authenticated data (AAD). The resulting tag serves as the binding.
+    /// Per NanoTDF spec section 3.3.1.3, the GMAC tag is truncated to 64 bits (8 bytes).
     /// - Parameters:
     ///   - policyBody: The policy data to bind.
     ///   - symmetricKey: The symmetric key (derived from ECDH/HKDF) to use for generating the tag.
-    /// - Returns: The calculated GMAC tag as `Data`.
+    /// - Returns: The calculated GMAC tag truncated to 8 bytes as `Data`.
     /// - Throws: `CryptoKitError` if the AES-GCM seal operation fails.
     func createGMACBinding(policyBody: Data, symmetricKey: SymmetricKey) throws -> Data {
         // Seal empty data, authenticating the policyBody. The tag is the GMAC binding.
         let sealedBox = try AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyBody)
-        return sealedBox.tag
+        // Truncate to 64 bits (8 bytes) per spec section 3.3.1.3
+        return Data(sealedBox.tag.prefix(8))
     }
 
     /// Generates a cryptographically secure random nonce (IV) of the specified length.

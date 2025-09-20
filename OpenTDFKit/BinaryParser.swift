@@ -152,8 +152,8 @@ public class BinaryParser {
                 132
             }
         } else {
-            // GMAC Tag Binding
-            16
+            // GMAC Tag Binding - 64 bits (8 bytes) per spec section 3.3.1.3
+            8
         }
 //        print("bindingSize", bindingSize)
         return read(length: bindingSize)

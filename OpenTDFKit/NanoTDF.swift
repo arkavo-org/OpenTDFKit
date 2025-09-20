@@ -1,6 +1,15 @@
 @preconcurrency import CryptoKit
 import Foundation
 
+/// Computes the HKDF salt according to NanoTDF spec section 4.
+/// The salt is SHA256(MAGIC_NUMBER + VERSION).
+/// - Parameter version: The NanoTDF version byte (0x4C for v12, 0x4D for v13)
+/// - Returns: The computed salt as Data
+private func computeHKDFSalt(version: UInt8) -> Data {
+    let magicAndVersion = Header.magicNumber + Data([version])
+    return Data(SHA256.hash(data: magicAndVersion))
+}
+
 /// Represents a NanoTDF (Nano Trusted Data Format) object, containing a header, payload, and optional signature.
 /// Conforms to `Sendable` for safe use in concurrent contexts.
 public struct NanoTDF: Sendable {
@@ -93,11 +102,12 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
     }
 
     // Step 3: Derive the symmetric TDF key from the shared secret using HKDF
-    // Use v13 "L1M" as the version salt
+    // Salt is SHA256(MAGIC_NUMBER + VERSION) per spec section 4
+    let salt = computeHKDFSalt(version: Header.version) // v13 by default
     let tdfSymmetricKey = await cryptoHelper.deriveSymmetricKey(
         sharedSecret: sharedSecret,
-        salt: Data("L1M".utf8), // Standard salt for NanoTDF v13
-        info: Data("encryption".utf8), // Standard info for NanoTDF
+        salt: salt,
+        info: Data(), // Empty per spec section 4
         outputByteCount: 32 // AES-256 key size
     )
 
@@ -126,16 +136,15 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
                 throw PolicyError.missingPolicyKeyAccess
             }
 
-            // CRITICAL: For embedded encrypted policies with key access:
+            // CRITICAL FIX: For embedded encrypted policies with key access:
             // 1. Generate a new ephemeral key pair specifically for policy encryption
-            // 2. Get the Policy KAS public key (which would be provided separately)
+            // 2. Use the KAS public key (not the ephemeral key from keyAccess)
             // 3. Create a new PolicyKeyAccess with our newly generated ephemeral public key
-            // 4. Encrypt policy with the shared secret derived from our ephemeral private key and Policy KAS public key
+            // 4. Encrypt policy with the shared secret derived from our ephemeral private key and KAS public key
 
-            // Get the original Policy KAS public key
-            // Note: In a real implementation, we would look up this key from a keystore based on
-            // the keyAccess.resourceLocator, but for now we'll use the provided key
-            let policyKasPublicKey = keyAccess.ephemeralPublicKey
+            // Use the KAS public key for policy encryption (same KAS as for payload)
+            // The keyAccess.ephemeralPublicKey field should NOT be used as the KAS key
+            let policyKasPublicKey = try kas.getPublicKey()
 
             // Generate a new ephemeral key pair specifically for policy encryption
             guard let policyEphemeralKeyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
@@ -158,11 +167,11 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
             }
 
             // Derive symmetric key for policy encryption
-            // NOTE: For NanoTDF v13 ("L1M"), the salt should be SHA256("L1M"). This needs to be updated.
+            // Using same salt computation as payload encryption per spec
             let policySymmetricKey = await cryptoHelper.deriveSymmetricKey(
                 sharedSecret: policySharedSecret,
-                salt: Data("L1M".utf8), // Use v13 salt for policy encryption
-                info: Data("policy_encryption".utf8), // Specific context for policy encryption
+                salt: salt, // Use same computed salt as payload encryption
+                info: Data(), // Empty per spec section 4
                 outputByteCount: 32
             )
 

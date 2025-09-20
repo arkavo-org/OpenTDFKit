@@ -108,7 +108,7 @@ sequenceDiagram
 ### Format
 
 ```shell
-swiftformat --swiftversion 6.0 .
+swiftformat --swiftversion 6.2 .
 ```
 
 ### Profile
@@ -179,5 +179,4 @@ Below are the benchmark results showing the performance characteristics of the m
 | Policy binding verification | ~0.002ms (500,000+ verifications/sec) |
 
 These benchmarks were measured on an Apple M1 Max processor using Swift 6.0 in release mode.
-
 
