@@ -12,57 +12,21 @@ env:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         
-      - name: Install Swift 6.2
-        run: |
-          # Remove any existing Swift installation
-          sudo rm -rf /usr/bin/swift /usr/bin/swiftc
-
-          # Install dependencies
-          sudo apt-get update
-          sudo apt-get install -y binutils git gnupg2 libc6-dev libcurl4-openssl-dev libedit2 libgcc-9-dev libpython3.8 libsqlite3-0 libstdc++-9-dev libxml2-dev libz3-dev pkg-config tzdata unzip zlib1g-dev curl
-
-          # Download and install Swift 6.2
-          wget https://download.swift.org/swift-6.2-release/ubuntu2204/swift-6.2-RELEASE/swift-6.2-RELEASE-ubuntu22.04.tar.gz
-          tar xzf swift-6.2-RELEASE-ubuntu22.04.tar.gz
-          sudo mv swift-6.2-RELEASE-ubuntu22.04 /usr/share/swift
-
-          # Create symlinks for system-wide access
-          sudo ln -sf /usr/share/swift/usr/bin/swift /usr/bin/swift
-          sudo ln -sf /usr/share/swift/usr/bin/swiftc /usr/bin/swiftc
-          sudo ln -sf /usr/share/swift/usr/bin/swift-build /usr/bin/swift-build
-          sudo ln -sf /usr/share/swift/usr/bin/swift-package /usr/bin/swift-package
-          sudo ln -sf /usr/share/swift/usr/bin/swift-test /usr/bin/swift-test
-
-          # Add to PATH for this step and future steps
-          echo "/usr/share/swift/usr/bin" >> $GITHUB_PATH
-        
-      - name: Verify Swift 6.2 installation
-        run: |
-          swift --version
-          which swift
-          swift --version | grep -q "6.2" || (echo "Error: Swift 6.2 not properly installed" && exit 1)
-          
-      - name: Cache SwiftFormat
-        id: cache-swiftformat
-        uses: actions/cache@v4
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
         with:
-          path: /usr/local/bin/swiftformat
-          key: ${{ runner.os }}-swiftformat-0.54.0
-          restore-keys: |
-            ${{ runner.os }}-swiftformat-
-
+          xcode-version: latest-stable
+        
+      - name: Print Swift version
+        run: swift --version
+          
       - name: Install SwiftFormat
-        if: steps.cache-swiftformat.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 --branch 0.54.0 https://github.com/nicklockwood/SwiftFormat.git
-          cd SwiftFormat
-          swift build -c release --disable-sandbox
-          sudo cp .build/release/swiftformat /usr/local/bin/
+        run: brew install swiftformat
 
       - name: Run SwiftFormat
         run: swiftformat --swiftversion 6.2 . --lint
@@ -71,40 +35,18 @@ jobs:
 #        run: swiftlint --strict
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         
-      - name: Install Swift 6.2
-        run: |
-          # Remove any existing Swift installation
-          sudo rm -rf /usr/bin/swift /usr/bin/swiftc
-
-          # Install dependencies
-          sudo apt-get update
-          sudo apt-get install -y binutils git gnupg2 libc6-dev libcurl4-openssl-dev libedit2 libgcc-9-dev libpython3.8 libsqlite3-0 libstdc++-9-dev libxml2-dev libz3-dev pkg-config tzdata unzip zlib1g-dev curl
-
-          # Download and install Swift 6.2
-          wget https://download.swift.org/swift-6.2-release/ubuntu2204/swift-6.2-RELEASE/swift-6.2-RELEASE-ubuntu22.04.tar.gz
-          tar xzf swift-6.2-RELEASE-ubuntu22.04.tar.gz
-          sudo mv swift-6.2-RELEASE-ubuntu22.04 /usr/share/swift
-
-          # Create symlinks for system-wide access
-          sudo ln -sf /usr/share/swift/usr/bin/swift /usr/bin/swift
-          sudo ln -sf /usr/share/swift/usr/bin/swiftc /usr/bin/swiftc
-          sudo ln -sf /usr/share/swift/usr/bin/swift-build /usr/bin/swift-build
-          sudo ln -sf /usr/share/swift/usr/bin/swift-package /usr/bin/swift-package
-          sudo ln -sf /usr/share/swift/usr/bin/swift-test /usr/bin/swift-test
-
-          # Add to PATH for this step and future steps
-          echo "/usr/share/swift/usr/bin" >> $GITHUB_PATH
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
         
-      - name: Verify Swift 6.2 installation
-        run: |
-          swift --version
-          which swift
-          swift --version | grep -q "6.2" || (echo "Error: Swift 6.2 not properly installed" && exit 1)
+      - name: Print Swift version
+        run: swift --version
           
       - name: Cache Swift packages
         id: cache-swift
@@ -124,40 +66,18 @@ jobs:
         run: swift build -c release -v
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Swift 6.2
-        run: |
-          # Remove any existing Swift installation
-          sudo rm -rf /usr/bin/swift /usr/bin/swiftc
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
 
-          # Install dependencies
-          sudo apt-get update
-          sudo apt-get install -y binutils git gnupg2 libc6-dev libcurl4-openssl-dev libedit2 libgcc-9-dev libpython3.8 libsqlite3-0 libstdc++-9-dev libxml2-dev libz3-dev pkg-config tzdata unzip zlib1g-dev curl
-
-          # Download and install Swift 6.2
-          wget https://download.swift.org/swift-6.2-release/ubuntu2204/swift-6.2-RELEASE/swift-6.2-RELEASE-ubuntu22.04.tar.gz
-          tar xzf swift-6.2-RELEASE-ubuntu22.04.tar.gz
-          sudo mv swift-6.2-RELEASE-ubuntu22.04 /usr/share/swift
-
-          # Create symlinks for system-wide access
-          sudo ln -sf /usr/share/swift/usr/bin/swift /usr/bin/swift
-          sudo ln -sf /usr/share/swift/usr/bin/swiftc /usr/bin/swiftc
-          sudo ln -sf /usr/share/swift/usr/bin/swift-build /usr/bin/swift-build
-          sudo ln -sf /usr/share/swift/usr/bin/swift-package /usr/bin/swift-package
-          sudo ln -sf /usr/share/swift/usr/bin/swift-test /usr/bin/swift-test
-
-          # Add to PATH for this step and future steps
-          echo "/usr/share/swift/usr/bin" >> $GITHUB_PATH
-
-      - name: Verify Swift 6.2 installation
-        run: |
-          swift --version
-          which swift
-          swift --version | grep -q "6.2" || (echo "Error: Swift 6.2 not properly installed" && exit 1)
+      - name: Print Swift version
+        run: swift --version
 
       - name: Cache Swift packages
         id: cache-swift
@@ -174,40 +94,18 @@ jobs:
         run: swift test
 
   benchmark:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         
-      - name: Install Swift 6.2
-        run: |
-          # Remove any existing Swift installation
-          sudo rm -rf /usr/bin/swift /usr/bin/swiftc
-
-          # Install dependencies
-          sudo apt-get update
-          sudo apt-get install -y binutils git gnupg2 libc6-dev libcurl4-openssl-dev libedit2 libgcc-9-dev libpython3.8 libsqlite3-0 libstdc++-9-dev libxml2-dev libz3-dev pkg-config tzdata unzip zlib1g-dev curl
-
-          # Download and install Swift 6.2
-          wget https://download.swift.org/swift-6.2-release/ubuntu2204/swift-6.2-RELEASE/swift-6.2-RELEASE-ubuntu22.04.tar.gz
-          tar xzf swift-6.2-RELEASE-ubuntu22.04.tar.gz
-          sudo mv swift-6.2-RELEASE-ubuntu22.04 /usr/share/swift
-
-          # Create symlinks for system-wide access
-          sudo ln -sf /usr/share/swift/usr/bin/swift /usr/bin/swift
-          sudo ln -sf /usr/share/swift/usr/bin/swiftc /usr/bin/swiftc
-          sudo ln -sf /usr/share/swift/usr/bin/swift-build /usr/bin/swift-build
-          sudo ln -sf /usr/share/swift/usr/bin/swift-package /usr/bin/swift-package
-          sudo ln -sf /usr/share/swift/usr/bin/swift-test /usr/bin/swift-test
-
-          # Add to PATH for this step and future steps
-          echo "/usr/share/swift/usr/bin" >> $GITHUB_PATH
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
         
-      - name: Verify Swift 6.2 installation
-        run: |
-          swift --version
-          which swift
-          swift --version | grep -q "6.2" || (echo "Error: Swift 6.2 not properly installed" && exit 1)
+      - name: Print Swift version
+        run: swift --version
           
       - name: Cache Swift packages
         id: cache-swift
