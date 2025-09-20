@@ -189,7 +189,7 @@ final class NanoTDFTests: XCTestCase {
             _ = SymmetricKey(size: .bits256)
 
             // Combine the IV-nonce, ciphertext, and MAC-tag
-            let _ = payload.iv + payload.ciphertext + payload.mac
+            _ = payload.iv + payload.ciphertext + payload.mac
 
             // Decrypt the payload
 //            let sealedBox = try AES.GCM.SealedBox(combined: combinedData)
@@ -415,7 +415,7 @@ final class NanoTDFTests: XCTestCase {
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
             policy: &policy,
-            plaintext: plaintext
+            plaintext: plaintext,
         )
 
         // Verify the NanoTDF was created properly
@@ -460,7 +460,7 @@ final class NanoTDFTests: XCTestCase {
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
             policy: &policy,
-            plaintext: plaintext
+            plaintext: plaintext,
         )
 
         // Verify the NanoTDF was created properly
@@ -502,7 +502,7 @@ final class NanoTDFTests: XCTestCase {
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
             policy: &policy,
-            plaintext: plaintext
+            plaintext: plaintext,
         )
 
         // Verify the NanoTDF was created properly
@@ -544,7 +544,7 @@ final class NanoTDFTests: XCTestCase {
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
             policy: &policy,
-            plaintext: plaintext
+            plaintext: plaintext,
         )
 
         // Extract the policy binding from the created NanoTDF
@@ -573,7 +573,7 @@ final class NanoTDFTests: XCTestCase {
             using: SHA256.self,
             salt: salt,
             sharedInfo: Data(), // Empty per spec section 4
-            outputByteCount: 32
+            outputByteCount: 32,
         )
 
         // Create GMAC tag for verification - do it locally instead of using the actor method

@@ -127,19 +127,19 @@ public actor KeyStore {
             let privateKey = P521.KeyAgreement.PrivateKey()
             return StoredKeyPair(
                 publicKey: privateKey.publicKey.compressedRepresentation,
-                privateKey: privateKey.rawRepresentation
+                privateKey: privateKey.rawRepresentation,
             )
         case .secp384r1:
             let privateKey = P384.KeyAgreement.PrivateKey()
             return StoredKeyPair(
                 publicKey: privateKey.publicKey.compressedRepresentation,
-                privateKey: privateKey.rawRepresentation
+                privateKey: privateKey.rawRepresentation,
             )
         case .secp256r1:
             let privateKey = P256.KeyAgreement.PrivateKey()
             return StoredKeyPair(
                 publicKey: privateKey.publicKey.compressedRepresentation,
-                privateKey: privateKey.rawRepresentation
+                privateKey: privateKey.rawRepresentation,
             )
         }
     }
@@ -208,7 +208,7 @@ public actor KeyStore {
 
             let keyPair = StoredKeyPair(
                 publicKey: Data(publicKey),
-                privateKey: Data(privateKey)
+                privateKey: Data(privateKey),
             )
 
             let identifier = KeyPairIdentifier(publicKey: keyPair.publicKey)
@@ -244,7 +244,7 @@ public actor KeyStore {
     /// - Throws: KeyStoreError or other errors if key derivation fails.
     public func derivePayloadSymmetricKey(
         kasPublicKey: Data,
-        tdfEphemeralPublicKey: Data
+        tdfEphemeralPublicKey: Data,
     ) async throws -> SymmetricKey {
         // 1. Get the KAS's private key from this KeyStore
         // The kasPublicKeyForLookup is the KAS's own public key, used to identify its private key.
@@ -281,7 +281,7 @@ public actor KeyStore {
             using: SHA256.self,
             salt: Data("L1M".utf8), // v13 salt
             sharedInfo: Data("encryption".utf8), // Standard info for payload encryption
-            outputByteCount: 32 // For AES-256
+            outputByteCount: 32, // For AES-256
         )
 
         return symmetricKeyCryptoKit

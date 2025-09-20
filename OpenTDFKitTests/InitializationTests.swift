@@ -11,7 +11,7 @@ func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoTDF {
     // Create a PayloadKeyAccess structure with the KAS ResourceLocator
     let payloadKeyAccess = PayloadKeyAccess(
         kasEndpointLocator: kasResourceLocator,
-        kasPublicKey: Data([0x02, 0x03, 0x04]) // Placeholder compressed public key
+        kasPublicKey: Data([0x02, 0x03, 0x04]), // Placeholder compressed public key
     )
 
     // Create a placeholder header
@@ -20,7 +20,7 @@ func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoTDF {
         policyBindingConfig: PolicyBindingConfig(ecdsaBinding: false, curve: curve), // GMAC binding
         payloadSignatureConfig: SignatureAndPayloadConfig(signed: false, signatureCurve: curve, payloadCipher: .aes256GCM128), // Not signed, AES-256-GCM-128
         policy: Policy(type: .remote, body: nil, remote: kasResourceLocator, binding: nil), // Remote policy pointing to KAS URL, no binding yet
-        ephemeralPublicKey: Data([0x04, 0x05, 0x06]) // Placeholder ephemeral public key
+        ephemeralPublicKey: Data([0x04, 0x05, 0x06]), // Placeholder ephemeral public key
     )
 
     // Create a placeholder payload
@@ -28,7 +28,7 @@ func initializeSmallNanoTDF(kasResourceLocator: ResourceLocator) -> NanoTDF {
         length: 7, // Minimal length (3 IV + 1 Ciphertext + 3 Placeholder MAC)
         iv: Data([0x07, 0x08, 0x09]), // Placeholder IV
         ciphertext: Data([0x00]), // Placeholder ciphertext
-        mac: Data([0x13, 0x14, 0x15]) // Placeholder MAC tag (incorrect size for AES-GCM-128)
+        mac: Data([0x13, 0x14, 0x15]), // Placeholder MAC tag (incorrect size for AES-GCM-128)
     )
 
     // Return the NanoTDF object
@@ -79,7 +79,7 @@ final class InitializationTests: XCTestCase {
             policyBindingConfig: PolicyBindingConfig(ecdsaBinding: false, curve: .secp256r1),
             payloadSignatureConfig: SignatureAndPayloadConfig(signed: false, signatureCurve: nil, payloadCipher: .aes256GCM128),
             policy: Policy(type: .embeddedPlaintext, body: nil, remote: nil, binding: nil),
-            ephemeralPublicKey: Data([0x04, 0x05, 0x06])
+            ephemeralPublicKey: Data([0x04, 0x05, 0x06]),
         ))
     }
 

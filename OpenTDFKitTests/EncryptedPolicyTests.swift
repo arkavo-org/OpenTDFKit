@@ -26,7 +26,7 @@ final class EncryptedPolicyTests: XCTestCase {
         // Create EmbeddedPolicyBody with plaintext policy
         let embeddedPolicyBody = EmbeddedPolicyBody(
             body: policyData,
-            keyAccess: nil
+            keyAccess: nil,
         )
 
         // Create Policy with embeddedEncryptedWithPolicyKeyAccess type
@@ -34,7 +34,7 @@ final class EncryptedPolicyTests: XCTestCase {
             type: .embeddedPlaintext,
             body: embeddedPolicyBody,
             remote: nil,
-            binding: nil
+            binding: nil,
         )
 
         // Create plaintext payload
@@ -102,13 +102,13 @@ final class EncryptedPolicyTests: XCTestCase {
         let dummyEphemeralKey = P256.KeyAgreement.PrivateKey().publicKey.compressedRepresentation
         let policyKeyAccess = PolicyKeyAccess(
             resourceLocator: kasRL, // Same KAS as for payload
-            ephemeralPublicKey: dummyEphemeralKey
+            ephemeralPublicKey: dummyEphemeralKey,
         )
 
         // Create EmbeddedPolicyBody with plaintext policy and key access
         let embeddedPolicyBody = EmbeddedPolicyBody(
             body: policyData,
-            keyAccess: policyKeyAccess
+            keyAccess: policyKeyAccess,
         )
 
         // Create Policy with embeddedEncryptedWithPolicyKeyAccess type
@@ -116,7 +116,7 @@ final class EncryptedPolicyTests: XCTestCase {
             type: .embeddedEncryptedWithPolicyKeyAccess,
             body: embeddedPolicyBody,
             remote: nil,
-            binding: nil
+            binding: nil,
         )
 
         // Create plaintext payload

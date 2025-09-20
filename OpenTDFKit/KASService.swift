@@ -118,7 +118,7 @@ public actor KASService {
         let resourcePath = baseURL.host ?? "kas.example.com"
         guard let resourceLocator = ResourceLocator(
             protocolEnum: baseURL.scheme == "https" ? .https : .http,
-            body: resourcePath
+            body: resourcePath,
         ) else {
             throw KASServiceError.serverError("Failed to create resource locator")
         }
@@ -150,7 +150,7 @@ public actor KASService {
         ephemeralPublicKey: Data,
         encryptedSessionKey: Data,
         policyBinding: Data? = nil,
-        attributes: [String: String]? = nil
+        attributes: [String: String]? = nil,
     ) async throws -> Data {
         let rewrapEndpoint = baseURL.appendingPathComponent("rewrap")
 
@@ -167,7 +167,7 @@ public actor KASService {
             ephemeralPublicKey: ephemeralPublicKey.base64EncodedString(),
             encryptedSessionKey: encryptedSessionKey.base64EncodedString(),
             policyBinding: policyBinding?.base64EncodedString(),
-            attributes: attributes
+            attributes: attributes,
         )
 
         let encoder = JSONEncoder()
@@ -210,7 +210,7 @@ public actor KASService {
     private func rewrapKeyInternal(
         ephemeralPublicKey: Data,
         encryptedKey: Data,
-        privateKeyData: Data
+        privateKeyData: Data,
     ) async throws -> (rewrappedKey: Data, newKeyPair: StoredKeyPair) {
         // 1. Derive shared secret using the client's ephemeral public key and KAS private key
         let sharedSecret: SharedSecret
@@ -245,14 +245,14 @@ public actor KASService {
             using: SHA256.self,
             salt: saltV12,
             sharedInfo: Data(), // Empty per spec section 4
-            outputByteCount: 32
+            outputByteCount: 32,
         )
 
         let symmetricKeyV13 = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
             salt: saltV13,
             sharedInfo: Data(), // Empty per spec section 4
-            outputByteCount: 32
+            outputByteCount: 32,
         )
 
         // We'll try both keys in the decryption step
@@ -273,7 +273,7 @@ public actor KASService {
         let sealedBox = try AES.GCM.SealedBox(
             nonce: AES.GCM.Nonce(data: nonce),
             ciphertext: ciphertext,
-            tag: tag
+            tag: tag,
         )
 
         // Try decryption with the v13 key first
@@ -310,7 +310,7 @@ public actor KASService {
             using: SHA256.self,
             salt: saltV13, // Always use v13 salt for new keys
             sharedInfo: Data(), // Empty per spec section 4
-            outputByteCount: 32
+            outputByteCount: 32,
         )
 
         // 7. Re-encrypt the key with the new symmetric key
@@ -340,7 +340,7 @@ public actor KASService {
     public func processKeyAccess(
         ephemeralPublicKey: Data,
         encryptedKey: Data,
-        kasPublicKey: Data
+        kasPublicKey: Data,
     ) async throws -> Data {
         // Get the KAS private key corresponding to the KAS public key
         guard let privateKeyData = await keyStore.getPrivateKey(forPublicKey: kasPublicKey) else {
@@ -351,7 +351,7 @@ public actor KASService {
         let (rewrappedKey, _) = try await rewrapKeyInternal(
             ephemeralPublicKey: ephemeralPublicKey,
             encryptedKey: encryptedKey,
-            privateKeyData: privateKeyData
+            privateKeyData: privateKeyData,
         )
 
         return rewrappedKey
@@ -366,7 +366,7 @@ public actor KASService {
     public func verifyPolicyBinding(
         policyBinding: Data,
         policyData: Data,
-        symmetricKey: SymmetricKey
+        symmetricKey: SymmetricKey,
     ) async throws -> Bool {
         // For GMAC binding verification, create a tag with empty ciphertext and the policy data as authenticated data
         let expectedTag = try AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyData).tag
@@ -383,7 +383,7 @@ public actor KASService {
     public func processKeyAccessWithKeyIdentifier(
         ephemeralPublicKey: Data,
         encryptedKey: Data,
-        kasPublicKey: Data
+        kasPublicKey: Data,
     ) async throws -> (rewrappedKey: Data, keyID: UUID) {
         // Create a UUID based on the KAS public key bytes
         let keyID = UUID()
@@ -400,7 +400,7 @@ public actor KASService {
         let (rewrappedKey, _) = try await rewrapKeyInternal(
             ephemeralPublicKey: ephemeralPublicKey,
             encryptedKey: encryptedKey,
-            privateKeyData: privateKeyData
+            privateKeyData: privateKeyData,
         )
 
         // Remove the used key from the keystore to ensure one-time use

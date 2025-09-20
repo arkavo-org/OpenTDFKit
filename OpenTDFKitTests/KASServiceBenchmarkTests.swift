@@ -14,7 +14,7 @@ final class KASServiceBenchmarkTests: XCTestCase {
         let iterations = 100
 
         for _ in 0 ..< iterations {
-            let _ = try await kasService.generateKasMetadata()
+            _ = try await kasService.generateKasMetadata()
         }
 
         let endTime = DispatchTime.now()
@@ -69,7 +69,7 @@ final class KASServiceBenchmarkTests: XCTestCase {
                 // Create a shared secret for encryption
                 guard let sharedSecret = try await cryptoHelper.deriveSharedSecret(
                     keyPair: ephemeralKeyPair,
-                    recipientPublicKey: kasPublicKey
+                    recipientPublicKey: kasPublicKey,
                 ) else {
                     continue
                 }
@@ -78,7 +78,7 @@ final class KASServiceBenchmarkTests: XCTestCase {
                 let symmetricKey = await cryptoHelper.deriveSymmetricKey(
                     sharedSecret: sharedSecret,
                     salt: Data("test".utf8),
-                    info: Data("benchmark".utf8)
+                    info: Data("benchmark".utf8),
                 )
 
                 // Encrypt sample data with proper format
@@ -94,10 +94,10 @@ final class KASServiceBenchmarkTests: XCTestCase {
 
                 // Process key access (the actual benchmark operation)
                 do {
-                    let _ = try await kasService.processKeyAccess(
+                    _ = try await kasService.processKeyAccess(
                         ephemeralPublicKey: ephemeralKeyPair.publicKey,
                         encryptedKey: encryptedKey,
-                        kasPublicKey: kasPublicKey
+                        kasPublicKey: kasPublicKey,
                     )
                 } catch {
                     print("Error processing key access: \(error)")
@@ -116,7 +116,7 @@ final class KASServiceBenchmarkTests: XCTestCase {
     func testPolicyBindingVerificationPerformance() async throws {
         let kasService = KASService(
             keyStore: KeyStore(curve: .secp256r1, capacity: 10),
-            baseURL: URL(string: "https://example.kas.com")!
+            baseURL: URL(string: "https://example.kas.com")!,
         )
 
         // Generate test data
@@ -136,10 +136,10 @@ final class KASServiceBenchmarkTests: XCTestCase {
             let startTime = DispatchTime.now()
 
             for _ in 0 ..< iterations {
-                let _ = try await kasService.verifyPolicyBinding(
+                _ = try await kasService.verifyPolicyBinding(
                     policyBinding: policyBinding,
                     policyData: policyData,
-                    symmetricKey: symmetricKey
+                    symmetricKey: symmetricKey,
                 )
             }
 
@@ -179,7 +179,7 @@ final class KASServiceBenchmarkTests: XCTestCase {
             let metadataStartTime = DispatchTime.now()
 
             for _ in 0 ..< iterations {
-                let _ = try await kasService.generateKasMetadata()
+                _ = try await kasService.generateKasMetadata()
             }
 
             let metadataEndTime = DispatchTime.now()
@@ -201,10 +201,10 @@ final class KASServiceBenchmarkTests: XCTestCase {
                 let encryptedKey = Data(repeating: 0xAA, count: 64)
 
                 do {
-                    let _ = try await kasService.processKeyAccess(
+                    _ = try await kasService.processKeyAccess(
                         ephemeralPublicKey: ephemeralKeyPair.publicKey,
                         encryptedKey: encryptedKey,
-                        kasPublicKey: kasPublicKey
+                        kasPublicKey: kasPublicKey,
                     )
                 } catch {
                     // Expected to fail with invalid format, we're just measuring performance

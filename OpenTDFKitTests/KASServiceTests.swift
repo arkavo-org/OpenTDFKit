@@ -33,7 +33,7 @@ final class KASServiceTests: XCTestCase {
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
             policy: &policy,
-            plaintext: originalPlaintext
+            plaintext: originalPlaintext,
         )
 
         // Verify the NanoTDF was created successfully
@@ -70,7 +70,7 @@ final class KASServiceTests: XCTestCase {
             using: SHA256.self,
             salt: salt,
             sharedInfo: Data(), // Empty per spec section 4
-            outputByteCount: 32
+            outputByteCount: 32,
         )
 
         // 10. Decrypt the NanoTDF payload
@@ -125,7 +125,7 @@ final class KASServiceTests: XCTestCase {
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
             policy: &policy,
-            plaintext: plaintext
+            plaintext: plaintext,
         )
         XCTAssertEqual(nanoTDF.header.toData()[2], Header.version, "NanoTDF header should be v13")
 
@@ -155,7 +155,7 @@ final class KASServiceTests: XCTestCase {
             using: SHA256.self,
             salt: salt,
             sharedInfo: Data(), // Empty per spec section 4
-            outputByteCount: 32
+            outputByteCount: 32,
         )
 
         // Encrypt the session key with the derived symmetric key
@@ -174,7 +174,7 @@ final class KASServiceTests: XCTestCase {
         let rewrappedKey = try await kasService.processKeyAccess(
             ephemeralPublicKey: ephemeralPublicKey,
             encryptedKey: encryptedKey,
-            kasPublicKey: kasPublicKey
+            kasPublicKey: kasPublicKey,
         )
 
         // Verify the rewrapped key is not empty

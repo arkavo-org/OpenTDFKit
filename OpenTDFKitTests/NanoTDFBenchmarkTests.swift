@@ -112,20 +112,20 @@ final class NanoTDFBenchmarkTests: XCTestCase {
                 // Simple encryption with symmetric key derivation
                 let sharedSecret = try await cryptoHelper.deriveSharedSecret(
                     keyPair: keyPair,
-                    recipientPublicKey: recipientKeyPair.publicKey
+                    recipientPublicKey: recipientKeyPair.publicKey,
                 )!
 
                 let symmetricKey = await cryptoHelper.deriveSymmetricKey(
                     sharedSecret: sharedSecret,
                     salt: Data("test".utf8),
-                    info: Data("benchmark".utf8)
+                    info: Data("benchmark".utf8),
                 )
 
                 let nonce = await cryptoHelper.generateNonce()
-                let _ = try await cryptoHelper.encryptPayload(
+                _ = try await cryptoHelper.encryptPayload(
                     plaintext: plaintext,
                     symmetricKey: symmetricKey,
-                    nonce: nonce
+                    nonce: nonce,
                 )
             }
 
@@ -146,7 +146,7 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         let (ciphertext, tag) = try await cryptoHelper.encryptPayload(
             plaintext: plaintext,
             symmetricKey: symmetricKey,
-            nonce: nonce
+            nonce: nonce,
         )
 
         // Measure manually instead of using XCTest measure
@@ -154,11 +154,11 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         let startTime = DispatchTime.now()
 
         for _ in 0 ..< iterations {
-            let _ = try await cryptoHelper.decryptPayload(
+            _ = try await cryptoHelper.decryptPayload(
                 ciphertext: ciphertext,
                 symmetricKey: symmetricKey,
                 nonce: nonce,
-                tag: tag
+                tag: tag,
             )
         }
 
@@ -196,7 +196,7 @@ final class NanoTDFBenchmarkTests: XCTestCase {
             let iterations = 100
 
             for _ in 0 ..< iterations {
-                let _ = tdf.toData()
+                _ = tdf.toData()
             }
 
             let endTime = DispatchTime.now()
@@ -213,12 +213,12 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         keyPair: EphemeralKeyPair,
         recipientPublicKey: Data,
         plaintext: Data,
-        policyBody: Data
+        policyBody: Data,
     ) async throws -> (encryptedData: Data, policyBinding: Data) {
         // 1. Derive shared secret
         guard let sharedSecret = try await cryptoHelper.deriveSharedSecret(
             keyPair: keyPair,
-            recipientPublicKey: recipientPublicKey
+            recipientPublicKey: recipientPublicKey,
         ) else {
             throw CryptoHelperError.keyDerivationFailed
         }
@@ -227,7 +227,7 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         let symmetricKey = await cryptoHelper.deriveSymmetricKey(
             sharedSecret: sharedSecret,
             salt: Data("L1L".utf8),
-            info: Data("encryption".utf8)
+            info: Data("encryption".utf8),
         )
 
         // 3. Create policy binding
@@ -238,7 +238,7 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         let (ciphertext, tag) = try await cryptoHelper.encryptPayload(
             plaintext: plaintext,
             symmetricKey: symmetricKey,
-            nonce: nonce
+            nonce: nonce,
         )
 
         // 5. Combine encrypted components
@@ -270,7 +270,7 @@ final class NanoTDFBenchmarkTests: XCTestCase {
                     keyPair: keyPair,
                     recipientPublicKey: recipientDER,
                     plaintext: plaintext,
-                    policyBody: policyBody
+                    policyBody: policyBody,
                 )
                 expectation.fulfill()
             }

@@ -28,7 +28,7 @@ final class CryptoHelperTests: XCTestCase {
             keyPair: keyPair,
             recipientPublicKey: recipientDER,
             plaintext: "This is a secret message".data(using: .utf8)!,
-            policyBody: "classification:secret".data(using: .utf8)!
+            policyBody: "classification:secret".data(using: .utf8)!,
         )
 
         // Step 4: Verify the results
@@ -43,13 +43,13 @@ final class CryptoHelperTests: XCTestCase {
             recipientPublicKey: recipientDER,
             ciphertext: result.ciphertext,
             nonce: result.nonce,
-            tag: result.tag
+            tag: result.tag,
         )
 
         XCTAssertEqual(
             String(data: decrypted, encoding: .utf8),
             "This is a secret message",
-            "Decrypted text should match original plaintext"
+            "Decrypted text should match original plaintext",
         )
     }
 }
@@ -68,12 +68,12 @@ extension CryptoHelper {
         keyPair: EphemeralKeyPair,
         recipientPublicKey: Data,
         plaintext: Data,
-        policyBody: Data
+        policyBody: Data,
     ) throws -> EncryptionResult {
         // Derive shared secret
         guard let sharedSecret = try deriveSharedSecret(
             keyPair: keyPair,
-            recipientPublicKey: recipientPublicKey
+            recipientPublicKey: recipientPublicKey,
         ) else {
             throw CryptoHelperError.keyDerivationFailed
         }
@@ -83,13 +83,13 @@ extension CryptoHelper {
             sharedSecret: sharedSecret,
             salt: Data("L1M".utf8), // Updated to v13 salt
             info: Data("encryption".utf8),
-            outputByteCount: 32
+            outputByteCount: 32,
         )
 
         // Create GMAC binding
         let gmacTag = try createGMACBinding(
             policyBody: policyBody,
-            symmetricKey: symmetricKey
+            symmetricKey: symmetricKey,
         )
 
         // Generate nonce
@@ -99,14 +99,14 @@ extension CryptoHelper {
         let (ciphertext, tag) = try encryptPayload(
             plaintext: plaintext,
             symmetricKey: symmetricKey,
-            nonce: nonce
+            nonce: nonce,
         )
 
         return EncryptionResult(
             gmacTag: gmacTag,
             nonce: nonce,
             ciphertext: ciphertext,
-            tag: tag
+            tag: tag,
         )
     }
 
@@ -115,12 +115,12 @@ extension CryptoHelper {
         recipientPublicKey: Data,
         ciphertext: Data,
         nonce: Data,
-        tag: Data
+        tag: Data,
     ) throws -> Data {
         // Derive shared secret
         guard let sharedSecret = try deriveSharedSecret(
             keyPair: keyPair,
-            recipientPublicKey: recipientPublicKey
+            recipientPublicKey: recipientPublicKey,
         ) else {
             throw CryptoHelperError.keyDerivationFailed
         }
@@ -130,7 +130,7 @@ extension CryptoHelper {
             sharedSecret: sharedSecret,
             salt: Data("L1M".utf8), // Updated to v13 salt
             info: Data("encryption".utf8),
-            outputByteCount: 32
+            outputByteCount: 32,
         )
 
         // Decrypt
@@ -138,7 +138,7 @@ extension CryptoHelper {
             ciphertext: ciphertext,
             symmetricKey: symmetricKey,
             nonce: nonce,
-            tag: tag
+            tag: tag,
         )
     }
 }
