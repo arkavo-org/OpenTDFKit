@@ -17,10 +17,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.0"
+      - name: Install Swift 6.2
+        run: |
+          # Install dependencies
+          sudo apt-get update
+          sudo apt-get install -y binutils git gnupg2 libc6-dev libcurl4-openssl-dev libedit2 libgcc-9-dev libpython3.8 libsqlite3-0 libstdc++-9-dev libxml2-dev libz3-dev pkg-config tzdata unzip zlib1g-dev curl
+
+          # Download and install Swift 6.2
+          wget https://download.swift.org/swift-6.2-release/ubuntu2204/swift-6.2-RELEASE/swift-6.2-RELEASE-ubuntu22.04.tar.gz
+          tar xzf swift-6.2-RELEASE-ubuntu22.04.tar.gz
+          sudo mv swift-6.2-RELEASE-ubuntu22.04 /usr/share/swift
+          echo "/usr/share/swift/usr/bin" >> $GITHUB_PATH
+          export PATH="/usr/share/swift/usr/bin:$PATH"
         
       - name: Print Swift version
         run: swift --version
@@ -43,7 +51,7 @@ jobs:
           sudo cp .build/release/swiftformat /usr/local/bin/
 
       - name: Run SwiftFormat
-        run: swiftformat --swiftversion 6.0 . --lint
+        run: swiftformat --swiftversion 6.2 . --lint
         
 #      - name: Run SwiftLint
 #        run: swiftlint --strict
@@ -54,10 +62,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.0"
+      - name: Install Swift 6.2
+        run: |
+          # Install dependencies
+          sudo apt-get update
+          sudo apt-get install -y binutils git gnupg2 libc6-dev libcurl4-openssl-dev libedit2 libgcc-9-dev libpython3.8 libsqlite3-0 libstdc++-9-dev libxml2-dev libz3-dev pkg-config tzdata unzip zlib1g-dev curl
+
+          # Download and install Swift 6.2
+          wget https://download.swift.org/swift-6.2-release/ubuntu2204/swift-6.2-RELEASE/swift-6.2-RELEASE-ubuntu22.04.tar.gz
+          tar xzf swift-6.2-RELEASE-ubuntu22.04.tar.gz
+          sudo mv swift-6.2-RELEASE-ubuntu22.04 /usr/share/swift
+          echo "/usr/share/swift/usr/bin" >> $GITHUB_PATH
+          export PATH="/usr/share/swift/usr/bin:$PATH"
         
       - name: Print Swift version
         run: swift --version
@@ -85,10 +101,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.0"
+      - name: Install Swift 6.2
+        run: |
+          # Install dependencies
+          sudo apt-get update
+          sudo apt-get install -y binutils git gnupg2 libc6-dev libcurl4-openssl-dev libedit2 libgcc-9-dev libpython3.8 libsqlite3-0 libstdc++-9-dev libxml2-dev libz3-dev pkg-config tzdata unzip zlib1g-dev curl
+
+          # Download and install Swift 6.2
+          wget https://download.swift.org/swift-6.2-release/ubuntu2204/swift-6.2-RELEASE/swift-6.2-RELEASE-ubuntu22.04.tar.gz
+          tar xzf swift-6.2-RELEASE-ubuntu22.04.tar.gz
+          sudo mv swift-6.2-RELEASE-ubuntu22.04 /usr/share/swift
+          echo "/usr/share/swift/usr/bin" >> $GITHUB_PATH
+          export PATH="/usr/share/swift/usr/bin:$PATH"
 
       - name: Print Swift version
         run: swift --version
@@ -113,10 +137,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.0"
+      - name: Install Swift 6.2
+        run: |
+          # Install dependencies
+          sudo apt-get update
+          sudo apt-get install -y binutils git gnupg2 libc6-dev libcurl4-openssl-dev libedit2 libgcc-9-dev libpython3.8 libsqlite3-0 libstdc++-9-dev libxml2-dev libz3-dev pkg-config tzdata unzip zlib1g-dev curl
+
+          # Download and install Swift 6.2
+          wget https://download.swift.org/swift-6.2-release/ubuntu2204/swift-6.2-RELEASE/swift-6.2-RELEASE-ubuntu22.04.tar.gz
+          tar xzf swift-6.2-RELEASE-ubuntu22.04.tar.gz
+          sudo mv swift-6.2-RELEASE-ubuntu22.04 /usr/share/swift
+          echo "/usr/share/swift/usr/bin" >> $GITHUB_PATH
+          export PATH="/usr/share/swift/usr/bin:$PATH"
         
       - name: Print Swift version
         run: swift --version
