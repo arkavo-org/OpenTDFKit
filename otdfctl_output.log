@@ -1,0 +1,2 @@
+   ERROR    Failed to get access token: failed to parse access token 
+            go-jose/go-jose: compact JWS format must have three parts
