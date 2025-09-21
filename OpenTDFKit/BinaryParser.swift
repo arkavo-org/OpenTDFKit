@@ -9,6 +9,7 @@ public class BinaryParser {
     }
 
     func read(length: Int) -> Data? {
+        guard length > 0 else { return nil }
         guard cursor >= 0 else { return nil }
         guard !data.isEmpty else { return nil }
         guard cursor + length <= data.count else { return nil }
@@ -18,12 +19,16 @@ public class BinaryParser {
         return data[range]
     }
 
+    @inline(__always)
+    private func readByte() -> UInt8? {
+        guard let d = read(length: 1) else { return nil }
+        return d.first
+    }
+
     private func readResourceLocator() -> ResourceLocator? {
-        guard let protocolData = read(length: 1),
-              let protocolEnum = protocolData.first,
-              let protocolEnumValue = ProtocolEnum(rawValue: protocolEnum),
-              let bodyLengthData = read(length: 1),
-              let bodyLength = bodyLengthData.first,
+        guard let protocolByte = readByte(),
+              let protocolEnumValue = ProtocolEnum(rawValue: protocolByte),
+              let bodyLength = readByte(),
               let body = read(length: Int(bodyLength)),
               let bodyString = String(data: body, encoding: .utf8)
         else {
@@ -38,9 +43,8 @@ public class BinaryParser {
     }
 
     private func readPolicyField(bindingMode: PolicyBindingConfig) -> Policy? {
-        guard let policyTypeData = read(length: 1),
-              let policyTypeRaw = policyTypeData.first,
-              let policyType = Policy.PolicyType(rawValue: policyTypeRaw)
+        guard let policyTypeByte = readByte(),
+              let policyType = Policy.PolicyType(rawValue: policyTypeByte)
         else {
             return nil
         }
@@ -75,9 +79,9 @@ public class BinaryParser {
             return nil
         }
         let plaintextCiphertextLengthData = contentLengthData.prefix(2)
-        let highByte = UInt16(plaintextCiphertextLengthData[plaintextCiphertextLengthData.startIndex])
-        let lowByte = UInt16(plaintextCiphertextLengthData[plaintextCiphertextLengthData.startIndex + 1])
-        let contentLength = (highByte << 8) | lowByte
+
+        let bytes = Array(plaintextCiphertextLengthData)
+        let contentLength = (UInt16(bytes[0]) << 8) | UInt16(bytes[1])
 //        print("Policy Body Length: \(contentLength)")
 
         // if no policy added then no read
@@ -97,9 +101,7 @@ public class BinaryParser {
     }
 
     func readEccAndBindingMode() -> PolicyBindingConfig? {
-        guard let eccAndBindingModeData = read(length: 1),
-              let eccAndBindingMode = eccAndBindingModeData.first
-        else {
+        guard let eccAndBindingMode = readByte() else {
             print("Failed to read BindingMode")
             return nil
         }
@@ -120,12 +122,12 @@ public class BinaryParser {
     }
 
     func readSymmetricAndPayloadConfig() -> SignatureAndPayloadConfig? {
-        guard let data = read(length: 1)
-        else {
+        guard let byte = readByte() else {
             return nil
         }
         // print("SymmetricAndPayloadConfig read serialized data:", data.map { String($0, radix: 16) })
-        guard data.count == 1, let byte = data.first else { return nil }
+        // guard data.count == 1 else { return nil }
+        // let byte = data[0]
         let signed = (byte & 0b1000_0000) != 0
         let signatureECCMode = Curve(rawValue: (byte & 0b0111_0000) >> 4)
         let cipher = Cipher(rawValue: byte & 0b0000_1111)
@@ -181,8 +183,7 @@ public class BinaryParser {
         }
 
         // 2. Read the curve byte
-        guard let curveByte = read(length: 1),
-              let curveRaw = curveByte.first,
+        guard let curveRaw = readByte(),
               let curve = Curve(rawValue: curveRaw)
         else {
             return nil
@@ -215,10 +216,7 @@ public class BinaryParser {
         }
 
         // Read the Version
-        guard let versionData = read(length: FieldSize.versionSize) else {
-            throw ParsingError.invalidFormat
-        }
-        guard let version = versionData.first else {
+        guard let version = readByte() else {
             throw ParsingError.invalidFormat
         }
 
@@ -314,9 +312,10 @@ public class BinaryParser {
         guard lengthData.count == FieldSize.payloadLengthSize else {
             throw ParsingError.invalidFormat
         }
-        let byte1 = UInt32(lengthData[lengthData.startIndex]) << 16
-        let byte2 = UInt32(lengthData[lengthData.startIndex + 1]) << 8
-        let byte3 = UInt32(lengthData[lengthData.startIndex + 2])
+        let b = Array(lengthData)
+        let byte1 = UInt32(b[0]) << 16
+        let byte2 = UInt32(b[1]) << 8
+        let byte3 = UInt32(b[2])
         let length: UInt32 = byte1 | byte2 | byte3
 //        print("parsePayload length", length)
         // IV nonce

@@ -258,4 +258,81 @@ final class KASServiceTests: XCTestCase {
          XCTAssertFalse(isInvalid, "Invalid policy binding should fail verification")
      }
      */
+
+    func testRewrapKeyWithVersionHinting() async throws {
+        // Test that version hinting reduces cryptographic operations
+
+        // Create KAS service with P-256 keys
+        let baseURL = URL(string: "https://kas.example.com")!
+        let kasService = KASService(keyStore: keyStore, baseURL: baseURL)
+
+        // Generate a KAS key pair
+        let kasKeyPair = await keyStore.generateKeyPair()
+
+        // Create a client ephemeral key pair
+        let clientPrivateKey = P256.KeyAgreement.PrivateKey()
+        let clientPublicKey = clientPrivateKey.publicKey.compressedRepresentation
+
+        // Create a test key to wrap
+        let testKey = SymmetricKey(size: .bits256)
+        let testKeyData = testKey.withUnsafeBytes { Data(Array($0)) }
+
+        // Derive shared secret for encryption
+        let kasPrivateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: kasKeyPair.privateKey)
+        let sharedSecret = try kasPrivateKey.sharedSecretFromKeyAgreement(with: clientPrivateKey.publicKey)
+
+        // Test with v13 version hint
+        let saltV13 = CryptoHelper.computeHKDFSalt(version: Header.version)
+        let symmetricKeyV13 = sharedSecret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: saltV13,
+            sharedInfo: Data(),
+            outputByteCount: 32,
+        )
+
+        // Encrypt the test key
+        let gcmNonce = AES.GCM.Nonce()
+        let sealedBox = try AES.GCM.seal(testKeyData, using: symmetricKeyV13, nonce: gcmNonce)
+
+        // Format encrypted key as expected by rewrapKeyInternal: nonce + ciphertext + tag
+        var encryptedKey = Data()
+        var nonceBytes = Data()
+        gcmNonce.withUnsafeBytes { nonceBytes.append(contentsOf: $0) }
+        encryptedKey.append(nonceBytes)
+        encryptedKey.append(sealedBox.ciphertext)
+        encryptedKey.append(sealedBox.tag)
+
+        // Test rewrap with v13 hint - should succeed on first try
+        let (rewrappedKeyV13, newKeyPairV13) = try await kasService.rewrapKeyInternal(
+            ephemeralPublicKey: clientPublicKey,
+            encryptedKey: encryptedKey,
+            privateKeyData: kasKeyPair.privateKey,
+            version: Header.version, // v13 hint
+        )
+
+        XCTAssertNotNil(rewrappedKeyV13)
+        XCTAssertNotNil(newKeyPairV13)
+
+        // Test rewrap with v12 hint - should fallback to v13
+        let (rewrappedKeyV12, newKeyPairV12) = try await kasService.rewrapKeyInternal(
+            ephemeralPublicKey: clientPublicKey,
+            encryptedKey: encryptedKey,
+            privateKeyData: kasKeyPair.privateKey,
+            version: Header.versionV12, // v12 hint
+        )
+
+        XCTAssertNotNil(rewrappedKeyV12)
+        XCTAssertNotNil(newKeyPairV12)
+
+        // Test rewrap with no hint - should try v13 first
+        let (rewrappedKeyNoHint, newKeyPairNoHint) = try await kasService.rewrapKeyInternal(
+            ephemeralPublicKey: clientPublicKey,
+            encryptedKey: encryptedKey,
+            privateKeyData: kasKeyPair.privateKey,
+            version: nil, // No hint
+        )
+
+        XCTAssertNotNil(rewrappedKeyNoHint)
+        XCTAssertNotNil(newKeyPairNoHint)
+    }
 }

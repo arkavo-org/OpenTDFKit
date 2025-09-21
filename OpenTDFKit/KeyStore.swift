@@ -129,10 +129,16 @@ public actor KeyStore {
         totalBytesStored += totalBytes
     }
 
+    /// Generates a new key pair using the store's configured curve.
+    /// - Returns: A newly generated `StoredKeyPair`
     public func generateKeyPair() -> StoredKeyPair {
         KeyStore.makeKeyPair(curve: curve)
     }
 
+    /// Static method to generate a key pair outside of the actor context.
+    /// This enables true parallelism when generating multiple keys in batch operations.
+    /// - Parameter curve: The elliptic curve to use for key generation
+    /// - Returns: A newly generated `StoredKeyPair`
     private static func makeKeyPair(curve: Curve) -> StoredKeyPair {
         // Since curve is a stored property, no need for switch
         switch curve {
