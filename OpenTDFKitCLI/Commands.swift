@@ -1,6 +1,12 @@
 import Foundation
 import OpenTDFKit
 
+extension Data {
+    func hexEncodedString() -> String {
+        return map { String(format: "%02x", $0) }.joined()
+    }
+}
+
 struct Commands {
 
     /// Verify and parse a NanoTDF file using OpenTDFKit's parser
@@ -30,7 +36,10 @@ struct Commands {
 
         // Display what we can access
         print("\nKAS Information:")
-        print("  Locator present: Yes")
+        print("  URL: \(header.payloadKeyAccess.kasLocator.body)")
+        if let identifier = header.payloadKeyAccess.kasLocator.identifier {
+            print("  Identifier: \(String(data: identifier, encoding: .utf8) ?? identifier.hexEncodedString())")
+        }
         if header.payloadKeyAccess.kasPublicKey.count > 0 {
             print("  KAS Public Key: \(header.payloadKeyAccess.kasPublicKey.count) bytes")
         }

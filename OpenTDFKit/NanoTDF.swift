@@ -574,14 +574,18 @@ public struct ResourceLocator: Sendable {
     public let protocolEnum: ProtocolEnum
     /// The body of the locator (e.g., hostname and path for HTTP/HTTPS).
     public let body: String
+    /// Optional identifier for KAS key, Remote Policy, or Policy key lookups (2, 8, or 32 bytes).
+    /// As per spec section 3.4.1.1, bits 7-4 of the Protocol Enum byte indicate identifier size.
+    public let identifier: Data?
 
     /// Initializes a ResourceLocator, validating the body length.
     /// The body length must be between 1 and 255 bytes (UTF-8 encoded).
     /// - Parameters:
     ///   - protocolEnum: The `ProtocolEnum` value.
     ///   - body: The string representation of the locator body.
-    /// - Returns: An initialized `ResourceLocator` or `nil` if the body length is invalid.
-    public init?(protocolEnum: ProtocolEnum, body: String) {
+    ///   - identifier: Optional identifier data (must be 0, 2, 8, or 32 bytes).
+    /// - Returns: An initialized `ResourceLocator` or `nil` if the body length or identifier size is invalid.
+    public init?(protocolEnum: ProtocolEnum, body: String, identifier: Data? = nil) {
         // Validate body length (1 to 255 bytes as per spec for body content)
         // ResourceLocator body itself can be 0 length if Identifier is "None" (0x0) as per KAS Endpoint Locator spec.
         // However, the general ResourceLocator spec (3.4.1) says Body is 1-255.
@@ -594,6 +598,14 @@ public struct ResourceLocator: Sendable {
             return nil
         }
 
+        // Validate identifier size if provided
+        if let identifier = identifier {
+            let validSizes = [2, 8, 32]
+            guard validSizes.contains(identifier.count) else {
+                return nil // Invalid identifier size
+            }
+        }
+
         // Allow empty body for KAS endpoint with "None" identifier
         if body.isEmpty, protocolEnum == .http || protocolEnum == .https {
             // For KAS Endpoint Locator with "None" identifier, empty body is valid
@@ -603,14 +615,33 @@ public struct ResourceLocator: Sendable {
         }
         self.protocolEnum = protocolEnum
         self.body = body
+        self.identifier = identifier
     }
 
     /// Serializes the ResourceLocator into its binary `Data` representation.
-    /// Format: Protocol (1 byte) || Body Length (1 byte) || Body (variable length).
+    /// Format: Protocol (1 byte) || Body Length (1 byte) || Body (variable length) || Identifier (optional).
+    /// The Protocol byte encodes both the protocol (bits 3-0) and identifier type (bits 7-4).
     /// - Returns: A `Data` object representing the serialized resource locator.
     public func toData() -> Data {
         var data = Data()
-        data.append(protocolEnum.rawValue)
+
+        // Determine identifier type for bits 7-4
+        let identifierType: UInt8
+        if let identifier = identifier {
+            switch identifier.count {
+            case 2: identifierType = 0x1
+            case 8: identifierType = 0x2
+            case 32: identifierType = 0x3
+            default: identifierType = 0x0 // Should not happen due to validation
+            }
+        } else {
+            identifierType = 0x0 // No identifier
+        }
+
+        // Combine protocol and identifier type into single byte
+        let protocolByte = (identifierType << 4) | (protocolEnum.rawValue & 0x0F)
+        data.append(protocolByte)
+
         // Ensure body can be encoded to UTF-8
         if let bodyData = body.data(using: .utf8) {
             // Append length (UInt8) and the body data itself
@@ -622,6 +653,12 @@ public struct ResourceLocator: Sendable {
             // Currently, it results in a locator with just the protocol byte.
             data.append(UInt8(0)) // Should not happen with valid Swift strings
         }
+
+        // Append identifier if present
+        if let identifier = identifier {
+            data.append(identifier)
+        }
+
         return data
     }
 }

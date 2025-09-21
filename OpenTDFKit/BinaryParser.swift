@@ -26,20 +26,40 @@ public class BinaryParser {
     }
 
     private func readResourceLocator() -> ResourceLocator? {
-        guard let protocolByte = readByte(),
-              let protocolEnumValue = ProtocolEnum(rawValue: protocolByte),
-              let bodyLength = readByte(),
+        guard let protocolByte = readByte() else {
+            return nil
+        }
+
+        // Extract protocol (bits 3-0) and identifier type (bits 7-4)
+        let protocolValue = protocolByte & 0x0F
+        let identifierType = (protocolByte >> 4) & 0x0F
+
+        // Get the protocol enum
+        guard let protocolEnumValue = ProtocolEnum(rawValue: protocolValue) else {
+            return nil
+        }
+
+        // Read body length and body
+        guard let bodyLength = readByte(),
               let body = read(length: Int(bodyLength)),
               let bodyString = String(data: body, encoding: .utf8)
         else {
             return nil
         }
-//        let bodyLengthlHex = String(format: "%02x", bodyLength)
-//        print("Body Length Hex:", bodyLengthlHex)
-//        let bodyHexString = body.map { String(format: "%02x", $0) }.joined(separator: " ")
-//        print("Body Hex:", bodyHexString)
-//        print("bodyString: \(bodyString)")
-        return ResourceLocator(protocolEnum: protocolEnumValue, body: bodyString)
+
+        // Read identifier if present
+        let identifierSizes: [UInt8: Int] = [0: 0, 1: 2, 2: 8, 3: 32]
+        let identifierSize = identifierSizes[identifierType] ?? 0
+
+        var identifier: Data? = nil
+        if identifierSize > 0 {
+            guard let identifierData = read(length: identifierSize) else {
+                return nil
+            }
+            identifier = identifierData
+        }
+
+        return ResourceLocator(protocolEnum: protocolEnumValue, body: bodyString, identifier: identifier)
     }
 
     private func readPolicyField(bindingMode: PolicyBindingConfig) -> Policy? {
