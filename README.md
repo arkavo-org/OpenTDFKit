@@ -2,6 +2,59 @@
 
 Swift toolkit for OpenTDF (community)
 
+## Installation
+
+### Swift Package Manager
+
+Add OpenTDFKit to your `Package.swift`:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/opentdf/openTDFKit.git", from: "1.0.0")
+]
+```
+
+## Command Line Interface
+
+OpenTDFKit includes a CLI tool for encrypting and decrypting NanoTDF files.
+
+### Building the CLI
+
+```bash
+# Build the CLI in release mode
+swift build -c release --product OpenTDFKitCLI
+
+# The binary will be at: .build/release/OpenTDFKitCLI
+```
+
+### CLI Usage
+
+```bash
+# Encrypt a file to NanoTDF
+.build/release/OpenTDFKitCLI encrypt input.txt output.ntdf nano
+
+# Encrypt with ECDSA binding
+.build/release/OpenTDFKitCLI encrypt input.txt output.ntdf nano-with-ecdsa
+
+# Decrypt a NanoTDF file (requires KAS integration)
+.build/release/OpenTDFKitCLI decrypt output.ntdf recovered.txt nano
+
+# Check supported features
+.build/release/OpenTDFKitCLI supports nano          # exit 0 (supported)
+.build/release/OpenTDFKitCLI supports nano_ecdsa    # exit 0 (supported)
+```
+
+### Environment Configuration
+
+The CLI reads configuration from environment variables:
+
+```bash
+export CLIENTID=opentdf-client
+export CLIENTSECRET=secret
+export KASURL=http://localhost:8080/kas
+export PLATFORMURL=http://localhost:8080
+```
+
 ## Usage
 
 ### Decrypt NanoTDF

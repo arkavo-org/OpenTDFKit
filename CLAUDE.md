@@ -36,6 +36,9 @@ swiftformat --swiftversion 6.2 .
 swift build -c release
 swift run -c release OpenTDFKitProfiler
 
+# Build CLI tool
+swift build -c release --product OpenTDFKitCLI
+
 # Run all tests
 swift test
 
@@ -50,6 +53,71 @@ swift package generate-documentation
 
 # Update dependencies
 swift package update
+```
+
+## CLI Tool
+
+OpenTDFKit includes a command-line interface for encrypting and decrypting NanoTDF files, designed for cross-SDK testing with xtest.
+
+### Building the CLI
+
+```bash
+# Build the CLI in release mode
+swift build -c release --product OpenTDFKitCLI
+
+# The binary will be at: .build/release/OpenTDFKitCLI
+```
+
+### CLI Usage
+
+```bash
+# Encrypt a file to NanoTDF
+.build/release/OpenTDFKitCLI encrypt input.txt output.ntdf nano
+
+# Encrypt with ECDSA binding
+.build/release/OpenTDFKitCLI encrypt input.txt output.ntdf nano-with-ecdsa
+
+# Decrypt a NanoTDF file
+.build/release/OpenTDFKitCLI decrypt output.ntdf recovered.txt nano
+
+# Check supported features
+.build/release/OpenTDFKitCLI supports nano          # exit 0 (supported)
+.build/release/OpenTDFKitCLI supports nano_ecdsa    # exit 0 (supported)
+.build/release/OpenTDFKitCLI supports ztdf          # exit 1 (not supported)
+```
+
+### Environment Configuration
+
+The CLI reads configuration from environment variables (compatible with xtest):
+
+```bash
+# Required for KAS integration
+export CLIENTID=opentdf-client
+export CLIENTSECRET=secret
+export KASURL=http://10.0.0.138:8080/kas
+export PLATFORMURL=http://10.0.0.138:8080
+
+# Optional xtest parameters
+export XT_WITH_ECDSA_BINDING=true
+export XT_WITH_PLAINTEXT_POLICY=true
+export XT_WITH_ATTRIBUTES="attr1,attr2"
+export XT_WITH_MIME_TYPE="application/pdf"
+```
+
+### Integration Testing
+
+For cross-SDK testing with otdfctl:
+
+```bash
+# Create a NanoTDF with otdfctl (if working)
+otdfctl encrypt --tdf-type nano test.txt --out test.ntdf
+
+# Parse it with OpenTDFKit CLI
+.build/release/OpenTDFKitCLI decrypt test.ntdf recovered.txt nano
+
+# Or create with OpenTDFKit and decrypt with otdfctl
+.build/release/OpenTDFKitCLI encrypt test.txt test.ntdf nano
+otdfctl decrypt test.ntdf --out recovered.txt
 ```
 
 ## Code Style

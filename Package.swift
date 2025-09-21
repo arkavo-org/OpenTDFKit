@@ -18,6 +18,10 @@ let package = Package(
             name: "OpenTDFKitProfiler",
             targets: ["OpenTDFKitProfiler"],
         ),
+        .executable(
+            name: "OpenTDFKitCLI",
+            targets: ["OpenTDFKitCLI"],
+        ),
     ],
     dependencies: [],
     targets: [
@@ -35,6 +39,11 @@ let package = Package(
             name: "OpenTDFKitTests",
             dependencies: ["OpenTDFKit"],
             path: "OpenTDFKitTests",
+        ),
+        .executableTarget(
+            name: "OpenTDFKitCLI",
+            dependencies: ["OpenTDFKit"],
+            path: "OpenTDFKitCLI",
         ),
     ],
 )
