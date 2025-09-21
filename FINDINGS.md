@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-During integration testing between OpenTDFKit and otdfctl (OpenTDF platform CLI), we discovered format incompatibilities that prevent OpenTDFKit from parsing NanoTDFs created by otdfctl. The primary issue is that otdfctl wraps the ephemeral public key with additional metadata, resulting in a 101-byte field instead of the standard compressed EC public key sizes (33, 49, or 67 bytes) that OpenTDFKit expects.
+During integration testing between OpenTDFKit and otdfctl (OpenTDF platform CLI), we discovered format incompatibilities that prevent OpenTDFKit from parsing NanoTDFs created by otdfctl. The primary issue is that otdfctl wraps the ephemeral public key with additional metadata, resulting in a 101-byte field instead of the standard compressed EC public key sizes (33, 49, or 67 bytes) as specified in the NanoTDF specification.
 
 ## Test Environment
 
@@ -15,14 +15,18 @@ During integration testing between OpenTDFKit and otdfctl (OpenTDF platform CLI)
 
 ### 1. Ephemeral Key Format Incompatibility
 
-**Issue**: otdfctl generates a 101-byte ephemeral key field, while OpenTDFKit expects standard compressed EC public key sizes.
+**Issue**: otdfctl generates a 101-byte ephemeral key field, while the NanoTDF specification (Section 3.3.1.6) states that the ephemeral key should be 33-67 bytes (standard compressed EC public key sizes).
+
+**Specification Reference** (SPEC_NANOTDF.md):
+- Section 3.3.1: Header structure specifies "Ephemeral Key: 33-67 bytes"
+- Section 3.3.1.6: "Key - This section contains an ephemeral public key"
 
 **Analysis**:
-- Standard compressed EC public key sizes:
+- Standard compressed EC public key sizes per spec:
   - secp256r1 (P-256): 33 bytes
   - secp384r1 (P-384): 49 bytes
   - secp521r1 (P-521): 67 bytes
-- otdfctl output: 101 bytes total
+- otdfctl output: 101 bytes total (non-compliant)
   - First 68 bytes: Metadata/wrapper (possibly containing KAS key identifier "e1")
   - Last 33 bytes: Actual P-256 public key material
 
@@ -45,13 +49,23 @@ Hex dump of ephemeral key field (101 bytes at offset 0x19):
 - secp384r1 (P-384)
 - secp521r1 (P-521)
 
-### 3. Curve Value Mapping Discrepancy
+### 3. Curve Value Mapping Consistency
 
-The policy binding byte's curve value (0x02) has different interpretations:
-- **OpenTDFKit**: 0x02 = secp521r1
-- **otdfctl**: 0x02 = (value used but curve is always secp256r1)
+The NanoTDF specification defines curve values consistently across sections:
+- Section 3.3.1.3.2 (Ephemeral ECC Params Enum)
+- Section 3.3.1.4.2 (Signature ECC Mode)
 
-This suggests the curve enumeration values may not be standardized between implementations.
+**Specification Values**:
+- `0x00` = secp256r1
+- `0x01` = secp384r1
+- `0x02` = secp521r1
+- `0x03` = secp256k1
+
+**OpenTDFKit**: Correctly implements the specification mapping.
+
+**otdfctl**: The policy binding byte contains `0x02` but only supports secp256r1, suggesting either:
+1. Incorrect curve value encoding
+2. The wrapped ephemeral key format uses different semantics
 
 ### 4. Parser Failure
 
@@ -136,6 +150,25 @@ For OpenTDFKit to support otdfctl-generated NanoTDFs:
 - **OpenTDFKitCLI**: Minimal CLI tool using OpenTDFKit's parser
 - **Integration Scripts**: Various Python and Swift scripts for analysis
 
+## Specification Compliance
+
+Based on the NanoTDF specification (SPEC_NANOTDF.md):
+
+1. **OpenTDFKit**: Appears to correctly implement the NanoTDF v1 specification
+   - Expects ephemeral keys of 33-67 bytes as specified
+   - Correctly maps curve enum values
+   - Follows the binary structure defined in the spec
+
+2. **otdfctl**: Deviates from the specification in the ephemeral key field
+   - Uses 101-byte wrapped format (not defined in spec)
+   - May be implementing an extended or proprietary version
+   - The wrapping might be for backward compatibility or additional features
+
 ## Conclusion
 
-While OpenTDFKit implements a clean interpretation of the NanoTDF format, it cannot currently interoperate with otdfctl-generated files due to format differences, particularly in the ephemeral key encoding. This represents a significant barrier to using OpenTDFKit as a Swift implementation for the OpenTDF ecosystem without modifications to handle these format variations.
+The incompatibility stems from otdfctl's deviation from the NanoTDF v1 specification, specifically in the ephemeral key encoding. While OpenTDFKit correctly implements the published specification, it cannot parse otdfctl-generated files without modifications to handle the non-standard 101-byte ephemeral key format.
+
+This represents a significant barrier to using OpenTDFKit as a Swift implementation for the OpenTDF ecosystem. The resolution requires either:
+1. otdfctl conforming to the NanoTDF specification
+2. OpenTDFKit adding compatibility mode for otdfctl's format
+3. Updating the NanoTDF specification to document otdfctl's extensions
