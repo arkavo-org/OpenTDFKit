@@ -117,8 +117,29 @@ After implementing identifier parsing, OpenTDFKit should:
 2. Find the actual ephemeral key at the correct offset
 3. Successfully parse otdfctl-generated NanoTDFs
 
+## Resolution
+
+The issue has been successfully resolved by implementing complete Resource Locator parsing in OpenTDFKit:
+
+### Changes Made
+
+1. **Updated ResourceLocator struct** (NanoTDF.swift):
+   - Added `identifier: Data?` field
+   - Updated initializer to validate and store identifier
+   - Modified `toData()` to properly encode the Protocol byte with identifier type
+
+2. **Fixed BinaryParser.readResourceLocator()** (BinaryParser.swift):
+   - Separated protocol value (bits 3-0) from identifier type (bits 7-4)
+   - Added logic to read 0, 2, 8, or 32 bytes of identifier data
+   - Properly constructs ResourceLocator with all fields
+
+### Verification
+
+After the fix, OpenTDFKit successfully parses otdfctl-generated NanoTDFs:
+- KAS URL: Correctly reads "10.0.0.138:8080/kas"
+- Identifier: Properly extracts "e1" (2-byte KAS key ID)
+- Ephemeral Key: Correctly identifies as 33 bytes (P-256)
+
 ## Conclusion
 
-The incompatibility is due to an incomplete implementation in OpenTDFKit's BinaryParser, specifically the lack of support for the optional Identifier field in Resource Locators. This is not a specification violation or format incompatibility, but rather a missing feature in OpenTDFKit that can be easily fixed by properly implementing the complete Resource Locator parsing as defined in Section 3.4.1 of the NanoTDF specification.
-
-Both otdfctl and OpenTDFKit are following the specification correctly; OpenTDFKit just needs to implement the full Resource Locator format including the optional identifier field.
+The incompatibility was due to an incomplete implementation in OpenTDFKit's BinaryParser, specifically the lack of support for the optional Identifier field in Resource Locators. This was not a specification violation but rather a missing feature that has now been implemented. Both otdfctl and OpenTDFKit are spec-compliant, and they can now interoperate successfully.
