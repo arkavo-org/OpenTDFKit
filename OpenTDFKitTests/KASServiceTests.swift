@@ -293,7 +293,14 @@ final class KASServiceTests: XCTestCase {
         // Encrypt the test key
         let gcmNonce = AES.GCM.Nonce()
         let sealedBox = try AES.GCM.seal(testKeyData, using: symmetricKeyV13, nonce: gcmNonce)
-        let encryptedKey = sealedBox.ciphertext + sealedBox.tag
+
+        // Format encrypted key as expected by rewrapKeyInternal: nonce + ciphertext + tag
+        var encryptedKey = Data()
+        var nonceBytes = Data()
+        gcmNonce.withUnsafeBytes { nonceBytes.append(contentsOf: $0) }
+        encryptedKey.append(nonceBytes)
+        encryptedKey.append(sealedBox.ciphertext)
+        encryptedKey.append(sealedBox.tag)
 
         // Test rewrap with v13 hint - should succeed on first try
         let (rewrappedKeyV13, newKeyPairV13) = try await kasService.rewrapKeyInternal(
