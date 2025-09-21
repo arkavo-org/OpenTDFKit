@@ -207,7 +207,7 @@ public actor KASService {
     ///   - encryptedKey: The encrypted key to unwrap
     ///   - privateKeyData: The KAS private key to use for decryption
     /// - Returns: Rewrapped key data and the new key pair used for rewrapping
-    private func rewrapKeyInternal(
+    internal func rewrapKeyInternal(
         ephemeralPublicKey: Data,
         encryptedKey: Data,
         privateKeyData: Data,

@@ -39,8 +39,7 @@ public class BinaryParser {
 
     private func readPolicyField(bindingMode: PolicyBindingConfig) -> Policy? {
         guard let policyTypeData = read(length: 1),
-              let policyTypeRaw = policyTypeData.first,
-              let policyType = Policy.PolicyType(rawValue: policyTypeRaw)
+              let policyType = Policy.PolicyType(rawValue: policyTypeData[0])
         else {
             return nil
         }
@@ -75,9 +74,10 @@ public class BinaryParser {
             return nil
         }
         let plaintextCiphertextLengthData = contentLengthData.prefix(2)
-        let highByte = UInt16(plaintextCiphertextLengthData[plaintextCiphertextLengthData.startIndex])
-        let lowByte = UInt16(plaintextCiphertextLengthData[plaintextCiphertextLengthData.startIndex + 1])
-        let contentLength = (highByte << 8) | lowByte
+
+        let contentLength = plaintextCiphertextLengthData.withUnsafeBytes {
+            $0.load(as: UInt16.self).bigEndian
+        }
 //        print("Policy Body Length: \(contentLength)")
 
         // if no policy added then no read
@@ -97,12 +97,12 @@ public class BinaryParser {
     }
 
     func readEccAndBindingMode() -> PolicyBindingConfig? {
-        guard let eccAndBindingModeData = read(length: 1),
-              let eccAndBindingMode = eccAndBindingModeData.first
+        guard let eccAndBindingModeData = read(length: 1)
         else {
             print("Failed to read BindingMode")
             return nil
         }
+        let eccAndBindingMode = eccAndBindingModeData[0]
 //        let eccModeHex = String(format: "%02x", eccAndBindingMode)
 //        print("ECC Mode Hex:", eccModeHex)
         let ecdsaBinding = (eccAndBindingMode & (1 << 7)) != 0
@@ -125,7 +125,8 @@ public class BinaryParser {
             return nil
         }
         // print("SymmetricAndPayloadConfig read serialized data:", data.map { String($0, radix: 16) })
-        guard data.count == 1, let byte = data.first else { return nil }
+        guard data.count == 1 else { return nil }
+        let byte = data[0]
         let signed = (byte & 0b1000_0000) != 0
         let signatureECCMode = Curve(rawValue: (byte & 0b0111_0000) >> 4)
         let cipher = Cipher(rawValue: byte & 0b0000_1111)
@@ -182,8 +183,7 @@ public class BinaryParser {
 
         // 2. Read the curve byte
         guard let curveByte = read(length: 1),
-              let curveRaw = curveByte.first,
-              let curve = Curve(rawValue: curveRaw)
+              let curve = Curve(rawValue: curveByte[0])
         else {
             return nil
         }
@@ -218,9 +218,7 @@ public class BinaryParser {
         guard let versionData = read(length: FieldSize.versionSize) else {
             throw ParsingError.invalidFormat
         }
-        guard let version = versionData.first else {
-            throw ParsingError.invalidFormat
-        }
+        let version = versionData[0]
 
         // Branch based on version
         switch version {
