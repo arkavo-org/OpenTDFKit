@@ -287,7 +287,7 @@ final class KASServiceTests: XCTestCase {
             using: SHA256.self,
             salt: saltV13,
             sharedInfo: Data(),
-            outputByteCount: 32
+            outputByteCount: 32,
         )
 
         // Encrypt the test key
@@ -300,7 +300,7 @@ final class KASServiceTests: XCTestCase {
             ephemeralPublicKey: clientPublicKey,
             encryptedKey: encryptedKey,
             privateKeyData: kasKeyPair.privateKey,
-            version: Header.version // v13 hint
+            version: Header.version, // v13 hint
         )
 
         XCTAssertNotNil(rewrappedKeyV13)
@@ -311,7 +311,7 @@ final class KASServiceTests: XCTestCase {
             ephemeralPublicKey: clientPublicKey,
             encryptedKey: encryptedKey,
             privateKeyData: kasKeyPair.privateKey,
-            version: Header.versionV12 // v12 hint
+            version: Header.versionV12, // v12 hint
         )
 
         XCTAssertNotNil(rewrappedKeyV12)
@@ -322,7 +322,7 @@ final class KASServiceTests: XCTestCase {
             ephemeralPublicKey: clientPublicKey,
             encryptedKey: encryptedKey,
             privateKeyData: kasKeyPair.privateKey,
-            version: nil // No hint
+            version: nil, // No hint
         )
 
         XCTAssertNotNil(rewrappedKeyNoHint)
