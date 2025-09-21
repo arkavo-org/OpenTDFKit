@@ -96,31 +96,44 @@ public actor KeyStore {
 
     // Batch generation method
     public func generateAndStoreKeyPairs(count: Int) async throws {
-        // Pre-allocate space
+        // Capture immutable state before leaving the actor context
+        let curveSnapshot = curve
+
+        // Pre-allocate space for results
         var tempPairs: [(KeyPairIdentifier, StoredKeyPair)] = []
         tempPairs.reserveCapacity(count)
 
+        // Generate keys concurrently in detached tasks outside the actor
         try await withThrowingTaskGroup(of: StoredKeyPair.self) { group in
             for _ in 0 ..< count {
                 group.addTask {
-                    await self.generateKeyPair() // Now calling a throwing function
+                    KeyStore.makeKeyPair(curve: curveSnapshot)
                 }
             }
 
+            // Collect all generated key pairs
             for try await keyPair in group {
                 let identifier = KeyPairIdentifier(publicKey: keyPair.publicKey)
                 tempPairs.append((identifier, keyPair))
             }
         }
 
-        // Batch insert
+        // Batch insert all key pairs atomically
+        let totalBytes = tempPairs.count * (curve.publicKeyLength + curve.privateKeyLength)
+        keyPairs.reserveCapacity(keyPairs.count + tempPairs.count)
+
         for (identifier, keyPair) in tempPairs {
             keyPairs[identifier] = keyPair
-            totalBytesStored += curve.publicKeyLength + curve.privateKeyLength
         }
+
+        totalBytesStored += totalBytes
     }
 
-    public func generateKeyPair() -> StoredKeyPair { // Made throwing
+    public func generateKeyPair() -> StoredKeyPair {
+        KeyStore.makeKeyPair(curve: curve)
+    }
+
+    private static func makeKeyPair(curve: Curve) -> StoredKeyPair {
         // Since curve is a stored property, no need for switch
         switch curve {
         case .secp521r1:

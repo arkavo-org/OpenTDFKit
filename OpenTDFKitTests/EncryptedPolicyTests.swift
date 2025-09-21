@@ -51,7 +51,6 @@ final class EncryptedPolicyTests: XCTestCase {
         // Serialize the NanoTDF
         let serializedData = nanoTDF.toData()
         XCTAssertFalse(serializedData.isEmpty)
-
         // Round-trip: Parse the serialized data back into a NanoTDF
         let parser = BinaryParser(data: serializedData)
 

@@ -211,6 +211,7 @@ public actor KASService {
         ephemeralPublicKey: Data,
         encryptedKey: Data,
         privateKeyData: Data,
+        version: UInt8? = nil,
     ) async throws -> (rewrappedKey: Data, newKeyPair: StoredKeyPair) {
         // 1. Derive shared secret using the client's ephemeral public key and KAS private key
         let sharedSecret: SharedSecret
@@ -234,24 +235,32 @@ public actor KASService {
 
         // 2. Derive symmetric key for decryption
         // Support both v12 and v13 salt values (computed via spec formula)
-        let saltV12 = CryptoConstants.hkdfSaltV12
-        let saltV13 = CryptoConstants.hkdfSaltV13
+        let primarySalt: Data
+        let fallbackSalt: Data?
 
-        let symmetricKeyV12 = sharedSecret.hkdfDerivedSymmetricKey(
+        if let version {
+            switch version {
+            case Header.versionV12:
+                primarySalt = CryptoConstants.hkdfSaltV12
+                fallbackSalt = CryptoConstants.hkdfSaltV13
+            case Header.version:
+                primarySalt = CryptoConstants.hkdfSaltV13
+                fallbackSalt = CryptoConstants.hkdfSaltV12
+            default:
+                primarySalt = CryptoConstants.hkdfSaltV13
+                fallbackSalt = CryptoConstants.hkdfSaltV12
+            }
+        } else {
+            primarySalt = CryptoConstants.hkdfSaltV13
+            fallbackSalt = CryptoConstants.hkdfSaltV12
+        }
+
+        let primaryKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: saltV12,
+            salt: primarySalt,
             sharedInfo: Data(), // Empty per spec section 4
             outputByteCount: 32,
         )
-
-        let symmetricKeyV13 = sharedSecret.hkdfDerivedSymmetricKey(
-            using: SHA256.self,
-            salt: saltV13,
-            sharedInfo: Data(), // Empty per spec section 4
-            outputByteCount: 32,
-        )
-
-        // We'll try both keys in the decryption step
 
         // 3. Generate a new ephemeral key pair for rewrapping
         let newKeyPair = await keyStore.generateKeyPair()
@@ -272,13 +281,19 @@ public actor KASService {
             tag: tag,
         )
 
-        // Try decryption with the v13 key first
+        // Try decryption with the primary key first, then fallback if needed
         let decryptedKey: Data
         do {
-            decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKeyV13)
+            decryptedKey = try AES.GCM.open(sealedBox, using: primaryKey)
         } catch {
-            // If v13 key fails, fallback to v12 key
-            decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKeyV12)
+            guard let fallbackSalt else { throw KASServiceError.rewrapFailed }
+            let fallbackKey = sharedSecret.hkdfDerivedSymmetricKey(
+                using: SHA256.self,
+                salt: fallbackSalt,
+                sharedInfo: Data(),
+                outputByteCount: 32,
+            )
+            decryptedKey = try AES.GCM.open(sealedBox, using: fallbackKey)
         }
 
         // 5. Create new shared secret for rewrapping
@@ -304,7 +319,7 @@ public actor KASService {
         // 6. Derive new symmetric key for encryption (using v13 format)
         let newSymmetricKey = newSharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: saltV13, // Always use v13 salt for new keys
+            salt: CryptoConstants.hkdfSaltV13, // Always use v13 salt for new keys
             sharedInfo: Data(), // Empty per spec section 4
             outputByteCount: 32,
         )
