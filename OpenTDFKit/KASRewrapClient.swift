@@ -10,9 +10,28 @@ public class KASRewrapClient {
     /// Key Access Object for NanoTDF rewrap
     public struct KeyAccessObject: Codable {
         let header: String  // Base64-encoded raw NanoTDF header bytes
-        let type: String = "remote"
+        let type: String
         let url: String
-        let `protocol`: String = "kas"
+        let `protocol`: String
+
+        init(header: String, url: String) {
+            self.header = header
+            self.type = "remote"
+            self.url = url
+            self.protocol = "kas"
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case header, type, url, `protocol`
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            header = try container.decode(String.self, forKey: .header)
+            type = try container.decodeIfPresent(String.self, forKey: .type) ?? "remote"
+            url = try container.decode(String.self, forKey: .url)
+            `protocol` = try container.decodeIfPresent(String.self, forKey: .protocol) ?? "kas"
+        }
     }
 
     /// Key Access Object wrapper for v2 API
@@ -23,15 +42,47 @@ public class KASRewrapClient {
 
     /// Policy structure
     public struct Policy: Codable {
-        let id: String = "policy"
+        let id: String
         let body: String  // Base64-encoded policy
+
+        init(body: String) {
+            self.id = "policy"
+            self.body = body
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, body
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decodeIfPresent(String.self, forKey: .id) ?? "policy"
+            body = try container.decode(String.self, forKey: .body)
+        }
     }
 
     /// Individual rewrap request entry
     public struct RewrapRequestEntry: Codable {
-        let algorithm: String = "ec:secp256r1"
+        let algorithm: String
         let policy: Policy
         let keyAccessObjects: [KeyAccessObjectWrapper]
+
+        init(policy: Policy, keyAccessObjects: [KeyAccessObjectWrapper]) {
+            self.algorithm = "ec:secp256r1"
+            self.policy = policy
+            self.keyAccessObjects = keyAccessObjects
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case algorithm, policy, keyAccessObjects
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            algorithm = try container.decodeIfPresent(String.self, forKey: .algorithm) ?? "ec:secp256r1"
+            policy = try container.decode(Policy.self, forKey: .policy)
+            keyAccessObjects = try container.decode([KeyAccessObjectWrapper].self, forKey: .keyAccessObjects)
+        }
     }
 
     /// Unsigned rewrap request structure
