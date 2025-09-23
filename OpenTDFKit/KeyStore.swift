@@ -53,6 +53,21 @@ public struct StoredKeyPair: Sendable {
     }
 }
 
+// MARK: - Ephemeral Key Pair
+
+/// Ephemeral key pair for temporary cryptographic operations
+public struct EphemeralKeyPair: Sendable {
+    public let privateKey: Data
+    public let publicKey: Data
+    public let curve: Curve
+
+    public init(privateKey: Data, publicKey: Data, curve: Curve) {
+        self.privateKey = privateKey
+        self.publicKey = publicKey
+        self.curve = curve
+    }
+}
+
 // MARK: - KeyStore Implementation
 
 public actor KeyStore {

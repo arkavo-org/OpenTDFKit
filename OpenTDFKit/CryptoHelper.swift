@@ -14,19 +14,6 @@ public enum KasKeyCurve: UInt8, Sendable, CaseIterable {
     // as it's not directly supported by CryptoKit for key agreement and not in the proposal's enum example.
 }
 
-// Define a Sendable key pair struct
-struct EphemeralKeyPair: Sendable {
-    let privateKey: Data // Store as raw data
-    let publicKey: Data
-    let curve: Curve
-
-    init(privateKey: Data, publicKey: Data, curve: Curve) {
-        self.privateKey = privateKey
-        self.publicKey = publicKey
-        self.curve = curve
-    }
-}
-
 /// Common error types for cryptographic operations within the CryptoHelper.
 public enum CryptoHelperError: Error {
     /// Indicates that an unsupported elliptic curve was specified or encountered.
