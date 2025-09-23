@@ -44,6 +44,9 @@ let package = Package(
             name: "OpenTDFKitCLI",
             dependencies: ["OpenTDFKit"],
             path: "OpenTDFKitCLI",
+            swiftSettings: [
+                .unsafeFlags(["-parse-as-library"])
+            ]
         ),
     ],
 )
