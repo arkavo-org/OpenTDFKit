@@ -23,11 +23,13 @@ let package = Package(
             targets: ["OpenTDFKitCLI"],
         ),
     ],
-    dependencies: [],
+    dependencies: [
+        .package(url: "https://github.com/krzyzanowskim/CryptoSwift", from: "1.8.0"),
+    ],
     targets: [
         .target(
             name: "OpenTDFKit",
-            dependencies: [],
+            dependencies: ["CryptoSwift"],
             path: "OpenTDFKit",
         ),
         .executableTarget(

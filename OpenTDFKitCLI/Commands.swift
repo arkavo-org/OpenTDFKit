@@ -146,8 +146,81 @@ struct Commands {
 
         // Step 5: Extract raw header for KAS request
         // The header includes everything up to (not including) the payload
+        // IMPORTANT: We need the EXACT bytes from the file, not a reconstruction
+
+        // Calculate where payload starts by parsing
+        // The payload starts with a 3-byte length field
+        // We need to find this in the original data
+
+        // Let's find where the payload starts by looking for the 3-byte length field
+        // The payload starts with 0x00 0x00 0x23 (length = 35)
+        var headerSize = 0
+
+        // Search for the payload start marker
+        // We know the payload is 35 bytes long (0x000023)
+        let payloadMarker = Data([0x00, 0x00, 0x23])
+        if let range = data.range(of: payloadMarker) {
+            headerSize = range.lowerBound
+            print("DEBUG: Found payload at offset \(headerSize)")
+        } else {
+            // Fallback: manually calculate
+            headerSize = 3  // Magic + version
+            headerSize += 1  // Protocol byte
+            headerSize += 1  // Body length byte
+
+            if data.count > 4 {
+                let bodyLen = Int(data[4])
+                headerSize += bodyLen
+            }
+
+            // KAS identifier
+            if data.count > 3 {
+                let protocolByte = data[3]
+                let identifierType = (protocolByte >> 4) & 0x0F
+                let identifierSizes = [0, 2, 8, 32]
+                if identifierType < 4 {
+                    headerSize += identifierSizes[Int(identifierType)]
+                }
+            }
+
+            // Ephemeral key
+            if data.count > headerSize {
+                headerSize += 1  // Key length byte
+                let keyLen = Int(data[headerSize - 1])
+                headerSize += keyLen
+            }
+
+            // ECC mode and payload config
+            headerSize += 2
+
+            // Policy - this is where we had the bug
+            if data.count > headerSize {
+                headerSize += 1  // Policy type byte
+                let policyType = data[headerSize - 1]
+
+                // For embeddedEncrypted (0x03) and embeddedEncryptedWithKeyAccess (0x04)
+                // there's a length byte followed by the body
+                if policyType >= 0x03 && policyType <= 0x04 {
+                    headerSize += 1  // Body length byte
+                    if data.count > headerSize {
+                        let bodyLen = Int(data[headerSize - 1])
+                        headerSize += bodyLen
+                    }
+                }
+            }
+        }
+
+        print("DEBUG: Calculated header size: \(headerSize) bytes")
+
+        // Compare with reconstructed header for debugging
         let headerData = header.toData()
-        let rawHeader = data.prefix(headerData.count)
+        print("DEBUG: Reconstructed header size: \(headerData.count) bytes")
+        if headerSize != headerData.count {
+            print("WARNING: Header size mismatch! Original: \(headerSize), Reconstructed: \(headerData.count)")
+        }
+
+        // Use the actual file bytes for the header
+        let rawHeader = data.prefix(headerSize)
 
         // Step 6: Call KAS rewrap endpoint
         print("\nCalling KAS rewrap endpoint...")
@@ -197,30 +270,35 @@ struct Commands {
         print("  MAC: \(payload.mac.count) bytes")
 
         // Step 9: Decrypt the payload
-        // Check if we're using a non-standard tag size
-        if payload.mac.count != 16 {
-            print("\n⚠️  Warning: NanoTDF uses \(payload.mac.count)-byte MAC tag")
-            print("   CryptoKit only supports 16-byte (128-bit) tags")
-            print("   Files created with aes256GCM96 or other non-128-bit tags cannot be decrypted")
-            print("   Consider recreating the file with aes256GCM128 (cipher 0x05)")
+        print("\n✓ NanoTDF uses \(payload.mac.count)-byte MAC tag (cipher: \(String(format: "0x%02X", header.payloadSignatureConfig.payloadCipher?.rawValue ?? 0)))")
+
+        // Construct 12-byte nonce: 9 bytes of zeros + 3-byte payload IV (otdfctl compatibility)
+        var adjustedIV = Data(count: 9) // 9 bytes of zeros
+        adjustedIV.append(payload.iv)    // Append the 3-byte payload IV
+
+        // Decrypt using GCM module that supports all NanoTDF tag sizes
+        guard let cipher = header.payloadSignatureConfig.payloadCipher else {
             throw DecryptError.decryptionFailed
         }
 
-        // Adjust IV to 12 bytes for AES-GCM
-        var adjustedIV = payload.iv
-        while adjustedIV.count < 12 {
-            adjustedIV.append(0)
+        let decryptedData: Data
+        do {
+            decryptedData = try GCM.decryptNanoTDF(
+                cipher: cipher,
+                key: payloadKey,
+                iv: adjustedIV,
+                ciphertext: payload.ciphertext,
+                tag: payload.mac
+            )
+        } catch {
+            print("\n✗ GCM decryption failed: \(error)")
+            let keyData = payloadKey.withUnsafeBytes { Data($0) }
+            print("  Payload key: \(keyData.hexEncodedString())")
+            print("  IV (adjusted): \(adjustedIV.hexEncodedString())")
+            print("  Ciphertext: \(payload.ciphertext.hexEncodedString())")
+            print("  Tag: \(payload.mac.hexEncodedString())")
+            throw error
         }
-
-        // Decrypt using AES-GCM
-        let nonce = try AES.GCM.Nonce(data: adjustedIV)
-        let sealedBox = try AES.GCM.SealedBox(
-            nonce: nonce,
-            ciphertext: payload.ciphertext,
-            tag: payload.mac
-        )
-
-        let decryptedData = try AES.GCM.open(sealedBox, using: payloadKey)
         let plaintext = String(data: decryptedData, encoding: .utf8) ?? "<binary data>"
 
         print("\n✓ Decryption successful!")

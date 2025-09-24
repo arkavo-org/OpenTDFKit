@@ -531,7 +531,7 @@ public struct SignatureAndPayloadConfig: Sendable {
     /// The elliptic curve used for the signature, if present.
     var signatureCurve: Curve?
     /// The symmetric cipher used for payload encryption.
-    let payloadCipher: Cipher?
+    public let payloadCipher: Cipher?
 
     /// Serializes the SignatureAndPayloadConfig into its 1-byte binary representation.
     /// - Bit 7: HAS_SIGNATURE
