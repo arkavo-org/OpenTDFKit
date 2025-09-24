@@ -158,9 +158,25 @@ public class KASRewrapClient {
         // Build the policy from the parsed header
         let policyBody: String
         if let policyBodyData = parsedHeader.policy.body?.body {
-            policyBody = policyBodyData.base64EncodedString()
+            fputs("DEBUG: Policy body data exists, length: \(policyBodyData.count)\n", stderr)
+            if parsedHeader.policy.type == .embeddedPlaintext {
+                // For plaintext policies, send the actual JSON content
+                if let jsonString = String(data: policyBodyData, encoding: .utf8) {
+                    fputs("DEBUG: Plaintext policy: \(jsonString)\n", stderr)
+                    policyBody = policyBodyData.base64EncodedString()
+                } else {
+                    fputs("DEBUG: Failed to decode policy as UTF-8, sending as-is\n", stderr)
+                    policyBody = policyBodyData.base64EncodedString()
+                }
+            } else {
+                fputs("DEBUG: Encrypted policy, sending as base64\n", stderr)
+                policyBody = policyBodyData.base64EncodedString()
+            }
         } else {
-            policyBody = ""  // Empty policy for embedded plaintext policies
+            // Send empty JSON object for embedded plaintext policies
+            fputs("DEBUG: No policy body, sending empty JSON\n", stderr)
+            let emptyJSON = "{}".data(using: .utf8)!
+            policyBody = emptyJSON.base64EncodedString()
         }
         let policy = Policy(body: policyBody)
 
@@ -223,6 +239,13 @@ public class KASRewrapClient {
             }
 
             fputs("DEBUG: Status: \(firstResult.status)\n", stderr)
+
+            // Print full result for debugging
+            if let jsonData = try? JSONEncoder().encode(firstResult),
+               let jsonString = String(data: jsonData, encoding: .utf8) {
+                fputs("DEBUG: Full result: \(jsonString)\n", stderr)
+            }
+
             guard firstResult.status == "permit" else {
                 throw KASRewrapError.accessDenied("Access denied")
             }
@@ -289,8 +312,8 @@ public class KASRewrapClient {
         fputs("DEBUG unwrapKey: Derived symmetric key\n", stderr)
 
         // Decrypt the wrapped key
-        // The wrapped key format from platform is: nonce (12 bytes) + ciphertext + tag
-        // The platform uses gcm.Seal which produces combined format
+        // The wrapped key format from platform is: nonce (12 bytes) + ciphertext + tag (16 bytes)
+        // The platform KAS always uses 128-bit (16-byte) tags, so CryptoKit works here
         guard wrappedKey.count > 28 else { // 12 nonce + at least 16 tag
             throw KASRewrapError.invalidWrappedKeyFormat
         }

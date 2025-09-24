@@ -20,6 +20,36 @@ dependencies: [
 ]
 ```
 
+## Authentication
+
+### Getting an OAuth Token
+
+The OpenTDF test environment uses a mock OIDC provider for authentication. To get an access token:
+
+```bash
+# Get token from mock OIDC provider (port 8888, not the main platform port 8080)
+curl -s -X POST "http://10.0.0.138:8888/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials&client_id=opentdf-client&client_secret=secret" \
+  | python3 -c "import sys, json; print(json.load(sys.stdin)['access_token'])" > fresh_token.txt
+
+# The token will be saved to fresh_token.txt for use by the CLI tools
+```
+
+### Getting KAS Public Keys
+
+The KAS endpoint returns different key types based on the algorithm parameter:
+
+```bash
+# Get EC key for NanoTDF (secp256r1/P-256)
+curl -H "Authorization: Bearer $(cat fresh_token.txt)" \
+  "http://10.0.0.138:8080/kas/v2/kas_public_key?algorithm=ec:secp256r1"
+
+# Get RSA key (default, for standard TDF)
+curl -H "Authorization: Bearer $(cat fresh_token.txt)" \
+  "http://10.0.0.138:8080/kas/v2/kas_public_key"
+```
+
 ## Commands
 
 ```bash

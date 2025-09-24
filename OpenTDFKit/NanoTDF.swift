@@ -72,6 +72,113 @@ public struct NanoTDF: Sendable {
     }
 }
 
+/// Creates a NanoTDF v1.2 (L1L) object for compatibility with otdfctl and other implementations.
+/// The v1.2 format does not include the KAS public key in the header.
+/// - Parameters:
+///   - kas: The `KasMetadata` containing the KAS URL and public key information.
+///   - policy: An `inout` `Policy` struct. The function will calculate and set the `binding` property on this policy object.
+///   - plaintext: The `Data` to be encrypted and included in the NanoTDF payload.
+/// - Returns: A newly created `NanoTDF` object in v1.2 format.
+/// - Throws: `CryptoHelperError` if key generation or derivation fails, or errors from `CryptoKit` during cryptographic operations.
+public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: Data) async throws -> NanoTDF {
+    // Step 1: Generate an ephemeral key pair based on the KAS curve
+    guard let keyPair = await NanoTDF.sharedCryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
+        throw CryptoHelperError.keyDerivationFailed
+    }
+
+    // Step 2: Derive the shared secret using ECDH
+    let kasPublicKey = try kas.getPublicKey()
+    guard let sharedSecret = try await NanoTDF.sharedCryptoHelper.deriveSharedSecret(
+        keyPair: keyPair,
+        recipientPublicKey: kasPublicKey
+    ) else {
+        throw CryptoHelperError.keyDerivationFailed
+    }
+
+    // Step 3: Derive the symmetric TDF key using HKDF with v1.2 salt
+    let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
+    let tdfSymmetricKey = await NanoTDF.sharedCryptoHelper.deriveSymmetricKey(
+        sharedSecret: sharedSecret,
+        salt: salt,
+        info: Data(),
+        outputByteCount: 32
+    )
+
+    // Step 4: Process policy body based on type
+    let policyBody: Data
+    switch policy.type {
+    case .embeddedPlaintext, .remote:
+        policyBody = policy.body?.body ?? Data()
+    case .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
+        let plainPolicy = policy.body?.body ?? Data()
+        var policyNonce = Data(count: 12)
+        guard SecRandomCopyBytes(kSecRandomDefault, 12, &policyNonce) == errSecSuccess else {
+            throw CryptoHelperError.keyGenerationFailed
+        }
+        let nonce = try AES.GCM.Nonce(data: policyNonce)
+        let sealed = try AES.GCM.seal(plainPolicy, using: tdfSymmetricKey, nonce: nonce)
+        policyBody = policyNonce + sealed.ciphertext + sealed.tag
+    }
+
+    policy.body = EmbeddedPolicyBody(body: policyBody)
+
+    // Step 5: Calculate the policy binding (GMAC)
+    let policyData = policy.toData()
+    // GMAC is just AES-GCM with empty plaintext
+    var bindingNonce = Data(count: 12)
+    guard SecRandomCopyBytes(kSecRandomDefault, 12, &bindingNonce) == errSecSuccess else {
+        throw CryptoHelperError.keyGenerationFailed
+    }
+    let bindingNonceObj = try AES.GCM.Nonce(data: bindingNonce)
+    let bindingSealed = try AES.GCM.seal(Data(), using: tdfSymmetricKey, nonce: bindingNonceObj, authenticating: policyData)
+    policy.binding = bindingSealed.tag
+
+    // Step 6: Configure cipher
+    let selectedCipher = Cipher.aes256GCM128
+    let authTagSize = 16
+
+    // Step 7: Generate 3-byte IV for payload
+    var payloadIV = Data(count: 3)
+    guard SecRandomCopyBytes(kSecRandomDefault, 3, &payloadIV) == errSecSuccess else {
+        throw CryptoHelperError.keyGenerationFailed
+    }
+
+    // Step 8: Encrypt plaintext directly with the TDF symmetric key (no separate payload key)
+    // This is the key difference from v1.3 - we use the derived key directly
+    let fullIV = Data(count: 9) + payloadIV
+    let nonce = try AES.GCM.Nonce(data: fullIV)
+    let sealed = try AES.GCM.seal(plaintext, using: tdfSymmetricKey, nonce: nonce)
+    let mac = Data(sealed.tag.prefix(authTagSize))
+
+    // Create v1.2 header (empty KAS public key forces v1.2 format)
+    let payloadKeyAccess = PayloadKeyAccess(
+        kasEndpointLocator: kas.resourceLocator,
+        kasPublicKey: Data()  // Empty for v1.2 format
+    )
+
+    let header = Header(
+        payloadKeyAccess: payloadKeyAccess,
+        policyBindingConfig: PolicyBindingConfig(ecdsaBinding: false, curve: kas.curve),
+        payloadSignatureConfig: SignatureAndPayloadConfig(
+            signed: false,
+            signatureCurve: kas.curve,
+            payloadCipher: selectedCipher
+        ),
+        policy: policy,
+        ephemeralPublicKey: keyPair.publicKey
+    )
+
+    // Create payload WITHOUT wrapped key (per NanoTDF spec)
+    let payload = Payload(
+        length: UInt32(sealed.ciphertext.count),
+        iv: payloadIV,
+        ciphertext: sealed.ciphertext,
+        mac: mac
+    )
+
+    return NanoTDF(header: header, payload: payload, signature: nil)
+}
+
 /// Creates a NanoTDF object by encrypting the provided plaintext.
 /// Follows the NanoTDF creation workflow: ephemeral key generation, key derivation, policy binding, and payload encryption.
 /// - Parameters:

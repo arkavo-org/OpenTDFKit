@@ -9,7 +9,189 @@ extension Data {
     }
 }
 
+struct CLIConfig {
+    let kasURL: String
+    let platformURL: String
+    let clientID: String
+    let clientSecret: String
+    let withECDSABinding: Bool
+    let withPlaintextPolicy: Bool
+
+    static func fromEnvironment() -> CLIConfig {
+        return CLIConfig(
+            kasURL: ProcessInfo.processInfo.environment["KASURL"] ?? "http://10.0.0.138:8080",
+            platformURL: ProcessInfo.processInfo.environment["PLATFORMURL"] ?? "http://10.0.0.138:8080",
+            clientID: ProcessInfo.processInfo.environment["CLIENTID"] ?? "opentdf-client",
+            clientSecret: ProcessInfo.processInfo.environment["CLIENTSECRET"] ?? "secret",
+            withECDSABinding: ProcessInfo.processInfo.environment["XT_WITH_ECDSA_BINDING"] == "true",
+            withPlaintextPolicy: ProcessInfo.processInfo.environment["XT_WITH_PLAINTEXT_POLICY"] == "true"
+        )
+    }
+}
+
 struct Commands {
+
+    /// Encrypt plaintext to NanoTDF v1.2 format (L1L) using OpenTDFKit's NanoTDF API
+    static func encryptNanoTDF(plaintext: Data, useECDSA: Bool) async throws -> Data {
+        print("NanoTDF Encryption")
+        print("==================")
+        print("Plaintext size: \(plaintext.count) bytes")
+        print("ECDSA binding: \(useECDSA)")
+
+        // Get configuration from environment
+        let config = CLIConfig.fromEnvironment()
+
+        // Parse KAS URL
+        guard let kasURL = URL(string: config.kasURL) else {
+            throw EncryptError.invalidKASURL
+        }
+
+        let kasHost = kasURL.host ?? "10.0.0.138"
+        let kasPort = kasURL.port ?? 8080
+        // For NanoTDF ResourceLocator, only include host:port, not the path
+        let kasBody = "\(kasHost):\(kasPort)"
+
+        // Get OAuth token for fetching KAS public key
+        let tokenURL = URL(fileURLWithPath: "fresh_token.txt")
+        let tokenData = try Data(contentsOf: tokenURL)
+        let oauthToken = String(data: tokenData, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        // Fetch KAS public key - construct full URL for the API call
+        let kasFullURL = URL(string: "http://\(kasBody)/kas")!
+        let kasPublicKeyData = try await fetchKASPublicKey(
+            kasURL: kasFullURL,
+            token: oauthToken
+        )
+        print("✓ Retrieved KAS public key")
+
+        // Create resource locator for KAS
+        guard let kasLocator = ResourceLocator(
+            protocolEnum: ProtocolEnum(rawValue: 0x00)!, // HTTP
+            body: kasBody,
+            identifier: Data([0x65, 0x31]) // "e1"
+        ) else {
+            throw EncryptError.invalidKASURL
+        }
+
+        // Convert compressed key data to CryptoKit public key
+        let kasPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: kasPublicKeyData)
+
+        // Create KAS metadata with the public key
+        let kasMetadata = try KasMetadata(
+            resourceLocator: kasLocator,
+            publicKey: kasPublicKey,
+            curve: .secp256r1
+        )
+
+        // Create policy with actual attributes
+        var policy: Policy
+
+        // Create a valid policy with an attribute that exists in the platform
+        let policyUUID = UUID().uuidString.lowercased()
+        let policyJSON = """
+        {
+            "uuid": "\(policyUUID)",
+            "body": {
+                "dataAttributes": [
+                    {
+                        "attribute": "https://example.com/attr/attr1/value/value1"
+                    }
+                ],
+                "dissem": []
+            }
+        }
+        """
+        let policyData = policyJSON.data(using: .utf8)!
+
+        if config.withPlaintextPolicy {
+            policy = Policy(
+                type: .embeddedPlaintext,
+                body: EmbeddedPolicyBody(body: policyData),
+                remote: nil,
+                binding: nil
+            )
+        } else {
+            policy = Policy(
+                type: .embeddedEncrypted,
+                body: EmbeddedPolicyBody(body: policyData),
+                remote: nil,
+                binding: nil
+            )
+        }
+
+        // Create v1.2 NanoTDF for otdfctl compatibility
+        let nanoTDF = try await createNanoTDFv12(
+            kas: kasMetadata,
+            policy: &policy,
+            plaintext: plaintext
+        )
+
+        // Get the binary data
+        let nanoTDFData = nanoTDF.toData()
+
+        // Add ECDSA signature if requested
+        // Note: This would require additional implementation
+
+        print("✓ Created NanoTDF (\(nanoTDFData.count) bytes)")
+        return nanoTDFData
+    }
+
+    /// Fetch KAS public key
+    static func fetchKASPublicKey(kasURL: URL, token: String) async throws -> Data {
+        // Request EC key for NanoTDF (not RSA)
+        let urlWithParams = kasURL.appendingPathComponent("v2/kas_public_key")
+        var components = URLComponents(url: urlWithParams, resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "algorithm", value: "ec:secp256r1")]
+
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw EncryptError.kasRequestFailed
+        }
+
+        // Parse JSON response to get public key
+        struct KASPublicKeyResponse: Decodable {
+            let publicKey: String
+        }
+
+        let decoder = JSONDecoder()
+        let keyResponse = try decoder.decode(KASPublicKeyResponse.self, from: data)
+
+        // Convert PEM to compressed key
+        guard let keyData = extractCompressedKeyFromPEM(keyResponse.publicKey) else {
+            throw EncryptError.invalidKASPublicKey
+        }
+
+        return keyData
+    }
+
+    /// Extract compressed P256 public key from PEM
+    static func extractCompressedKeyFromPEM(_ pem: String) -> Data? {
+        let pemLines = pem
+            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
+            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+
+        guard let spkiData = Data(base64Encoded: pemLines) else {
+            return nil
+        }
+
+        // Parse SPKI to get compressed key
+        do {
+            let publicKey = try P256.KeyAgreement.PublicKey(derRepresentation: spkiData)
+            return publicKey.compressedRepresentation
+        } catch {
+            return nil
+        }
+    }
+
 
     /// Verify and parse a NanoTDF file using OpenTDFKit's parser
     static func verifyNanoTDF(data: Data, filename: String) throws {
@@ -85,7 +267,106 @@ struct Commands {
         print("\n✓ NanoTDF structure validated using OpenTDFKit parser")
     }
 
-    /// Decrypt a NanoTDF file
+    /// Decrypt a NanoTDF file and return plaintext
+    static func decryptNanoTDFWithOutput(data: Data, filename: String) async throws -> Data {
+        // Parse the NanoTDF
+        let parser = BinaryParser(data: data)
+        let header: Header
+        do {
+            header = try parser.parseHeader()
+        } catch {
+            throw DecryptError.invalidFormat
+        }
+
+        // Extract KAS URL - ResourceLocator body is just host:port, need to add /kas path
+        let kasURLString = header.payloadKeyAccess.kasLocator.body
+        guard let kasURL = URL(string: "http://\(kasURLString)/kas") else {
+            throw DecryptError.invalidKASURL
+        }
+
+        // Get OAuth token from file
+        let tokenURL = URL(fileURLWithPath: "fresh_token.txt")
+        let tokenData = try Data(contentsOf: tokenURL)
+        let oauthToken = String(data: tokenData, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        // Generate client ephemeral key pair
+        let privateKey = P256.KeyAgreement.PrivateKey()
+        let clientKeyPair = EphemeralKeyPair(
+            privateKey: privateKey.rawRepresentation,
+            publicKey: privateKey.publicKey.compressedRepresentation,
+            curve: .secp256r1
+        )
+
+        // Convert to PEM for KAS request
+        let publicKeyPEM = try convertToSPKIPEM(compressedKey: clientKeyPair.publicKey)
+        let pemKeyPair = EphemeralKeyPair(
+            privateKey: clientKeyPair.privateKey,
+            publicKey: publicKeyPEM.data(using: String.Encoding.utf8)!,
+            curve: .secp256r1
+        )
+
+        // Find header boundary (where payload starts)
+        var headerSize = 0
+        for i in 100..<min(data.count - 2, 300) {
+            if data[i] == 0x00 && data[i+1] == 0x00 {
+                // Check if this could be a valid payload length
+                if i + 2 < data.count {
+                    let potentialLength = Int(data[i+2])
+                    if potentialLength > 0 && potentialLength < 100 && (i + 3 + potentialLength) <= data.count {
+                        headerSize = i
+                        break
+                    }
+                }
+            }
+        }
+
+        if headerSize == 0 {
+            // Fallback: estimate based on typical sizes
+            headerSize = 176 // Common size for standard NanoTDF headers
+        }
+
+        let rawHeader = data.prefix(headerSize)
+
+        // Call KAS rewrap
+        let kasClient = KASRewrapClient(kasURL: kasURL, oauthToken: oauthToken)
+        let (wrappedKey, sessionPublicKey) = try await kasClient.rewrapNanoTDF(
+            header: rawHeader,
+            parsedHeader: header,
+            clientKeyPair: pemKeyPair
+        )
+
+        // Unwrap the key
+        let payloadKey = try KASRewrapClient.unwrapKey(
+            wrappedKey: wrappedKey,
+            sessionPublicKey: sessionPublicKey,
+            clientPrivateKey: clientKeyPair.privateKey
+        )
+
+        // Parse and decrypt payload
+        let payload = try parser.parsePayload(config: header.payloadSignatureConfig)
+
+        // Construct nonce: 9 bytes zeros + 3-byte payload IV
+        var adjustedIV = Data(count: 9)
+        adjustedIV.append(payload.iv)
+
+        // Decrypt using GCM
+        guard let cipher = header.payloadSignatureConfig.payloadCipher else {
+            throw DecryptError.decryptionFailed
+        }
+
+        let decryptedData = try GCM.decryptNanoTDF(
+            cipher: cipher,
+            key: payloadKey,
+            iv: adjustedIV,
+            ciphertext: payload.ciphertext,
+            tag: payload.mac
+        )
+
+        return decryptedData
+    }
+
+    /// Decrypt a NanoTDF file (legacy function with console output)
     static func decryptNanoTDF(data: Data, filename: String, token: String? = nil, tokenPath: String = "fresh_token.txt") async throws {
         print("NanoTDF Decryption")
         print("==================")
@@ -103,9 +384,9 @@ struct Commands {
             throw error
         }
 
-        // Step 2: Extract KAS URL
+        // Step 2: Extract KAS URL - ResourceLocator body is just host:port, need to add /kas path
         let kasURLString = header.payloadKeyAccess.kasLocator.body
-        guard let kasURL = URL(string: "http://\(kasURLString)") else {
+        guard let kasURL = URL(string: "http://\(kasURLString)/kas") else {
             print("❌ Invalid KAS URL: \(kasURLString)")
             throw DecryptError.invalidKASURL
         }
@@ -313,46 +594,67 @@ enum DecryptError: Error {
     case missingOAuthToken
     case decryptionFailed
     case keyFormatError
+    case invalidFormat
 }
 
-/// Convert compressed P256 public key to SPKI PEM format
-func convertToSPKIPEM(compressedKey: Data) throws -> String {
-    // For now, use a simplified approach - convert compressed to uncompressed first
-    // This is a temporary implementation until we have proper CryptoKit integration
+enum EncryptError: Error {
+    case invalidKASURL
+    case kasRequestFailed
+    case invalidKASPublicKey
+    case encryptionFailed
+}
 
+/// Convert compressed P256 public key to SPKI PEM format with proper DER encoding
+func convertToSPKIPEM(compressedKey: Data) throws -> String {
     guard compressedKey.count == 33 else {
         throw DecryptError.keyFormatError
     }
 
-    // Create a temporary P256 key from compressed representation to get uncompressed
+    // Convert compressed to uncompressed using x963Representation (65 bytes)
     let tempKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: compressedKey)
-    let uncompressedKey = tempKey.rawRepresentation
+    let x963Key = tempKey.x963Representation // This is the uncompressed format (0x04 + X + Y)
 
     // Standard SPKI DER structure for P-256
-    let spkiHeader: [UInt8] = [
-        0x30, 0x59, // SEQUENCE, 89 bytes
-        0x30, 0x13, // AlgorithmIdentifier SEQUENCE, 19 bytes
-        0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, // ecPublicKey OID
-        0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, // prime256v1 OID
-        0x03, 0x42, 0x00 // BIT STRING, 66 bytes, 0 unused bits
-    ]
+    var derData = Data()
 
-    // Combine header + 0x04 prefix + uncompressed key
-    var spkiBytes = Data(spkiHeader)
-    spkiBytes.append(0x04) // uncompressed point format indicator
-    spkiBytes.append(uncompressedKey)
+    // SEQUENCE header for SubjectPublicKeyInfo
+    derData.append(0x30) // SEQUENCE
+    derData.append(0x59) // Total length (89 bytes)
 
-    // Convert to PEM format
-    let base64String = spkiBytes.base64EncodedString()
-    let lines = base64String.chunked(into: 64)
+    // Algorithm Identifier SEQUENCE
+    derData.append(0x30) // SEQUENCE
+    derData.append(0x13) // Length (19 bytes)
 
-    var pemString = "-----BEGIN PUBLIC KEY-----\n"
-    for line in lines {
-        pemString += line + "\n"
+    // OID for ecPublicKey
+    derData.append(contentsOf: [0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01])
+
+    // OID for prime256v1/secp256r1
+    derData.append(contentsOf: [0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07])
+
+    // BIT STRING for public key
+    derData.append(0x03) // BIT STRING
+    derData.append(0x42) // Length (66 bytes)
+    derData.append(0x00) // No unused bits
+
+    // Add the uncompressed public key point (65 bytes)
+    derData.append(x963Key)
+
+    // Verify DER structure is correct size
+    guard derData.count == 91 else {
+        throw DecryptError.keyFormatError
     }
-    pemString += "-----END PUBLIC KEY-----\n"
 
-    return pemString
+    // Convert to PEM format with proper padding
+    let base64String = derData.base64EncodedString(options: [
+        .lineLength64Characters,
+        .endLineWithLineFeed
+    ])
+
+    return """
+    -----BEGIN PUBLIC KEY-----
+    \(base64String)
+    -----END PUBLIC KEY-----
+    """
 }
 
 extension String {

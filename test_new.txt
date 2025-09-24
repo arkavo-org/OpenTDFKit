@@ -1,0 +1,1 @@
+Test GCM-96 compatibility
