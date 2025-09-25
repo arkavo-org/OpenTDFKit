@@ -69,7 +69,7 @@ struct Commands {
         guard let kasLocator = ResourceLocator(
             protocolEnum: ProtocolEnum(rawValue: 0x00)!, // HTTP
             body: kasBody,
-            identifier: Data([0x65, 0x31]) // "e1"
+            identifier: Data([0x65, 0x31]) // "e1" for EC key
         ) else {
             throw EncryptError.invalidKASURL
         }
@@ -278,9 +278,17 @@ struct Commands {
             throw DecryptError.invalidFormat
         }
 
-        // Extract KAS URL - ResourceLocator body is just host:port, need to add /kas path
+        // Extract KAS URL - handle both formats: host:port and host:port/kas
         let kasURLString = header.payloadKeyAccess.kasLocator.body
-        guard let kasURL = URL(string: "http://\(kasURLString)/kas") else {
+        let kasURLWithPath: String
+        if kasURLString.contains("/kas") {
+            // otdfctl format: already includes /kas path
+            kasURLWithPath = "http://\(kasURLString)"
+        } else {
+            // Our format: just host:port, need to add /kas path
+            kasURLWithPath = "http://\(kasURLString)/kas"
+        }
+        guard let kasURL = URL(string: kasURLWithPath) else {
             throw DecryptError.invalidKASURL
         }
 
@@ -384,9 +392,17 @@ struct Commands {
             throw error
         }
 
-        // Step 2: Extract KAS URL - ResourceLocator body is just host:port, need to add /kas path
+        // Step 2: Extract KAS URL - handle both formats: host:port and host:port/kas
         let kasURLString = header.payloadKeyAccess.kasLocator.body
-        guard let kasURL = URL(string: "http://\(kasURLString)/kas") else {
+        let kasURLWithPath: String
+        if kasURLString.contains("/kas") {
+            // otdfctl format: already includes /kas path
+            kasURLWithPath = "http://\(kasURLString)"
+        } else {
+            // Our format: just host:port, need to add /kas path
+            kasURLWithPath = "http://\(kasURLString)/kas"
+        }
+        guard let kasURL = URL(string: kasURLWithPath) else {
             print("❌ Invalid KAS URL: \(kasURLString)")
             throw DecryptError.invalidKASURL
         }

@@ -131,11 +131,12 @@ public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: 
     }
     let bindingNonceObj = try AES.GCM.Nonce(data: bindingNonce)
     let bindingSealed = try AES.GCM.seal(Data(), using: tdfSymmetricKey, nonce: bindingNonceObj, authenticating: policyData)
-    policy.binding = bindingSealed.tag
+    // NanoTDF v1.2 uses only the first 8 bytes (64-bit) of the GMAC tag
+    policy.binding = Data(bindingSealed.tag.prefix(8))
 
-    // Step 6: Configure cipher
-    let selectedCipher = Cipher.aes256GCM128
-    let authTagSize = 16
+    // Step 6: Configure cipher (use aes256GCM96 for otdfctl compatibility)
+    let selectedCipher = Cipher.aes256GCM96
+    let authTagSize = 12
 
     // Step 7: Generate 3-byte IV for payload
     var payloadIV = Data(count: 3)
