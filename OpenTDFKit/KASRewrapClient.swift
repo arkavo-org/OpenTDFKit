@@ -1,22 +1,21 @@
-import Foundation
 import CryptoKit
 import Darwin
+import Foundation
 
 /// Client for interacting with KAS rewrap endpoint for NanoTDF
 public class KASRewrapClient {
-
     // MARK: - Request/Response Structures
 
     /// Key Access Object for NanoTDF rewrap
     public struct KeyAccessObject: Codable {
-        let header: String  // Base64-encoded raw NanoTDF header bytes
+        let header: String // Base64-encoded raw NanoTDF header bytes
         let type: String
         let url: String
         let `protocol`: String
 
         init(header: String, url: String) {
             self.header = header
-            self.type = "remote"
+            type = "remote"
             self.url = url
             self.protocol = "kas"
         }
@@ -43,10 +42,10 @@ public class KASRewrapClient {
     /// Policy structure
     public struct Policy: Codable {
         let id: String
-        let body: String  // Base64-encoded policy
+        let body: String // Base64-encoded policy
 
         init(body: String) {
-            self.id = "policy"
+            id = "policy"
             self.body = body
         }
 
@@ -68,7 +67,7 @@ public class KASRewrapClient {
         let keyAccessObjects: [KeyAccessObjectWrapper]
 
         init(policy: Policy, keyAccessObjects: [KeyAccessObjectWrapper]) {
-            self.algorithm = "ec:secp256r1"
+            algorithm = "ec:secp256r1"
             self.policy = policy
             self.keyAccessObjects = keyAccessObjects
         }
@@ -87,7 +86,7 @@ public class KASRewrapClient {
 
     /// Unsigned rewrap request structure
     public struct UnsignedRewrapRequest: Codable {
-        let clientPublicKey: String  // Top-level field as per proto
+        let clientPublicKey: String // Top-level field as per proto
         let requests: [RewrapRequestEntry]
     }
 
@@ -99,9 +98,9 @@ public class KASRewrapClient {
     /// Individual KAS result
     public struct KASResult: Codable {
         let keyAccessObjectId: String
-        let status: String  // "permit" or "fail"
+        let status: String // "permit" or "fail"
         let kasWrappedKey: String?
-        let entityWrappedKey: String?  // Legacy field
+        let entityWrappedKey: String? // Legacy field
         let metadata: [String: String]?
     }
 
@@ -115,7 +114,7 @@ public class KASRewrapClient {
     public struct RewrapResponse: Codable {
         let responses: [ResponsePolicyEntry]
         let sessionPublicKey: String?
-        let entityWrappedKey: String?  // Legacy field at top level
+        let entityWrappedKey: String? // Legacy field at top level
         let metadata: [String: String]?
         let schemaVersion: String?
     }
@@ -146,13 +145,13 @@ public class KASRewrapClient {
         // Build the Key Access Object
         let keyAccess = KeyAccessObject(
             header: header.base64EncodedString(),
-            url: kasURL.absoluteString
+            url: kasURL.absoluteString,
         )
 
         // Build the Key Access Object wrapper for v2 API
         let keyAccessWrapper = KeyAccessObjectWrapper(
             keyAccessObjectId: "kao-0",
-            keyAccessObject: keyAccess
+            keyAccessObject: keyAccess,
         )
 
         // Build the policy from the parsed header
@@ -178,19 +177,18 @@ public class KASRewrapClient {
         // Build the rewrap request entry
         let requestEntry = RewrapRequestEntry(
             policy: policy,
-            keyAccessObjects: [keyAccessWrapper]
+            keyAccessObjects: [keyAccessWrapper],
         )
 
         // Build the unsigned request with clientPublicKey at top level
         let clientPublicKeyPEM = String(data: clientKeyPair.publicKey, encoding: .utf8) ?? ""
         let unsignedRequest = UnsignedRewrapRequest(
             clientPublicKey: clientPublicKeyPEM,
-            requests: [requestEntry]
+            requests: [requestEntry],
         )
 
         // Encode to JSON
         let requestBodyJSON = try JSONEncoder().encode(unsignedRequest)
-
 
         // The KAS expects a signed JWT wrapper around the request body
         // For now, we'll create a simple unsigned JWT (alg: "none") for testing
@@ -215,14 +213,14 @@ public class KASRewrapClient {
             throw KASRewrapError.invalidResponse
         }
 
-
         switch httpResponse.statusCode {
         case 200:
             // Parse response
             let rewrapResponse = try JSONDecoder().decode(RewrapResponse.self, from: data)
 
             guard let firstPolicy = rewrapResponse.responses.first,
-                  let firstResult = firstPolicy.results.first else {
+                  let firstResult = firstPolicy.results.first
+            else {
                 throw KASRewrapError.emptyResponse
             }
 
@@ -232,7 +230,8 @@ public class KASRewrapClient {
 
             // Extract wrapped key (try kasWrappedKey first, then entityWrappedKey for legacy)
             guard let wrappedKeyBase64 = firstResult.kasWrappedKey ?? firstResult.entityWrappedKey,
-                  let wrappedKey = Data(base64Encoded: wrappedKeyBase64) else {
+                  let wrappedKey = Data(base64Encoded: wrappedKeyBase64)
+            else {
                 throw KASRewrapError.missingWrappedKey
             }
 
@@ -245,7 +244,6 @@ public class KASRewrapClient {
             let sessionKey = try extractCompressedKeyFromPEM(sessionKeyPEM)
 
             return (wrappedKey, sessionKey)
-
         case 401:
             throw KASRewrapError.authenticationFailed
         case 403:
@@ -264,7 +262,7 @@ public class KASRewrapClient {
     public static func unwrapKey(
         wrappedKey: Data,
         sessionPublicKey: Data,
-        clientPrivateKey: Data
+        clientPrivateKey: Data,
     ) throws -> SymmetricKey {
         // Perform ECDH with session public key
         let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: clientPrivateKey)
@@ -279,7 +277,7 @@ public class KASRewrapClient {
             using: SHA256.self,
             salt: salt,
             sharedInfo: Data(),
-            outputByteCount: 32
+            outputByteCount: 32,
         )
 
         // Decrypt the wrapped key
@@ -297,7 +295,6 @@ public class KASRewrapClient {
 
     /// Extract compressed P256 public key from PEM format
     private func extractCompressedKeyFromPEM(_ pem: String) throws -> Data {
-
         // Remove PEM headers and decode base64
         let pemLines = pem
             .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
@@ -308,7 +305,6 @@ public class KASRewrapClient {
         guard let spkiData = Data(base64Encoded: pemLines) else {
             throw KASRewrapError.invalidWrappedKeyFormat
         }
-
 
         // For P-256 SPKI format, the uncompressed key is at the end
         // The structure is typically ~91 bytes total
@@ -341,7 +337,7 @@ public class KASRewrapClient {
         let claims: [String: Any] = [
             "requestBody": requestBodyString,
             "iat": now,
-            "exp": now + 60  // SDK uses +60 seconds
+            "exp": now + 60, // SDK uses +60 seconds
         ]
         let claimsJSON = try JSONSerialization.data(withJSONObject: claims)
         let claimsBase64 = claimsJSON.base64URLEncodedString()
@@ -368,13 +364,13 @@ public enum KASRewrapError: Error {
 // Extension for base64URL encoding
 extension Data {
     func base64URLEncodedString() -> String {
-        return self.base64EncodedString()
+        base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
     }
 
     func hexEncodedString() -> String {
-        return map { String(format: "%02x", $0) }.joined()
+        map { String(format: "%02x", $0) }.joined()
     }
 }

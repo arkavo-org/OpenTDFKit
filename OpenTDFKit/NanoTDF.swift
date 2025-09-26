@@ -90,7 +90,7 @@ public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: 
     let kasPublicKey = try kas.getPublicKey()
     guard let sharedSecret = try await NanoTDF.sharedCryptoHelper.deriveSharedSecret(
         keyPair: keyPair,
-        recipientPublicKey: kasPublicKey
+        recipientPublicKey: kasPublicKey,
     ) else {
         throw CryptoHelperError.keyDerivationFailed
     }
@@ -101,7 +101,7 @@ public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: 
         sharedSecret: sharedSecret,
         salt: salt,
         info: Data(),
-        outputByteCount: 32
+        outputByteCount: 32,
     )
     // Step 4: Process policy body based on type
     let policyBody: Data
@@ -116,7 +116,7 @@ public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: 
             cipher: selectedCipher,
             key: tdfSymmetricKey,
             iv: zeroNonce,
-            plaintext: plainPolicy
+            plaintext: plainPolicy,
         )
         policyBody = ciphertext + tag
     }
@@ -148,7 +148,7 @@ public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: 
     // Create v1.2 header (empty KAS public key forces v1.2 format)
     let payloadKeyAccess = PayloadKeyAccess(
         kasEndpointLocator: kas.resourceLocator,
-        kasPublicKey: Data()  // Empty for v1.2 format
+        kasPublicKey: Data(), // Empty for v1.2 format
     )
 
     let header = Header(
@@ -157,10 +157,10 @@ public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: 
         payloadSignatureConfig: SignatureAndPayloadConfig(
             signed: false,
             signatureCurve: kas.curve,
-            payloadCipher: selectedCipher
+            payloadCipher: selectedCipher,
         ),
         policy: policy,
-        ephemeralPublicKey: keyPair.publicKey
+        ephemeralPublicKey: keyPair.publicKey,
     )
 
     // Create payload WITHOUT wrapped key (per NanoTDF spec)
@@ -170,7 +170,7 @@ public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: 
         length: totalPayloadLength,
         iv: payloadIV,
         ciphertext: sealed.ciphertext,
-        mac: mac
+        mac: mac,
     )
 
     return NanoTDF(header: header, payload: payload, signature: nil)
@@ -703,7 +703,7 @@ public struct ResourceLocator: Sendable {
         }
 
         // Validate identifier size if provided
-        if let identifier = identifier {
+        if let identifier {
             let validSizes = [2, 8, 32]
             guard validSizes.contains(identifier.count) else {
                 return nil // Invalid identifier size
@@ -730,16 +730,15 @@ public struct ResourceLocator: Sendable {
         var data = Data()
 
         // Determine identifier type for bits 7-4
-        let identifierType: UInt8
-        if let identifier = identifier {
+        let identifierType: UInt8 = if let identifier {
             switch identifier.count {
-            case 2: identifierType = 0x1
-            case 8: identifierType = 0x2
-            case 32: identifierType = 0x3
-            default: identifierType = 0x0 // Should not happen due to validation
+            case 2: 0x1
+            case 8: 0x2
+            case 32: 0x3
+            default: 0x0 // Should not happen due to validation
             }
         } else {
-            identifierType = 0x0 // No identifier
+            0x0 // No identifier
         }
 
         // Combine protocol and identifier type into single byte
@@ -759,7 +758,7 @@ public struct ResourceLocator: Sendable {
         }
 
         // Append identifier if present
-        if let identifier = identifier {
+        if let identifier {
             data.append(identifier)
         }
 
