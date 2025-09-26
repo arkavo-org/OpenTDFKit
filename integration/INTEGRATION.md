@@ -7,20 +7,21 @@ This guide provides instructions for integrating with the OpenTDF service instan
 ## Service Endpoints
 
 ### Primary Host Information
-- **Host IP (WiFi/en1)**: `10.0.0.138`
+- **Host**: Set via `PLATFORMURL` environment variable (defaults to `http://localhost:8080`)
+- **OIDC Host**: Set via `OIDC_ENDPOINT` environment variable (defaults to `http://localhost:8888`)
 
 ### OpenTDF Platform Service
 - **Protocol**: HTTP/gRPC
-- **Port**: 8080
+- **Port**: 8080 (default)
 - **Endpoints**:
-  - Network: `http://10.0.0.138:8080`
+  - Platform: `${PLATFORMURL:-http://localhost:8080}`
   - Health Check: `/health`
 
 ### Mock OIDC Provider
 - **Protocol**: HTTP
-- **Port**: 8888
+- **Port**: 8888 (default)
 - **Endpoints**:
-  - Network: `http://10.0.0.138:8888`
+  - OIDC: `${OIDC_ENDPOINT:-http://localhost:8888}`
   - Discovery: `/.well-known/openid-configuration`
   - JWKS: `/jwks`
   - Token: `/token`
@@ -38,7 +39,7 @@ This guide provides instructions for integrating with the OpenTDF service instan
 
 #### Method 1: Client Credentials Flow (Recommended for Testing)
 ```bash
-curl -X POST http://10.0.0.138:8888/token \
+curl -X POST "${OIDC_ENDPOINT:-http://localhost:8888}/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=client_credentials&client_id=opentdf-client&client_secret=secret"
 ```
@@ -56,7 +57,7 @@ curl -X POST http://10.0.0.138:8888/token \
 ### Token Details
 - **Algorithm**: RS256
 - **Expiration**: 3600 seconds (1 hour)
-- **Issuer**: `http://10.0.0.138:8888` (or localhost equivalent)
+- **Issuer**: Set via `OIDC_ENDPOINT` (defaults to `http://localhost:8888`)
 - **Audience**: `opentdf`
 
 ## Using otdfctl CLI
@@ -66,12 +67,12 @@ curl -X POST http://10.0.0.138:8888/token \
 Create a profile for network access:
 ```yaml
 # otdfctl-network.yaml
-endpoint: http://10.0.0.138:8080
+endpoint: ${PLATFORMURL:-http://localhost:8080}
 tls:
   insecure: false
   no-verify: true
 auth:
-  issuer: http://10.0.0.138:8888
+  issuer: ${OIDC_ENDPOINT:-http://localhost:8888}
   client_id: opentdf-client
 ```
 
@@ -80,20 +81,20 @@ auth:
 #### 1. Encrypt a File
 ```bash
 # Get token
-TOKEN=$(curl -s -X POST http://10.0.0.138:8888/token \
+TOKEN=$(curl -s -X POST "${OIDC_ENDPOINT:-http://localhost:8888}/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=client_credentials&client_id=opentdf-client&client_secret=secret" \
   | jq -r '.access_token')
 
 # Encrypt
-./otdfctl --host http://10.0.0.138:8080 \
+./otdfctl --host "${PLATFORMURL:-http://localhost:8080}" \
   --with-access-token "$TOKEN" \
   encrypt input.txt --out output.txt.tdf
 ```
 
 #### 2. List Policy Attributes
 ```bash
-./otdfctl --host http://10.0.0.138:8080 \
+./otdfctl --host "${PLATFORMURL:-http://localhost:8080}" \
   --with-access-token "$TOKEN" \
   policy attributes list
 ```
@@ -103,19 +104,19 @@ TOKEN=$(curl -s -X POST http://10.0.0.138:8888/token \
 ### Health Check
 ```bash
 # No authentication required for health endpoint
-curl http://10.0.0.138:8080/health
+curl "${PLATFORMURL:-http://localhost:8080}/health"
 ```
 
 ### KAS Public Key Retrieval
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  http://10.0.0.138:8080/kas/v2/kas_public_key
+  "${PLATFORMURL:-http://localhost:8080}/kas/v2/kas_public_key"
 ```
 
 ### Policy Operations
 ```bash
 # Create attribute
-curl -X POST http://10.0.0.138:8080/attributes \
+curl -X POST "${PLATFORMURL:-http://localhost:8080}/attributes" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -153,15 +154,15 @@ Ensure these ports are accessible from test machines:
 - **8888/tcp** - Mock OIDC Provider
 
 ### DNS/Hosts File
-For convenience, add to `/etc/hosts` on test machines:
-```
-10.0.0.138  opentdf.local
-10.0.0.138  oidc.local
-```
+For local development, you can use `localhost`:
+- `http://localhost:8080` for OpenTDF
+- `http://localhost:8888` for OIDC
 
-Then use:
-- `http://opentdf.local:8080` for OpenTDF
-- `http://oidc.local:8888` for OIDC
+For remote servers, set environment variables:
+```bash
+export PLATFORMURL=http://your-server:8080
+export OIDC_ENDPOINT=http://your-server:8888
+```
 
 ## Troubleshooting
 
@@ -199,18 +200,18 @@ Quick health check script:
 ```bash
 #!/bin/bash
 echo "Checking OpenTDF services..."
-curl -s http://10.0.0.138:8080/health > /dev/null && echo "✓ OpenTDF: OK" || echo "✗ OpenTDF: FAILED"
-curl -s http://10.0.0.138:8888/.well-known/openid-configuration > /dev/null && echo "✓ OIDC: OK" || echo "✗ OIDC: FAILED"
+curl -s "${PLATFORMURL:-http://localhost:8080}/health" > /dev/null && echo "✓ OpenTDF: OK" || echo "✗ OpenTDF: FAILED"
+curl -s "${OIDC_ENDPOINT:-http://localhost:8888}/.well-known/openid-configuration" > /dev/null && echo "✓ OIDC: OK" || echo "✗ OIDC: FAILED"
 ```
 
 ## Database Information
 
 ### PostgreSQL Connection
-- **Host**: `10.0.0.101`
-- **Port**: `5432`
-- **Database**: `opentdf`
-- **User**: `postgres`
-- **Password**: `postgres`
+- **Host**: Set via `DB_HOST` (defaults to `localhost`)
+- **Port**: Set via `DB_PORT` (defaults to `5432`)
+- **Database**: Set via `DB_NAME` (defaults to `opentdf`)
+- **User**: Set via `DB_USER` (defaults to `postgres`)
+- **Password**: Set via `DB_PASSWORD` environment variable
 
 ### Schema
 - Primary schema: `opentdf_policy`
@@ -236,7 +237,8 @@ For production deployments:
 ## Integration Checklist
 
 Before testing:
-- [ ] Verify network connectivity to `10.0.0.138`
+- [ ] Set required environment variables (PLATFORMURL, OIDC_ENDPOINT, CLIENTID, CLIENTSECRET)
+- [ ] Verify network connectivity to OpenTDF server
 - [ ] Confirm ports 8080 and 8888 are accessible
 - [ ] Obtain client credentials for testing
 - [ ] Configure otdfctl or SDK with proper endpoints
@@ -259,21 +261,24 @@ Before testing:
 ## Quick Start for New Test Agent
 
 ```bash
-# 1. Test connectivity
-ping 10.0.0.138
+# 1. Set environment variables
+export PLATFORMURL=http://localhost:8080
+export OIDC_ENDPOINT=http://localhost:8888
+export CLIENTID=opentdf-client
+export CLIENTSECRET=secret
 
 # 2. Get access token
-TOKEN=$(curl -s -X POST http://10.0.0.138:8888/token \
-  -d "grant_type=client_credentials&client_id=opentdf-client&client_secret=secret" \
+TOKEN=$(curl -s -X POST "${OIDC_ENDPOINT}/token" \
+  -d "grant_type=client_credentials&client_id=${CLIENTID}&client_secret=${CLIENTSECRET}" \
   | jq -r '.access_token')
 
 # 3. Test OpenTDF API
 curl -H "Authorization: Bearer $TOKEN" \
-  http://10.0.0.138:8080/attributes
+  "${PLATFORMURL}/attributes"
 
 # 4. Create test TDF
 echo "Test data" > test.txt
-./otdfctl --host http://10.0.0.138:8080 \
+./otdfctl --host "${PLATFORMURL}" \
   --with-access-token "$TOKEN" \
   encrypt test.txt --out test.txt.tdf
 ```

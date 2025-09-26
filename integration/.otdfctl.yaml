@@ -1,4 +1,10 @@
-endpoint: http://10.0.0.138:8080
+# Example configuration - replace with your actual values or use environment variables
+# endpoint: ${PLATFORMURL:-http://localhost:8080}
+# auth:
+#   client_id: ${CLIENTID:-opentdf-client}
+#   client_secret: ${CLIENTSECRET}
+
+endpoint: http://localhost:8080
 auth:
   client_id: opentdf-client
   client_secret: secret
