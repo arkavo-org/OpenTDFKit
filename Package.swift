@@ -4,10 +4,10 @@ import PackageDescription
 let package = Package(
     name: "OpenTDFKit",
     platforms: [
-        .iOS(.v26),
-        .macOS(.v26),
-        .tvOS(.v26),
-        .watchOS(.v26),
+        .iOS(.v18),
+        .macOS(.v14),
+        .tvOS(.v18),
+        .watchOS(.v11),
     ],
     products: [
         .library(
@@ -18,12 +18,18 @@ let package = Package(
             name: "OpenTDFKitProfiler",
             targets: ["OpenTDFKitProfiler"],
         ),
+        .executable(
+            name: "OpenTDFKitCLI",
+            targets: ["OpenTDFKitCLI"],
+        ),
     ],
-    dependencies: [],
+    dependencies: [
+        .package(url: "https://github.com/krzyzanowskim/CryptoSwift", from: "1.8.0"),
+    ],
     targets: [
         .target(
             name: "OpenTDFKit",
-            dependencies: [],
+            dependencies: ["CryptoSwift"],
             path: "OpenTDFKit",
         ),
         .executableTarget(
@@ -35,6 +41,15 @@ let package = Package(
             name: "OpenTDFKitTests",
             dependencies: ["OpenTDFKit"],
             path: "OpenTDFKitTests",
+        ),
+        .executableTarget(
+            name: "OpenTDFKitCLI",
+            dependencies: ["OpenTDFKit"],
+            path: "OpenTDFKitCLI",
+            exclude: ["REQUIREMENTS_XTEST.md", "INTEGRATION.md"],
+            swiftSettings: [
+                .unsafeFlags(["-parse-as-library"]),
+            ],
         ),
     ],
 )

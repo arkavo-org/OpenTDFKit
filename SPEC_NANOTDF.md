@@ -1,34 +1,32 @@
 # NanoTDF
 
-# nanotdf - a compact binary TDF format
-
-This document describes an updated specification for nanotdf version 1.x (colloquially). The binary format itself, as defined herein, now carries an internal version identifier of 13 due to structural changes in KAS identification.
+This document describes NanoTDF version v1, a compact binary data encoding format.
 
 ## 1. Problem
 
-The [tdf3] allows for the description of sophisticated encryption processes.
-However, the descriptive and sometimes verbose nature of the [tdf3] prevents
+The Base TDF allows for the description of sophisticated encryption processes.
+However, the descriptive and sometimes verbose nature of the Base TDF prevents
 it's use in environments with constrained storage or bandwidth requirements. In
-order to support these use-cases we have designed the nanotdf as a binary format
+order to support these use-cases, NanoTDF has been designed as a binary format
 with strict constraints and without sacrificing many of the descriptive
-capabilities of the [tdf3]. The minimum overhead of this format is less than 200
-bytes. With the nanotdf encryption of very granular information.
+capabilities of the Base TDF. The minimum overhead of this format is less than 200
+bytes. 
 
 ## 2. Background
 
 ### 2.1 ECC Encryption/Decryption
 
-All of the encryption methods used in the nanotdf involve Elliptic Curve
+All of the encryption methods used in the NanoTDF involve Elliptic Curve
 Cryptography (ECC). Unlike when using RSA, ECC public/private key pairs are only
 used to create signatures or to handle key exchange. The ECC property in use
-by the nanotdf is the support of a secure key exchange scheme, ECDH. Given
+by the NanoTDF is the support of a secure key exchange scheme, ECDH. Given
 either the recipients private key and the sender's public key or the sender's
 private key and the recipient public key, the same key can be generated and used
 securely. The combination of public/private key allows derivation of a
 deterministic point on an elliptic curve. That point, when used with a Key
 Derivation Function (KDF), generates an encryption key to share secrets.
 Variations of this method are used by SMIME, GPG, and ECIES. Section 4 details
-more information on the encryption method used.
+more information on the encryption method used. 
 
 For reference please see the following resources:
 
@@ -38,14 +36,12 @@ For reference please see the following resources:
 
 ## 3. Design
 
-The nanotdf is a binary structure that allows for offline creation of small
+NanoTDF is a binary structure that allows for offline creation of small
 encrypted payloads. Where possible, the design attempts to provide quickly
 deserializable chunks of data. However, the design is mostly concerned with
 maintaining the smallest possible size.
 
 ### 3.1 Assumptions
-
-The following design assumptions/restrictions were used to create the nanotdf:
 
 * Elliptic Curve Cryptography is used with ECDH + HKDF to derive a key
 * No Elliptic Curves less than 256-bits are supported
@@ -53,40 +49,39 @@ The following design assumptions/restrictions were used to create the nanotdf:
 
 ### 3.2 Features
 
-The initial version of the `nanotdf`, was designed to accomodate the following
-requirements:
+The initial version was designed to accomodate the following requirements:
 
-* Support a single policy
-* Support a small payload that can fit within 240 Bytes
-* Support offline creation
+* A single policy
+* A small payload that can fit within 240 Bytes
+* Offline creation
 
-### 3.3 nanotdf Structure
+### 3.3 Structure
 
-The nanotdf is composed of 3 main sections: the Header, the Payload, and the
+NanoTDF is composed of 3 main sections: the Header, the Payload, and the
 Signature. The following table describes the overall binary structure of the
 nanotdf. Each section is described in greater detail in the subsequent sections
 and a high level diagram is present after the table below.
 
 | Section              | Minimum Length (B)  | Maximum Length (B)  |
 |----------------------|---------------------|---------------------|
-| Header               | 78                  | 654                 |
+| Header               | 43                  | 584                 |
 | Payload              | 14                  | 16,777,218          |
 | Signature (Optional) | 97                  | 133                 |
 
-The following diagram is the general overview of the nanotdf structure:
+The following diagram is the general overview of the NanoTDF structure:
 
 ![nanotdf 1.0 diagram](../../diagrams/nanotdf.svg)
 
 #### 3.3.1 Header
 
 The header section is intended to be sent to a KAS and is used by the KAS to
-derive the decryption key that can decrypts the nanotdf's payload. The Header is
+derive the decryption key that can decrypts the NanoTDF payload. The Header is
 structured as follows:
 
 | Section                | Minimum Length (B)  | Maximum Length (B)  |
 |------------------------|---------------------|---------------------|
 | Magic Number + Version | 3                   | 3                   |
-| KAS                    | 37                  | 325                 |
+| KAS                    | 3                   | 257                 |
 | ECC Mode               | 1                   | 1                   |
 | Payload + Sig Mode     | 1                   | 1                   |
 | Policy                 | 3                   | 257                 |
@@ -95,35 +90,27 @@ structured as follows:
 ##### 3.3.1.1 Magic Number + Version
 
 The Magic Number + Version is a 3 byte artifact that can be used to aid in the
-discovery of a nanotdf. The Magic Number is the first 18 bits of this section.
+discovery of a NanoTDF. The Magic Number is the first 18 bits of this section.
 The remaining 6 bits are used for the version number. The 18 bits of the magic
-number are (`V`'s represent the space for the version number):
+number are (`x`'s represent the space for the version number): 
 
 ```
-0100 1100 0011 0001 01VV VVVV
-```
+0100 1100 0011 0001 01xx xxxx
+``` 
 
-This version of the NanoTDF specification defines the 6-bit version as 13 (binary `001101`).
-The complete 3-byte "Magic Number + Version" for this specification is `4C 31 4D` (hex), which is `TDFN` when base64 encoded.
-Implementations parsing NanoTDFs should check this version. Earlier versions (e.g., version 12, `L1L`) will have a different KAS structure.
+However, as part of an easter egg of the design, we have started the version
+count at 12, all versions before that should be considered invalid. The first
+version of the NanoTDF has a Magic Number + Version value of `L1L` which,
+consequently, is `TDFM` (think TDF mini/micro/etc) when base64 encoded. 
 
 ##### 3.3.1.2 KAS
 
-This section, known as the "Payload Key Access" structure, defines how to access a Key Access Service (KAS) and identifies the specific KAS public key to be used for deriving the payload decryption key. It consists of three parts:
+This section contains a Resource Locator type that allows describing access to a
+resource. In the case of the KAS, the Resource Locator defines how to access a
+KAS and its key. The Key Identifier (KID) uses the Protocol Enum w/Identifier.
+Protocol Enum w/Identifier is required.
 
-| Component             | Minimum Length (B) | Maximum Length (B) | Description                                                                                                |
-|-----------------------|--------------------|--------------------|------------------------------------------------------------------------------------------------------------|
-| KAS Endpoint Locator  | 3                  | 257                | A [Resource Locator](#341-resource-locator) specifying the KAS service URL. The `Identifier` part of this `ResourceLocator` will likely be "None" (`0x0`). |
-| KAS Key Curve Enum    | 1                  | 1                  | A 1-byte enum specifying the ECC curve of the `KAS Public Key`. Values typically align with those in [Section 3.3.1.3.2]. |
-| KAS Public Key        | 33                 | 67                 | The X9.62 compressed public key of the KAS. Length is determined by the `KAS Key Curve Enum`.                |
-
-The `KAS Key Curve Enum` indicates the elliptic curve for the `KAS Public Key`. Example values:
-* `0x00`: `secp256r1` (KAS Public Key length: 33 bytes)
-* `0x01`: `secp384r1` (KAS Public Key length: 49 bytes)
-* `0x02`: `secp521r1` (KAS Public Key length: 67 bytes)
-* `0x03`: `secp256k1` (KAS Public Key length: 33 bytes)
-
-The `KAS Public Key` is the actual compressed public key data.
+Refer to the Resource Locator object's definition in [Section 3.4.1].
 
 ##### 3.3.1.3 ECC And Binding Mode
 
@@ -133,7 +120,7 @@ The `KAS Public Key` is the actual compressed public key data.
 This section contains a 1-byte bitfield describing the ECC Params and Policy
 binding strategy to use. The Policy Binding strategy is either using a 64-bit
 GMAC (using AES-256-GCM) tag or an ECDSA signature. The signature size depends
-on the size of ECC Params used. The nanotdf at this time only supports methods
+on the size of ECC Params used. NanoTDF at this time only supports methods
 that involve Elliptic Curve Cryptography. The fields are structured as follows:
 
 | Section                   | Bit Length  | Bit start index |
@@ -148,12 +135,12 @@ that involve Elliptic Curve Cryptography. The fields are structured as follows:
 
 The policy mode is a flag that chooses between one of two options. If set to `0`
 then a 64-bit GMAC tag is used to bind the payload's key to the policy. If set
-to `1` an ECDSA signature is used.
+to `1` an ECDSA signature is used. 
 
 ###### 3.3.1.3.2 Ephemeral ECC Params Enum
 
 This 7-bit length enum describes the possible ECC Parameters to use. By design,
-the nanotdf does not allow choosing arbitrary ECC params. The following table
+NanoTDF does not allow choosing arbitrary ECC params. The following table
 describes the valid values and the associated ECC Params.
 
 | Value   | Params             |
@@ -170,7 +157,7 @@ describes the valid values and the associated ECC Params.
 
 This section contains a 1 byte data structure composed of bitfields that
 describe the symmetric ciphers for encrypted payloads. This cipher applies to
-both the Payload and the Policy of the nanotdf. The fields are as follows:
+both the Payload and the Policy of the NanoTDF. The fields are as follows:
 
 | Section               | Bit Length  | Bit start index |
 |-----------------------|-------------|-----------------|
@@ -190,8 +177,8 @@ zero otherwise.
 [Section 3.3.1.4.2]: #33142-signature-ecc-mode
 
 The Signature ECC Mode is used to determine the length of the signature at the
-end of a nanotdf. This, in combination with the previous `HAS_SIGNATURE`
-section, describe the signature of the nanotdf. The following table
+end of a NanoTDF. This, in combination with the previous `HAS_SIGNATURE`
+section, describe the signature of the NanoTDF. The following table
 describes the valid values and the associated ECC Params.
 
 | Value   | Params             |
@@ -232,7 +219,7 @@ Encryption Method Section. This section contains an ephemeral public key.
 
 #### 3.3.2 Payload
 
-The payload section of the nanotdf contains the ciphertext that is protected by
+The payload section of contains the ciphertext that is protected by
 the policy defined in the Header. The structure of the Payload is as follows:
 
 | Section               | Minimum Length (B)  | Maximum Length (B)  |
@@ -263,12 +250,12 @@ structure:
 
 The IV used for encryption. This value is a byte array containing the IV. This
 IV must never be reused with the same symmetric key. Also, to support an
-extremely compacted version of the `nanotdf` the IV value `00 00 00` is reserved
+extremely compact version the IV value `00 00 00` is reserved
 for use with an encrypted policy.
 
 ###### 3.3.2.2.2 Ciphertext
 
-The byte array of the ciphertext that is protected in the `nanotdf`. The
+The byte array of the ciphertext that is protected in the NanoTDF. The
 encryption method used to create or decrypt the ciphertext is defined in the Key
 Access object in the header.
 
@@ -281,11 +268,12 @@ Method Enum used in the [Symmetric and Payload Config] object in the header.
 
 The signature section is an optional section that contains an ECDSA signature
 used to cryptographically bind the Header and Payload to a creator of the
-nanotdf. The key used for signing is the private key of the creator of the
-nanotdf. The ECC Params used for the signature are described in [Section 3.3.1.4.2]. The private key used for this signature is distinctly different than
+NanoTDF file. The key used for signing is the private key of the creator.
+The ECC Params used for the signature are described in [Section 3.3.1.4.2]. 
+The private key used for this signature is distinctly different than
 the ephemeral private key. This is a persistent key belonging to an individual,
-entity, or device that creates nanotdfs. The signature is used to authenticate
-the entire nanotdf and contains both the public key related to the creators
+entity, or device. The signature is used to authenticate
+the entire NanoTDF and contains both the public key related to the creators
 private key and the resulting signature. The structure of this section:
 
 | Section       | Minimum Length (B)  | Maximum Length (B)  |
@@ -303,50 +291,62 @@ the message.
 This section contains the encoded `r` and `s` values of the ECDSA signature.
 They are encoded as described in [Section 5.2].
 
-### 3.4 nanotdf Types
+### 3.4 Types
 
 This section describes embedded types that are used in multiple places in a
-`nanotdf`.
+NanoTDF file.
 
 #### 3.4.1 Resource Locator
 
 [Resource Locator]: #341-resource-locator
 [Section 3.4.1]: #341-resource-locator
 
-The Resource Locator is a way for the nanotdf to represent references to
-external resources in as succinct a format as possible.
+The Resource Locator is a way for the NanoTDF to represent references to
+external resources in as succinct a format as possible. 
 
-| Section       | Minimum Length (B)  | Maximum Length (B)  |
-|---------------|---------------------|---------------------|
-| Protocol Enum | 1                   | 1                   |
-| Body Length   | 1                   | 1                   |
-| Body          | 1                   | 255                 |
+| Section               | Minimum Length (B)  | Maximum Length (B)  |
+|-----------------------|---------------------|---------------------|
+| Protocol Enum         | 1                   | 1                   |
+| Body Length           | 1                   | 1                   |
+| Body                  | 1                   | 255                 |
+| Identifier (optional) | 0                   | 32                  |
 
-##### 3.4.1.1 Protocol Enum
+##### 3.4.1.1 Protocol Header
 
 [Section 3.4.1.1]: #3411-protocol-enum
 [Protocol Enum]: #3411-protocol-enum
 
-This is a single byte used to describe the protocol used to locate a resource.
+This is a single byte used to describe the protocol used to locate a resource. 
 The following are the available values:
 
-| Value   | Protocol                  |
-|---------|---------------------------|
-| `0x00`  | `http`                    |
-| `0x01`  | `https`                   |
-| `0x02`  | unreserved                |
-| `0xff`  | Shared Resource Directory |
+| Value      | Protocol                    |
+|------------|-----------------------------|
+| Bits 3-0   | Protocol Enum Value         |
+| `0x0`      | `http`                      |
+| `0x1`      | `https`                     |
+| `0x2`      | unreserved                  |
+| `0xf`      | Shared Resource Directory   |
+
+| Value      | Identifier                                               |
+|------------|----------------------------------------------------------|
+| Bits 7-4   | Used for lookups of KAS key, Remote Policy, Policy key   |
+| `0x0`      | None                                                     |
+| `0x1`      | 2 Byte                                                   |
+| `0x2`      | 8 Byte                                                   |
+| `0x3`      | 32 Byte                                                  |
 
 _Note: Any unlisted values are unreserved. Clients should consider their use
-an errorneous condition._
+an erroneous condition._
 
 ###### 3.4.1.1.1 The Shared Resource Directory
 
 One special thing to note about the protocol enum is the Shared Directory
-version. This actually allows users of a shared directory to have reduced sizes
-of their nanotdf. The shared resource directory at this time is still an
-experimental part of the nanotdf and is included in the documentation to support
-a minor update to the nanotdf in a subsequent specification.
+version. This allows users of a shared directory to have reduced sizes
+of their NanoTDF. The shared resource directory at this time is still an
+experimental part of the NanoTDF specification and is included in the documentation to support
+a minor update to the NanoTDF in a subsequent update to the specification. 
+
+Note is this specification version ( > `opentdf/spec` 4.3.0) the "Shared Resource Directory" flag has moved.
 
 ##### 3.4.1.2 Body Length
 
@@ -389,7 +389,7 @@ The values for Type Enum are as follows:
 ##### 3.4.2.3 Body
 
 The Policy's Body Section has a structure that is dependent on the Type Enum
-value used in the Policy Section.
+value used in the Policy Section. 
 
 ###### 3.4.2.3.1 Body for Remote Policy
 
@@ -398,7 +398,7 @@ object described in [Section 3.4.1] is used to describe the remote policy.
 
 ###### 3.4.2.3.2 Body for Embedded Policy
 
-These policy types allow for creation and binding of arbitraty policies.
+These policy types allow for creation and binding of arbitraty policies. 
 
 | Section                       | Minimum Length (B) | Maximum Length (B)  |
 |-------------------------------|--------------------|---------------------|
@@ -424,8 +424,7 @@ reused.
 
 This section allows for an ephemeral key other than the Payload key to encrypt
 the policy. However, for speed's sake, it is suggested that this only be used if
-the nanotdf's encrypted payload is encrypted for a KAS's HSM (formerly called a
-CKS).
+the file's encrypted payload is encrypted for a KAS's HSM. 
 
 The structure of this section is as follows:
 
@@ -469,7 +468,7 @@ and payload together and generate the GMAC tag. For key derivation details see
 
 [Section 4]: #4-ecc-encryption-key-derivation
 
-Encrypting information with the nanotdf is done by using ECDH to derive a key.
+Encrypting information with NanoTDF is done by using ECDH to derive a key.
 However, once the shared key is derived, we must generate a key of the
 appropriate size as the ECDH bytes may derive a key with a length longer (or
 shorter) than the symmetric encryption algorithm expects. To decouple the
@@ -479,7 +478,7 @@ Derivation Function with the following parameters:
 * `size` - Depends on the key size used for symmetric encryption
 * `hash method` - This should use `SHA256`
 * `salt` - This is a non-random value tied to the magic number and version
-  `SHA256(MAGIC_NUMBER + VERSION)`. So for this version of the nanotdf the value
+  `SHA256(MAGIC_NUMBER + VERSION)`. For this version of NanoTDF the value
   of the salt is
   `3de3ca1e50cf62d8b6aba603a96fca6761387a7ac86c3d3afe85ae2d1812edfc` in hex.
 * `info` - This should be an empty value.
@@ -489,7 +488,7 @@ Derivation Function with the following parameters:
 ### 5.1 ECC Public Key Encoding
 
 ECC Public Keys should be encoded as compressed key format. This should follow
-the X9.62 ECC Public Key Compressed Encoding format.
+the X9.62 ECC Public Key Compressed Encoding format. 
 <!-- todo find a good link -->
 
 ### 5.2 ECDSA Signature Encoding
@@ -520,21 +519,21 @@ for easier visualization):
 This example that has the following parameters:
 
 * It following urls for a kas and policy
-    * KAS URL: `http://localhost:65432/kas`
-    * Policy URL: `http://localhost:65432/kas/policy`
+  * KAS URL: `http://localhost:65432/kas`
+  * Policy URL: `http://localhost:65432/kas/policy`
 * ECC Mode
-    * `use_ecdsa_binding` is `True`
-    * ECC Params is 0x00 (for `secp256r1`)
+  * `use_ecdsa_binding` is `True`
+  * ECC Params is 0x00 (for `secp256r1`)
 * [Symmetric and Payload Config]
-    * `has_signature` is `True`
-    * Mode is `0x00` for AES256GCM with a 64-bit tag
+  * `has_signature` is `True`
+  * Mode is `0x00` for AES256GCM with a 64-bit tag
 * Payload
-    * The plaintext payload is `DON'T`. _This is a little easter egg. This was the
-      message sent in the first TDF email sent with the browser extension on
-      Gmail._
+  * The plaintext payload is `DON'T`. _This is a little easter egg. This was the
+    message sent in the first TDF email sent with the browser extension on
+    Gmail._
 
 
-#### 6.1.2 nanotdf Creator's DER encoded Private Key (base64)
+#### 6.1.2 Creator's DER encoded Private Key (base64)
 
 _This is included to allow verification of the example._
 
@@ -564,7 +563,7 @@ A2ifhGOpE0DjR4R0FPXvZ6YBOrcjayIpxwtxeXTudOts
 ```
 
 
-#### 6.1.5 nanotdf
+#### 6.1.5 NanoTDF
 
 (Base64)
 
@@ -726,16 +725,16 @@ ee 16 d0 5b 78 34 03 97 e2 ae 07 1d 2e
 This example that has the following parameters:
 
 * It following urls for a kas and policy
-    * KAS URL: `https://kas.example.com`
-    * Policy URL: `https://kas.example.com/policy/abcdef`
+  * KAS URL: `https://kas.example.com`
+  * Policy URL: `https://kas.example.com/policy/abcdef`
 * ECC Mode
-    * `use_ecdsa_binding` is `True`
-    * ECC Params is 0x00 (for `secp256r1`)
+  * `use_ecdsa_binding` is `True`
+  * ECC Params is 0x00 (for `secp256r1`)
 * [Symmetric and Payload Config]
-    * `has_signature` is `False`
-    * Mode is `0x05` for AES256GCM with a 128-bit tag
+  * `has_signature` is `False`
+  * Mode is `0x05` for AES256GCM with a 128-bit tag
 * Payload
-    * The plaintext payload is `Keep this message secret`.
+  * The plaintext payload is `Keep this message secret`. 
 
 
 #### 6.2.2 nanotdf Creator's DER encoded Private Key (base64)
@@ -762,7 +761,7 @@ AjCYWytxXIomlJAExVWshnS/RciKf4FJ1L8Q29zIhzZg
 ```
 
 
-#### 6.2.5 nanotdf
+#### 6.2.5 NanoTDF
 
 (Base64)
 

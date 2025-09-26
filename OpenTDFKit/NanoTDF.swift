@@ -72,6 +72,110 @@ public struct NanoTDF: Sendable {
     }
 }
 
+/// Creates a NanoTDF v1.2 (L1L) object for compatibility with otdfctl and other implementations.
+/// The v1.2 format does not include the KAS public key in the header.
+/// - Parameters:
+///   - kas: The `KasMetadata` containing the KAS URL and public key information.
+///   - policy: An `inout` `Policy` struct. The function will calculate and set the `binding` property on this policy object.
+///   - plaintext: The `Data` to be encrypted and included in the NanoTDF payload.
+/// - Returns: A newly created `NanoTDF` object in v1.2 format.
+/// - Throws: `CryptoHelperError` if key generation or derivation fails, or errors from `CryptoKit` during cryptographic operations.
+public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: Data) async throws -> NanoTDF {
+    // Step 1: Generate an ephemeral key pair based on the KAS curve
+    guard let keyPair = await NanoTDF.sharedCryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
+        throw CryptoHelperError.keyDerivationFailed
+    }
+
+    // Step 2: Derive the shared secret using ECDH
+    let kasPublicKey = try kas.getPublicKey()
+    guard let sharedSecret = try await NanoTDF.sharedCryptoHelper.deriveSharedSecret(
+        keyPair: keyPair,
+        recipientPublicKey: kasPublicKey,
+    ) else {
+        throw CryptoHelperError.keyDerivationFailed
+    }
+
+    // Step 3: Derive the symmetric TDF key using HKDF with v1.2 salt
+    let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
+    let tdfSymmetricKey = await NanoTDF.sharedCryptoHelper.deriveSymmetricKey(
+        sharedSecret: sharedSecret,
+        salt: salt,
+        info: Data(),
+        outputByteCount: 32,
+    )
+    // Step 4: Process policy body based on type
+    let policyBody: Data
+    switch policy.type {
+    case .embeddedPlaintext, .remote:
+        policyBody = policy.body?.body ?? Data()
+    case .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
+        let plainPolicy = policy.body?.body ?? Data()
+        let zeroNonce = Data(count: 12)
+        let selectedCipher = Cipher.aes256GCM96
+        let (ciphertext, tag) = try CryptoHelper.encryptNanoTDF(
+            cipher: selectedCipher,
+            key: tdfSymmetricKey,
+            iv: zeroNonce,
+            plaintext: plainPolicy,
+        )
+        policyBody = ciphertext + tag
+    }
+
+    policy.body = EmbeddedPolicyBody(body: policyBody)
+
+    // Step 5: Calculate the policy binding
+    // NanoTDF v1.2 uses SHA256 hash of policy body bytes, taking last 8 bytes
+    let digest = SHA256.hash(data: policyBody)
+    policy.binding = Data(digest.suffix(8))
+
+    // Step 6: Configure cipher (use aes256GCM96 for otdfctl compatibility)
+    let selectedCipher = Cipher.aes256GCM96
+    let authTagSize = 12
+
+    // Step 7: Generate 3-byte IV for payload
+    var payloadIV = Data(count: 3)
+    guard SecRandomCopyBytes(kSecRandomDefault, 3, &payloadIV) == errSecSuccess else {
+        throw CryptoHelperError.keyGenerationFailed
+    }
+
+    // Step 8: Encrypt plaintext directly with the TDF symmetric key (no separate payload key)
+    // This is the key difference from v1.3 - we use the derived key directly
+    let fullIV = Data(count: 9) + payloadIV
+    let nonce = try AES.GCM.Nonce(data: fullIV)
+    let sealed = try AES.GCM.seal(plaintext, using: tdfSymmetricKey, nonce: nonce)
+    let mac = Data(sealed.tag.prefix(authTagSize))
+
+    // Create v1.2 header (empty KAS public key forces v1.2 format)
+    let payloadKeyAccess = PayloadKeyAccess(
+        kasEndpointLocator: kas.resourceLocator,
+        kasPublicKey: Data(), // Empty for v1.2 format
+    )
+
+    let header = Header(
+        payloadKeyAccess: payloadKeyAccess,
+        policyBindingConfig: PolicyBindingConfig(ecdsaBinding: false, curve: kas.curve),
+        payloadSignatureConfig: SignatureAndPayloadConfig(
+            signed: false,
+            signatureCurve: kas.curve,
+            payloadCipher: selectedCipher,
+        ),
+        policy: policy,
+        ephemeralPublicKey: keyPair.publicKey,
+    )
+
+    // Create payload WITHOUT wrapped key (per NanoTDF spec)
+    // Length field must include: IV (3 bytes) + ciphertext + MAC
+    let totalPayloadLength = UInt32(payloadIV.count + sealed.ciphertext.count + mac.count)
+    let payload = Payload(
+        length: totalPayloadLength,
+        iv: payloadIV,
+        ciphertext: sealed.ciphertext,
+        mac: mac,
+    )
+
+    return NanoTDF(header: header, payload: payload, signature: nil)
+}
+
 /// Creates a NanoTDF object by encrypting the provided plaintext.
 /// Follows the NanoTDF creation workflow: ephemeral key generation, key derivation, policy binding, and payload encryption.
 /// - Parameters:
@@ -531,7 +635,7 @@ public struct SignatureAndPayloadConfig: Sendable {
     /// The elliptic curve used for the signature, if present.
     var signatureCurve: Curve?
     /// The symmetric cipher used for payload encryption.
-    let payloadCipher: Cipher?
+    public let payloadCipher: Cipher?
 
     /// Serializes the SignatureAndPayloadConfig into its 1-byte binary representation.
     /// - Bit 7: HAS_SIGNATURE
@@ -574,14 +678,18 @@ public struct ResourceLocator: Sendable {
     public let protocolEnum: ProtocolEnum
     /// The body of the locator (e.g., hostname and path for HTTP/HTTPS).
     public let body: String
+    /// Optional identifier for KAS key, Remote Policy, or Policy key lookups (2, 8, or 32 bytes).
+    /// As per spec section 3.4.1.1, bits 7-4 of the Protocol Enum byte indicate identifier size.
+    public let identifier: Data?
 
     /// Initializes a ResourceLocator, validating the body length.
     /// The body length must be between 1 and 255 bytes (UTF-8 encoded).
     /// - Parameters:
     ///   - protocolEnum: The `ProtocolEnum` value.
     ///   - body: The string representation of the locator body.
-    /// - Returns: An initialized `ResourceLocator` or `nil` if the body length is invalid.
-    public init?(protocolEnum: ProtocolEnum, body: String) {
+    ///   - identifier: Optional identifier data (must be 0, 2, 8, or 32 bytes).
+    /// - Returns: An initialized `ResourceLocator` or `nil` if the body length or identifier size is invalid.
+    public init?(protocolEnum: ProtocolEnum, body: String, identifier: Data? = nil) {
         // Validate body length (1 to 255 bytes as per spec for body content)
         // ResourceLocator body itself can be 0 length if Identifier is "None" (0x0) as per KAS Endpoint Locator spec.
         // However, the general ResourceLocator spec (3.4.1) says Body is 1-255.
@@ -594,6 +702,14 @@ public struct ResourceLocator: Sendable {
             return nil
         }
 
+        // Validate identifier size if provided
+        if let identifier {
+            let validSizes = [2, 8, 32]
+            guard validSizes.contains(identifier.count) else {
+                return nil // Invalid identifier size
+            }
+        }
+
         // Allow empty body for KAS endpoint with "None" identifier
         if body.isEmpty, protocolEnum == .http || protocolEnum == .https {
             // For KAS Endpoint Locator with "None" identifier, empty body is valid
@@ -603,14 +719,32 @@ public struct ResourceLocator: Sendable {
         }
         self.protocolEnum = protocolEnum
         self.body = body
+        self.identifier = identifier
     }
 
     /// Serializes the ResourceLocator into its binary `Data` representation.
-    /// Format: Protocol (1 byte) || Body Length (1 byte) || Body (variable length).
+    /// Format: Protocol (1 byte) || Body Length (1 byte) || Body (variable length) || Identifier (optional).
+    /// The Protocol byte encodes both the protocol (bits 3-0) and identifier type (bits 7-4).
     /// - Returns: A `Data` object representing the serialized resource locator.
     public func toData() -> Data {
         var data = Data()
-        data.append(protocolEnum.rawValue)
+
+        // Determine identifier type for bits 7-4
+        let identifierType: UInt8 = if let identifier {
+            switch identifier.count {
+            case 2: 0x1
+            case 8: 0x2
+            case 32: 0x3
+            default: 0x0 // Should not happen due to validation
+            }
+        } else {
+            0x0 // No identifier
+        }
+
+        // Combine protocol and identifier type into single byte
+        let protocolByte = (identifierType << 4) | (protocolEnum.rawValue & 0x0F)
+        data.append(protocolByte)
+
         // Ensure body can be encoded to UTF-8
         if let bodyData = body.data(using: .utf8) {
             // Append length (UInt8) and the body data itself
@@ -622,6 +756,12 @@ public struct ResourceLocator: Sendable {
             // Currently, it results in a locator with just the protocol byte.
             data.append(UInt8(0)) // Should not happen with valid Swift strings
         }
+
+        // Append identifier if present
+        if let identifier {
+            data.append(identifier)
+        }
+
         return data
     }
 }
