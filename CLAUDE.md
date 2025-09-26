@@ -6,7 +6,7 @@ OpenTDFKit is a Swift implementation of the OpenTDF (Trusted Data Format) specif
 
 - Swift 6.0 or later
 - Xcode 16.0 or later
-- macOS 15.0+ for development
+- macOS 14.0+ for development
 
 ## Installation
 
@@ -344,7 +344,8 @@ OpenTDFKit is designed for high-performance cryptographic operations. When imple
 ## Version Compatibility
 
 - Swift 6.0+: Fully supported with all features
-- Apple Platforms: Supports macOS 13.0+, iOS 16.0+, watchOS 9.0+, and tvOS 16.0+
+- Apple Platforms: Supports macOS 14.0+, iOS 18.0+, watchOS 11.0+, tvOS 18.0+
+- GitHub Actions CI: Runs on macos-latest (currently macOS 14)
 
 ## Contribution Guidelines
 
