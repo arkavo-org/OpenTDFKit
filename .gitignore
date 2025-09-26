@@ -96,3 +96,18 @@ fastlane/test_output
 
 **/.claude/settings.local.json
 .aider*
+
+# Test artifacts and temporary files
+*.ntdf
+*.ntdf.tdf
+*_recovered.txt
+*_input.txt
+test_*.txt
+test_*.swift
+test_*.py
+fresh_token.txt
+token.txt
+token_response.json
+*.log
+cli.sh
+otdfctl-config.yaml
