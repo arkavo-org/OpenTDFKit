@@ -23,7 +23,7 @@ struct ParseNanoTDF {
 
         // Check magic number (first 3 bytes should be "L1L" or "L1M")
         if data.count >= 3 {
-            let magic = data[0..<2]
+            let magic = data[0 ..< 2]
             let version = data[2]
 
             let magicString = String(data: magic, encoding: .ascii) ?? "unknown"
@@ -68,7 +68,7 @@ struct ParseNanoTDF {
 
                 // Body content
                 if offset + bodyLength <= data.count {
-                    let kasBody = data[offset..<offset + bodyLength]
+                    let kasBody = data[offset ..< offset + bodyLength]
                     if let kasURL = String(data: kasBody, encoding: .utf8) {
                         print("KAS URL: \(kasURL)")
                     }
@@ -84,7 +84,7 @@ struct ParseNanoTDF {
                 print("Ephemeral Key Length: \(keyLength) bytes")
 
                 if offset + keyLength <= data.count {
-                    let ephemeralKey = data[offset..<offset + keyLength]
+                    let ephemeralKey = data[offset ..< offset + keyLength]
                     print("Ephemeral Key (first 16 bytes): \(ephemeralKey.prefix(16).map { String(format: "%02x", $0) }.joined(separator: " "))")
                     offset += keyLength
                 }
@@ -116,8 +116,8 @@ struct ParseNanoTDF {
             // Payload structure: 3 bytes length + IV + ciphertext + MAC
             if encryptedPayload.count >= 3 {
                 let payloadLength = (UInt32(encryptedPayload[0]) << 16) |
-                                   (UInt32(encryptedPayload[1]) << 8) |
-                                   UInt32(encryptedPayload[2])
+                    (UInt32(encryptedPayload[1]) << 8) |
+                    UInt32(encryptedPayload[2])
                 print("Payload length field: \(payloadLength)")
 
                 // Show first few bytes of encrypted data

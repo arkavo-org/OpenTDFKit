@@ -1,11 +1,11 @@
-import Foundation
-import OpenTDFKit
 import CryptoKit
 import Darwin
+import Foundation
+import OpenTDFKit
 
 extension Data {
     func hexEncodedString() -> String {
-        return map { String(format: "%02x", $0) }.joined()
+        map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -18,19 +18,18 @@ struct CLIConfig {
     let withPlaintextPolicy: Bool
 
     static func fromEnvironment() -> CLIConfig {
-        return CLIConfig(
+        CLIConfig(
             kasURL: ProcessInfo.processInfo.environment["KASURL"] ?? "http://10.0.0.138:8080",
             platformURL: ProcessInfo.processInfo.environment["PLATFORMURL"] ?? "http://10.0.0.138:8080",
             clientID: ProcessInfo.processInfo.environment["CLIENTID"] ?? "opentdf-client",
             clientSecret: ProcessInfo.processInfo.environment["CLIENTSECRET"] ?? "secret",
             withECDSABinding: ProcessInfo.processInfo.environment["XT_WITH_ECDSA_BINDING"] == "true",
-            withPlaintextPolicy: ProcessInfo.processInfo.environment["XT_WITH_PLAINTEXT_POLICY"] == "true"
+            withPlaintextPolicy: ProcessInfo.processInfo.environment["XT_WITH_PLAINTEXT_POLICY"] == "true",
         )
     }
 }
 
-struct Commands {
-
+enum Commands {
     /// Encrypt plaintext to NanoTDF v1.2 format (L1L) using OpenTDFKit's NanoTDF API
     static func encryptNanoTDF(plaintext: Data, useECDSA: Bool) async throws -> Data {
         print("NanoTDF Encryption")
@@ -61,7 +60,7 @@ struct Commands {
         let kasFullURL = URL(string: "http://\(kasBody)/kas")!
         let kasPublicKeyData = try await fetchKASPublicKey(
             kasURL: kasFullURL,
-            token: oauthToken
+            token: oauthToken,
         )
         print("✓ Retrieved KAS public key")
 
@@ -69,7 +68,7 @@ struct Commands {
         guard let kasLocator = ResourceLocator(
             protocolEnum: ProtocolEnum(rawValue: 0x00)!, // HTTP
             body: kasBody,
-            identifier: Data([0x65, 0x31]) // "e1" for EC key
+            identifier: Data([0x65, 0x31]), // "e1" for EC key
         ) else {
             throw EncryptError.invalidKASURL
         }
@@ -81,7 +80,7 @@ struct Commands {
         let kasMetadata = try KasMetadata(
             resourceLocator: kasLocator,
             publicKey: kasPublicKey,
-            curve: .secp256r1
+            curve: .secp256r1,
         )
 
         // Create policy with actual attributes
@@ -105,14 +104,14 @@ struct Commands {
                 type: .embeddedPlaintext,
                 body: EmbeddedPolicyBody(body: policyData),
                 remote: nil,
-                binding: nil
+                binding: nil,
             )
         } else {
             policy = Policy(
                 type: .embeddedEncrypted,
                 body: EmbeddedPolicyBody(body: policyData),
                 remote: nil,
-                binding: nil
+                binding: nil,
             )
         }
 
@@ -120,7 +119,7 @@ struct Commands {
         let nanoTDF = try await createNanoTDFv12(
             kas: kasMetadata,
             policy: &policy,
-            plaintext: plaintext
+            plaintext: plaintext,
         )
 
         // Get the binary data
@@ -147,7 +146,8 @@ struct Commands {
         let (data, response) = try await URLSession.shared.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
+              httpResponse.statusCode == 200
+        else {
             throw EncryptError.kasRequestFailed
         }
 
@@ -187,7 +187,6 @@ struct Commands {
             return nil
         }
     }
-
 
     /// Verify and parse a NanoTDF file using OpenTDFKit's parser
     static func verifyNanoTDF(data: Data, filename: String) throws {
@@ -233,10 +232,10 @@ struct Commands {
             print("  Note: otdfctl only supports secp256r1")
         } else {
             let curveName = switch header.ephemeralPublicKey.count {
-                case 33: "secp256r1 (P-256)"
-                case 49: "secp384r1 (P-384)"
-                case 67: "secp521r1 (P-521)"
-                default: "unknown"
+            case 33: "secp256r1 (P-256)"
+            case 49: "secp384r1 (P-384)"
+            case 67: "secp521r1 (P-521)"
+            default: "unknown"
             }
             print("  Detected curve: \(curveName)")
         }
@@ -264,7 +263,7 @@ struct Commands {
     }
 
     /// Decrypt a NanoTDF file and return plaintext
-    static func decryptNanoTDFWithOutput(data: Data, filename: String) async throws -> Data {
+    static func decryptNanoTDFWithOutput(data: Data, filename _: String) async throws -> Data {
         // Parse the NanoTDF
         let parser = BinaryParser(data: data)
         let header: Header
@@ -276,13 +275,12 @@ struct Commands {
 
         // Extract KAS URL - handle both formats: host:port and host:port/kas
         let kasURLString = header.payloadKeyAccess.kasLocator.body
-        let kasURLWithPath: String
-        if kasURLString.contains("/kas") {
+        let kasURLWithPath = if kasURLString.contains("/kas") {
             // otdfctl format: already includes /kas path
-            kasURLWithPath = "http://\(kasURLString)"
+            "http://\(kasURLString)"
         } else {
             // Our format: just host:port, need to add /kas path
-            kasURLWithPath = "http://\(kasURLString)/kas"
+            "http://\(kasURLString)/kas"
         }
         guard let kasURL = URL(string: kasURLWithPath) else {
             throw DecryptError.invalidKASURL
@@ -299,7 +297,7 @@ struct Commands {
         let clientKeyPair = EphemeralKeyPair(
             privateKey: privateKey.rawRepresentation,
             publicKey: privateKey.publicKey.compressedRepresentation,
-            curve: .secp256r1
+            curve: .secp256r1,
         )
 
         // Convert to PEM for KAS request
@@ -307,17 +305,17 @@ struct Commands {
         let pemKeyPair = EphemeralKeyPair(
             privateKey: clientKeyPair.privateKey,
             publicKey: publicKeyPEM.data(using: String.Encoding.utf8)!,
-            curve: .secp256r1
+            curve: .secp256r1,
         )
 
         // Find header boundary (where payload starts)
         var headerSize = 0
-        for i in 100..<min(data.count - 2, 300) {
-            if data[i] == 0x00 && data[i+1] == 0x00 {
+        for i in 100 ..< min(data.count - 2, 300) {
+            if data[i] == 0x00, data[i + 1] == 0x00 {
                 // Check if this could be a valid payload length
                 if i + 2 < data.count {
-                    let potentialLength = Int(data[i+2])
-                    if potentialLength > 0 && potentialLength < 100 && (i + 3 + potentialLength) <= data.count {
+                    let potentialLength = Int(data[i + 2])
+                    if potentialLength > 0, potentialLength < 100, (i + 3 + potentialLength) <= data.count {
                         headerSize = i
                         break
                     }
@@ -337,14 +335,14 @@ struct Commands {
         let (wrappedKey, sessionPublicKey) = try await kasClient.rewrapNanoTDF(
             header: rawHeader,
             parsedHeader: header,
-            clientKeyPair: pemKeyPair
+            clientKeyPair: pemKeyPair,
         )
 
         // Unwrap the key
         let payloadKey = try KASRewrapClient.unwrapKey(
             wrappedKey: wrappedKey,
             sessionPublicKey: sessionPublicKey,
-            clientPrivateKey: clientKeyPair.privateKey
+            clientPrivateKey: clientKeyPair.privateKey,
         )
 
         // Parse and decrypt payload
@@ -364,7 +362,7 @@ struct Commands {
             key: payloadKey,
             iv: adjustedIV,
             ciphertext: payload.ciphertext,
-            tag: payload.mac
+            tag: payload.mac,
         )
 
         return decryptedData
@@ -390,13 +388,12 @@ struct Commands {
 
         // Step 2: Extract KAS URL - handle both formats: host:port and host:port/kas
         let kasURLString = header.payloadKeyAccess.kasLocator.body
-        let kasURLWithPath: String
-        if kasURLString.contains("/kas") {
+        let kasURLWithPath = if kasURLString.contains("/kas") {
             // otdfctl format: already includes /kas path
-            kasURLWithPath = "http://\(kasURLString)"
+            "http://\(kasURLString)"
         } else {
             // Our format: just host:port, need to add /kas path
-            kasURLWithPath = "http://\(kasURLString)/kas"
+            "http://\(kasURLString)/kas"
         }
         guard let kasURL = URL(string: kasURLWithPath) else {
             print("❌ Invalid KAS URL: \(kasURLString)")
@@ -422,18 +419,17 @@ struct Commands {
         let clientKeyPair = EphemeralKeyPair(
             privateKey: privateKey.rawRepresentation,
             publicKey: privateKey.publicKey.compressedRepresentation,
-            curve: .secp256r1
+            curve: .secp256r1,
         )
 
         // Convert the compressed public key to SPKI PEM format for KAS
         let publicKeyPEM = try convertToSPKIPEM(compressedKey: clientKeyPair.publicKey)
 
-
         // Create a new key pair with PEM format for the request
         let pemKeyPair = EphemeralKeyPair(
             privateKey: clientKeyPair.privateKey,
             publicKey: publicKeyPEM.data(using: String.Encoding.utf8)!,
-            curve: .secp256r1
+            curve: .secp256r1,
         )
         print("✓ Generated client ephemeral key pair using CryptoKit")
 
@@ -457,9 +453,9 @@ struct Commands {
             print("DEBUG: Found payload at offset \(headerSize)")
         } else {
             // Fallback: manually calculate
-            headerSize = 3  // Magic + version
-            headerSize += 1  // Protocol byte
-            headerSize += 1  // Body length byte
+            headerSize = 3 // Magic + version
+            headerSize += 1 // Protocol byte
+            headerSize += 1 // Body length byte
 
             if data.count > 4 {
                 let bodyLen = Int(data[4])
@@ -478,7 +474,7 @@ struct Commands {
 
             // Ephemeral key
             if data.count > headerSize {
-                headerSize += 1  // Key length byte
+                headerSize += 1 // Key length byte
                 let keyLen = Int(data[headerSize - 1])
                 headerSize += keyLen
             }
@@ -488,13 +484,13 @@ struct Commands {
 
             // Policy - this is where we had the bug
             if data.count > headerSize {
-                headerSize += 1  // Policy type byte
+                headerSize += 1 // Policy type byte
                 let policyType = data[headerSize - 1]
 
                 // For embeddedEncrypted (0x03) and embeddedEncryptedWithKeyAccess (0x04)
                 // there's a length byte followed by the body
-                if policyType >= 0x03 && policyType <= 0x04 {
-                    headerSize += 1  // Body length byte
+                if policyType >= 0x03, policyType <= 0x04 {
+                    headerSize += 1 // Body length byte
                     if data.count > headerSize {
                         let bodyLen = Int(data[headerSize - 1])
                         headerSize += bodyLen
@@ -526,7 +522,7 @@ struct Commands {
             (wrappedKey, sessionPublicKey) = try await kasClient.rewrapNanoTDF(
                 header: rawHeader,
                 parsedHeader: header,
-                clientKeyPair: pemKeyPair
+                clientKeyPair: pemKeyPair,
             )
             print("✓ KAS rewrap successful")
         } catch {
@@ -545,7 +541,7 @@ struct Commands {
             payloadKey = try KASRewrapClient.unwrapKey(
                 wrappedKey: wrappedKey,
                 sessionPublicKey: sessionPublicKey,
-                clientPrivateKey: clientKeyPair.privateKey
+                clientPrivateKey: clientKeyPair.privateKey,
             )
             print("✓ Key unwrapped successfully")
             fputs("DEBUG: Payload key size: \(payloadKey.bitCount) bits\n", stderr)
@@ -567,7 +563,7 @@ struct Commands {
 
         // Construct 12-byte nonce: 9 bytes of zeros + 3-byte payload IV (otdfctl compatibility)
         var adjustedIV = Data(count: 9) // 9 bytes of zeros
-        adjustedIV.append(payload.iv)    // Append the 3-byte payload IV
+        adjustedIV.append(payload.iv) // Append the 3-byte payload IV
 
         // Decrypt using GCM module that supports all NanoTDF tag sizes
         guard let cipher = header.payloadSignatureConfig.payloadCipher else {
@@ -581,7 +577,7 @@ struct Commands {
                 key: payloadKey,
                 iv: adjustedIV,
                 ciphertext: payload.ciphertext,
-                tag: payload.mac
+                tag: payload.mac,
             )
         } catch {
             print("\n✗ GCM decryption failed: \(error)")
@@ -659,7 +655,7 @@ func convertToSPKIPEM(compressedKey: Data) throws -> String {
     // Convert to PEM format with proper padding
     let base64String = derData.base64EncodedString(options: [
         .lineLength64Characters,
-        .endLineWithLineFeed
+        .endLineWithLineFeed,
     ])
 
     return """
@@ -671,10 +667,10 @@ func convertToSPKIPEM(compressedKey: Data) throws -> String {
 
 extension String {
     func chunked(into size: Int) -> [String] {
-        return stride(from: 0, to: count, by: size).map {
+        stride(from: 0, to: count, by: size).map {
             let start = index(startIndex, offsetBy: $0)
             let end = index(start, offsetBy: min(size, count - $0))
-            return String(self[start..<end])
+            return String(self[start ..< end])
         }
     }
 }

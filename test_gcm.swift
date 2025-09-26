@@ -1,5 +1,5 @@
-import Foundation
 import CryptoKit
+import Foundation
 
 // Test data from the actual file
 let keyHex = "e05f9a6ca22376bfb5274187ddef7920c1af98841aba8cb6ff638657688f3ae7"
@@ -42,7 +42,7 @@ do {
     let sealedBox = try AES.GCM.SealedBox(
         nonce: nonce,
         ciphertext: ciphertext,
-        tag: paddedTag
+        tag: paddedTag,
     )
     let plaintext = try AES.GCM.open(sealedBox, using: key)
     print("Success! Plaintext: \(String(data: plaintext, encoding: .utf8) ?? plaintext.hexEncodedString())")
@@ -52,6 +52,6 @@ do {
 
 extension Data {
     func hexEncodedString() -> String {
-        return map { String(format: "%02x", $0) }.joined()
+        map { String(format: "%02x", $0) }.joined()
     }
 }

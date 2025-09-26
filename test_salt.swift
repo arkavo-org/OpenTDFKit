@@ -1,5 +1,5 @@
-import Foundation
 import CryptoKit
+import Foundation
 
 // Compute the HKDF salt for v12 (L1L)
 let magicNumber = Data([0x4C, 0x31]) // "L1"

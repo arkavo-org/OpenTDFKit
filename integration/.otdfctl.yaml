@@ -1,0 +1,4 @@
+endpoint: http://10.0.0.138:8080
+auth:
+  client_id: opentdf-client
+  client_secret: secret

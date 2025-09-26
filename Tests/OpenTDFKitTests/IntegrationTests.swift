@@ -1,10 +1,10 @@
 import Foundation
-import Testing
 @testable import OpenTDFKit
+import Testing
 
 struct IntegrationTests {
     @Test("Create and parse NanoTDF with remote KAS")
-    func testCreateAndParseNanoTDF() async throws {
+    func createAndParseNanoTDF() async throws {
         // Test data
         let testData = "This is test data for NanoTDF encryption".data(using: .utf8)!
 
@@ -33,21 +33,21 @@ struct IntegrationTests {
             body: NanoTDF.PolicyBody(
                 dataAttributes: [],
                 dissem: [],
-                kasURL: kasURL
+                kasURL: kasURL,
             ),
             keyAccess: NanoTDF.KeyAccess(
                 keyType: .remote,
                 kasURL: kasURL,
                 protocol: "kas",
-                ephemeralPublicKey: ephemeralKey.publicKey
-            )
+                ephemeralPublicKey: ephemeralKey.publicKey,
+            ),
         )
 
         // Create NanoTDF
         let nanoTDF = try NanoTDF(
             policy: policy,
             payload: testData,
-            ephemeralKey: ephemeralKey
+            ephemeralKey: ephemeralKey,
         )
 
         // Serialize the NanoTDF
@@ -76,7 +76,7 @@ struct IntegrationTests {
     }
 
     @Test("Parse existing NanoTDF file if available")
-    func testParseExistingNanoTDF() throws {
+    func parseExistingNanoTDF() throws {
         // Check if we have a NanoTDF file from otdfctl
         let testFilePath = FileManager.default.currentDirectoryPath + "/test_data.ntdf"
 

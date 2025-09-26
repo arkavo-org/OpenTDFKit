@@ -10,7 +10,7 @@ let key = hexToData(keyHex)
 print("Key: \(keyHex)")
 
 // Use the same IV construction: 9 zeros + 3 bytes
-let ivSuffix = Data([0x90, 0xf8, 0x65])
+let ivSuffix = Data([0x90, 0xF8, 0x65])
 var iv = Data(count: 9)
 iv.append(ivSuffix)
 print("IV: \(iv.map { String(format: "%02x", $0) }.joined())")

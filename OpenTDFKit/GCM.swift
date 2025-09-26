@@ -4,7 +4,6 @@ import Foundation
 
 /// GCM helper for NanoTDF - supports all 6 cipher modes defined in the spec
 public enum GCM {
-
     public enum Error: Swift.Error, CustomStringConvertible {
         case invalidKeySize(Int)
         case invalidIVSize(Int)
@@ -12,12 +11,12 @@ public enum GCM {
 
         public var description: String {
             switch self {
-            case .invalidKeySize(let size):
-                return "Invalid key size: \(size) bytes (expected 32 for AES-256)"
-            case .invalidIVSize(let size):
-                return "Invalid IV size: \(size) bytes (expected 12)"
+            case let .invalidKeySize(size):
+                "Invalid key size: \(size) bytes (expected 32 for AES-256)"
+            case let .invalidIVSize(size):
+                "Invalid IV size: \(size) bytes (expected 12)"
             case .unsupportedCipher:
-                return "Unsupported cipher mode"
+                "Unsupported cipher mode"
             }
         }
     }
@@ -35,7 +34,7 @@ public enum GCM {
         key: SymmetricKey,
         iv: Data,
         ciphertext: Data,
-        tag: Data
+        tag: Data,
     ) throws -> Data {
         // For 128-bit tags, use CryptoKit (it's faster)
         if cipher == .aes256GCM128 {
@@ -43,7 +42,7 @@ public enum GCM {
             let sealedBox = try AES.GCM.SealedBox(
                 nonce: nonce,
                 ciphertext: ciphertext,
-                tag: tag
+                tag: tag,
             )
             return try AES.GCM.open(sealedBox, using: key)
         }
@@ -55,7 +54,7 @@ public enum GCM {
             iv: iv,
             ciphertext: ciphertext,
             tag: tag,
-            tagLength: tagSize(for: cipher)
+            tagLength: tagSize(for: cipher),
         )
     }
 
@@ -70,7 +69,7 @@ public enum GCM {
         cipher: Cipher,
         key: SymmetricKey,
         iv: Data,
-        plaintext: Data
+        plaintext: Data,
     ) throws -> (ciphertext: Data, tag: Data) {
         // For 128-bit tags, use CryptoKit
         if cipher == .aes256GCM128 {
@@ -85,19 +84,19 @@ public enum GCM {
             key: keyData,
             iv: iv,
             plaintext: plaintext,
-            tagLength: tagSize(for: cipher)
+            tagLength: tagSize(for: cipher),
         )
     }
 
     /// Get the tag size in bytes for a given NanoTDF cipher
     private static func tagSize(for cipher: Cipher) -> Int {
         switch cipher {
-        case .aes256GCM64: return 8
-        case .aes256GCM96: return 12
-        case .aes256GCM104: return 13
-        case .aes256GCM112: return 14
-        case .aes256GCM120: return 15
-        case .aes256GCM128: return 16
+        case .aes256GCM64: 8
+        case .aes256GCM96: 12
+        case .aes256GCM104: 13
+        case .aes256GCM112: 14
+        case .aes256GCM120: 15
+        case .aes256GCM128: 16
         }
     }
 
@@ -108,7 +107,7 @@ public enum GCM {
         iv: Data,
         ciphertext: Data,
         tag: Data,
-        tagLength: Int
+        tagLength: Int,
     ) throws -> Data {
         guard key.count == 32 else {
             throw Error.invalidKeySize(key.count)
@@ -121,7 +120,7 @@ public enum GCM {
         let gcm = CryptoSwift.GCM(
             iv: Array(iv),
             additionalAuthenticatedData: nil,
-            tagLength: tagLength
+            tagLength: tagLength,
         )
 
         // IMPORTANT: Set the authentication tag for decryption (detached tag model)
@@ -130,7 +129,7 @@ public enum GCM {
         let aes = try CryptoSwift.AES(
             key: Array(key),
             blockMode: gcm,
-            padding: .noPadding
+            padding: .noPadding,
         )
 
         // Decrypt just the ciphertext (NOT combined with tag)
@@ -142,7 +141,7 @@ public enum GCM {
         key: Data,
         iv: Data,
         plaintext: Data,
-        tagLength: Int
+        tagLength: Int,
     ) throws -> (ciphertext: Data, tag: Data) {
         guard key.count == 32 else {
             throw Error.invalidKeySize(key.count)
@@ -155,13 +154,13 @@ public enum GCM {
         let gcm = CryptoSwift.GCM(
             iv: Array(iv),
             additionalAuthenticatedData: nil,
-            tagLength: tagLength
+            tagLength: tagLength,
         )
 
         let aes = try CryptoSwift.AES(
             key: Array(key),
             blockMode: gcm,
-            padding: .noPadding
+            padding: .noPadding,
         )
 
         // CryptoSwift returns just the ciphertext (same length as plaintext)

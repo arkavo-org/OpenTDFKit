@@ -44,20 +44,20 @@ struct CreateAndParseNanoTDF {
         let kasMetadata = try KasMetadata(
             resourceLocator: kasRL,
             publicKey: kasPublicKey,
-            curve: .secp256r1
+            curve: .secp256r1,
         )
 
         // Create a simple policy
         let remotePolicyLocator = ResourceLocator(
             protocolEnum: .sharedResourceDirectory,
-            body: "test-policy-id"
+            body: "test-policy-id",
         )
 
         var policy = Policy(
             type: .remote,
             body: nil,
             remote: remotePolicyLocator,
-            binding: nil
+            binding: nil,
         )
 
         print("Creating NanoTDF...")
@@ -66,7 +66,7 @@ struct CreateAndParseNanoTDF {
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
             policy: &policy,
-            plaintext: testData
+            plaintext: testData,
         )
 
         // Serialize to binary
@@ -91,7 +91,7 @@ struct CreateAndParseNanoTDF {
 
         // Basic validation - check magic number
         if readData.count > 3 {
-            let magic = readData[0..<2]
+            let magic = readData[0 ..< 2]
             let version = readData[2]
 
             if magic == Data([0x4C, 0x31]) { // "L1"

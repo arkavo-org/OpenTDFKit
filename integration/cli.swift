@@ -4,6 +4,7 @@ import Foundation
 import OpenTDFKit
 
 // MARK: - Environment Configuration
+
 struct Config {
     let clientId: String
     let clientSecret: String
@@ -24,7 +25,7 @@ struct Config {
     let withIgnoreKasAllowlist: Bool
 
     static func fromEnvironment() -> Config {
-        return Config(
+        Config(
             clientId: ProcessInfo.processInfo.environment["CLIENTID"] ?? "opentdf-client",
             clientSecret: ProcessInfo.processInfo.environment["CLIENTSECRET"] ?? "secret",
             kasURL: ProcessInfo.processInfo.environment["KASURL"] ?? "http://10.0.0.138:8080/kas",
@@ -39,27 +40,29 @@ struct Config {
             withPlaintextPolicy: ProcessInfo.processInfo.environment["XT_WITH_PLAINTEXT_POLICY"] == "true",
             withTargetMode: ProcessInfo.processInfo.environment["XT_WITH_TARGET_MODE"],
             withKasAllowlist: (ProcessInfo.processInfo.environment["XT_WITH_KAS_ALLOWLIST"] ??
-                               ProcessInfo.processInfo.environment["XT_WITH_KAS_ALLOW_LIST"] ?? "").split(separator: ",").map(String.init),
-            withIgnoreKasAllowlist: ProcessInfo.processInfo.environment["XT_WITH_IGNORE_KAS_ALLOWLIST"] == "true"
+                ProcessInfo.processInfo.environment["XT_WITH_KAS_ALLOW_LIST"] ?? "").split(separator: ",").map(String.init),
+            withIgnoreKasAllowlist: ProcessInfo.processInfo.environment["XT_WITH_IGNORE_KAS_ALLOWLIST"] == "true",
         )
     }
 }
 
 // MARK: - CLI Commands
+
 enum Command {
     case encrypt(plaintext: String, ciphertext: String, format: TDFFormat)
     case decrypt(ciphertext: String, recovered: String, format: TDFFormat)
     case supports(feature: String)
 
     enum TDFFormat: String {
-        case nano = "nano"
-        case ztdf = "ztdf"
+        case nano
+        case ztdf
         case ztdfECWrap = "ztdf-ecwrap"
         case nanoWithECDSA = "nano-with-ecdsa"
     }
 }
 
 // MARK: - Main CLI Logic
+
 func main() throws {
     let args = CommandLine.arguments
 
@@ -101,6 +104,7 @@ func main() throws {
 }
 
 // MARK: - Command Handlers
+
 func handleEncrypt(plaintext: String, ciphertext: String, format: Command.TDFFormat) throws {
     let config = Config.fromEnvironment()
 
@@ -120,14 +124,14 @@ func handleEncrypt(plaintext: String, ciphertext: String, format: Command.TDFFor
             body: NanoTDF.PolicyBody(
                 dataAttributes: config.withAttributes,
                 dissem: [],
-                kasURL: config.kasURL
+                kasURL: config.kasURL,
             ),
             keyAccess: NanoTDF.KeyAccess(
                 keyType: .remote,
                 kasURL: config.kasURL,
                 protocol: "kas",
-                ephemeralPublicKey: ephemeralKey.publicKey
-            )
+                ephemeralPublicKey: ephemeralKey.publicKey,
+            ),
         )
 
         let nanoTDF = try NanoTDF(
@@ -135,7 +139,7 @@ func handleEncrypt(plaintext: String, ciphertext: String, format: Command.TDFFor
             payload: inputData,
             ephemeralKey: ephemeralKey,
             useECDSABinding: format == .nanoWithECDSA || config.withECDSABinding,
-            usePlaintextPolicy: config.withPlaintextPolicy
+            usePlaintextPolicy: config.withPlaintextPolicy,
         )
 
         encryptedData = try nanoTDF.serialize()
@@ -190,7 +194,7 @@ func handleSupports(feature: String) {
         "nano_policymode_plaintext",
         "autoconfigure",
         "hexless",
-        "hexaflexible"
+        "hexaflexible",
     ]
 
     if supportedFeatures.contains(feature) {
@@ -201,6 +205,7 @@ func handleSupports(feature: String) {
 }
 
 // MARK: - Execute
+
 do {
     try main()
 } catch {

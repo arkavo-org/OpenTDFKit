@@ -49,32 +49,32 @@ struct Config {
             withPlaintextPolicy: env["XT_WITH_PLAINTEXT_POLICY"] == "true",
             withTargetMode: env["XT_WITH_TARGET_MODE"],
             withKasAllowlist: kasAllowlist,
-            withIgnoreKasAllowlist: env["XT_WITH_IGNORE_KAS_ALLOWLIST"] == "true"
+            withIgnoreKasAllowlist: env["XT_WITH_IGNORE_KAS_ALLOWLIST"] == "true",
         )
     }
 }
 
 /// TDF format types supported by xtest
 enum TDFFormat: String {
-    case nano = "nano"
-    case ztdf = "ztdf"
+    case nano
+    case ztdf
     case ztdfECWrap = "ztdf-ecwrap"
     case nanoWithECDSA = "nano-with-ecdsa"
 
     var isNano: Bool {
         switch self {
         case .nano, .nanoWithECDSA:
-            return true
+            true
         case .ztdf, .ztdfECWrap:
-            return false
+            false
         }
     }
 
     var useECDSA: Bool {
-        return self == .nanoWithECDSA
+        self == .nanoWithECDSA
     }
 
     var useECWrap: Bool {
-        return self == .ztdfECWrap
+        self == .ztdfECWrap
     }
 }

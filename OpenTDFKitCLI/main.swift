@@ -1,5 +1,5 @@
-import Foundation
 import Darwin
+import Foundation
 
 @main
 struct OpenTDFKitCLI {
@@ -125,7 +125,7 @@ struct OpenTDFKitCLI {
         // Call the async encrypt function
         let outputData = try await Commands.encryptNanoTDF(
             plaintext: inputData,
-            useECDSA: useECDSA
+            useECDSA: useECDSA,
         )
 
         // Write output file
@@ -156,7 +156,7 @@ struct OpenTDFKitCLI {
         // Call the async decrypt function
         let plaintext = try await Commands.decryptNanoTDFWithOutput(
             data: data,
-            filename: inputPath
+            filename: inputPath,
         )
 
         // Write recovered file
@@ -194,12 +194,12 @@ enum CLIError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingArgument(let message):
-            return message
-        case .fileNotFound(let path):
-            return "File not found: \(path)"
-        case .unsupportedFormat(let format):
-            return "Unsupported format: \(format)"
+        case let .missingArgument(message):
+            message
+        case let .fileNotFound(path):
+            "File not found: \(path)"
+        case let .unsupportedFormat(format):
+            "Unsupported format: \(format)"
         }
     }
 }
