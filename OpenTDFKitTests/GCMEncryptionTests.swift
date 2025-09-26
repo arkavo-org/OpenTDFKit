@@ -218,7 +218,9 @@ final class GCMEncryptionTests: XCTestCase {
             plaintext: testPlaintext,
         )
 
-        var modifiedCiphertext = ciphertext
+        XCTAssertGreaterThan(ciphertext.count, 0, "Ciphertext should not be empty")
+
+        var modifiedCiphertext = Data(ciphertext)
         modifiedCiphertext[0] ^= 0xFF
 
         XCTAssertThrowsError(
@@ -229,7 +231,8 @@ final class GCMEncryptionTests: XCTestCase {
                 ciphertext: modifiedCiphertext,
                 tag: tag,
             ),
-        ) { _ in
+        ) { error in
+            XCTAssertNotNil(error, "Should throw an error for modified ciphertext")
         }
     }
 
