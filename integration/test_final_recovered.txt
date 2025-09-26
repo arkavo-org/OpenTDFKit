@@ -1,1 +1,0 @@
-Final test of OpenTDFKit v1.2 NanoTDF
