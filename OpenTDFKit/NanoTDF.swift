@@ -103,7 +103,6 @@ public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: 
         info: Data(),
         outputByteCount: 32
     )
-
     // Step 4: Process policy body based on type
     let policyBody: Data
     switch policy.type {
@@ -165,8 +164,10 @@ public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: 
     )
 
     // Create payload WITHOUT wrapped key (per NanoTDF spec)
+    // Length field must include: IV (3 bytes) + ciphertext + MAC
+    let totalPayloadLength = UInt32(payloadIV.count + sealed.ciphertext.count + mac.count)
     let payload = Payload(
-        length: UInt32(sealed.ciphertext.count),
+        length: totalPayloadLength,
         iv: payloadIV,
         ciphertext: sealed.ciphertext,
         mac: mac

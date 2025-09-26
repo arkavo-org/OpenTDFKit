@@ -158,23 +158,18 @@ public class KASRewrapClient {
         // Build the policy from the parsed header
         let policyBody: String
         if let policyBodyData = parsedHeader.policy.body?.body {
-            fputs("DEBUG: Policy body data exists, length: \(policyBodyData.count)\n", stderr)
             if parsedHeader.policy.type == .embeddedPlaintext {
                 // For plaintext policies, send the actual JSON content
                 if let jsonString = String(data: policyBodyData, encoding: .utf8) {
-                    fputs("DEBUG: Plaintext policy: \(jsonString)\n", stderr)
                     policyBody = policyBodyData.base64EncodedString()
                 } else {
-                    fputs("DEBUG: Failed to decode policy as UTF-8, sending as-is\n", stderr)
                     policyBody = policyBodyData.base64EncodedString()
                 }
             } else {
-                fputs("DEBUG: Encrypted policy, sending as base64\n", stderr)
                 policyBody = policyBodyData.base64EncodedString()
             }
         } else {
             // Send empty JSON object for embedded plaintext policies
-            fputs("DEBUG: No policy body, sending empty JSON\n", stderr)
             let emptyJSON = "{}".data(using: .utf8)!
             policyBody = emptyJSON.base64EncodedString()
         }
@@ -214,36 +209,21 @@ public class KASRewrapClient {
         request.httpBody = try JSONEncoder().encode(signedRequest)
 
         // Perform request
-        fputs("DEBUG: Sending HTTP request to \(rewrapEndpoint.absoluteString)\n", stderr)
         let (data, response) = try await urlSession.data(for: request)
-        fputs("DEBUG: Received HTTP response\n", stderr)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw KASRewrapError.invalidResponse
         }
 
-        fputs("DEBUG: HTTP Status: \(httpResponse.statusCode)\n", stderr)
 
         switch httpResponse.statusCode {
         case 200:
             // Parse response
-            fputs("DEBUG: Parsing JSON response...\n", stderr)
             let rewrapResponse = try JSONDecoder().decode(RewrapResponse.self, from: data)
-            fputs("DEBUG: Parsed response successfully\n", stderr)
 
-            fputs("DEBUG: Checking response structure...\n", stderr)
             guard let firstPolicy = rewrapResponse.responses.first,
                   let firstResult = firstPolicy.results.first else {
-                fputs("DEBUG: Empty response\n", stderr)
                 throw KASRewrapError.emptyResponse
-            }
-
-            fputs("DEBUG: Status: \(firstResult.status)\n", stderr)
-
-            // Print full result for debugging
-            if let jsonData = try? JSONEncoder().encode(firstResult),
-               let jsonString = String(data: jsonData, encoding: .utf8) {
-                fputs("DEBUG: Full result: \(jsonString)\n", stderr)
             }
 
             guard firstResult.status == "permit" else {
@@ -251,22 +231,18 @@ public class KASRewrapClient {
             }
 
             // Extract wrapped key (try kasWrappedKey first, then entityWrappedKey for legacy)
-            fputs("DEBUG: Extracting wrapped key...\n", stderr)
             guard let wrappedKeyBase64 = firstResult.kasWrappedKey ?? firstResult.entityWrappedKey,
                   let wrappedKey = Data(base64Encoded: wrappedKeyBase64) else {
                 throw KASRewrapError.missingWrappedKey
             }
 
             // Extract session public key from PEM format
-            fputs("DEBUG: Extracting session key...\n", stderr)
             guard let sessionKeyPEM = rewrapResponse.sessionPublicKey else {
                 throw KASRewrapError.missingSessionKey
             }
 
             // Extract the compressed key from PEM
-            fputs("DEBUG: Converting PEM to compressed key...\n", stderr)
             let sessionKey = try extractCompressedKeyFromPEM(sessionKeyPEM)
-            fputs("DEBUG: Returning wrapped key and session key\n", stderr)
 
             return (wrappedKey, sessionKey)
 
@@ -290,14 +266,10 @@ public class KASRewrapClient {
         sessionPublicKey: Data,
         clientPrivateKey: Data
     ) throws -> SymmetricKey {
-        fputs("DEBUG unwrapKey: Starting key unwrap\n", stderr)
-        fputs("DEBUG unwrapKey: wrappedKey = \(wrappedKey.hexEncodedString())\n", stderr)
-
         // Perform ECDH with session public key
         let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: clientPrivateKey)
         let publicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: sessionPublicKey)
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
-        fputs("DEBUG unwrapKey: ECDH completed\n", stderr)
 
         // Derive symmetric key using HKDF
         // Use the same salt as NanoTDF encryption (SHA256 of magic + version)
@@ -309,7 +281,6 @@ public class KASRewrapClient {
             sharedInfo: Data(),
             outputByteCount: 32
         )
-        fputs("DEBUG unwrapKey: Derived symmetric key\n", stderr)
 
         // Decrypt the wrapped key
         // The wrapped key format from platform is: nonce (12 bytes) + ciphertext + tag (16 bytes)
@@ -319,19 +290,13 @@ public class KASRewrapClient {
         }
 
         // Use the SealedBox combined initializer which expects nonce+ciphertext+tag
-        fputs("DEBUG unwrapKey: Using combined format (nonce+ciphertext+tag)\n", stderr)
         let sealedBox = try AES.GCM.SealedBox(combined: wrappedKey)
-        fputs("DEBUG unwrapKey: Created sealed box, attempting decrypt\n", stderr)
-
         let decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKey)
-        fputs("DEBUG unwrapKey: Decryption successful, key size: \(decryptedKey.count) bytes\n", stderr)
-
         return SymmetricKey(data: decryptedKey)
     }
 
     /// Extract compressed P256 public key from PEM format
     private func extractCompressedKeyFromPEM(_ pem: String) throws -> Data {
-        fputs("DEBUG: PEM key received: \(pem.prefix(100))...\n", stderr)
 
         // Remove PEM headers and decode base64
         let pemLines = pem
@@ -341,16 +306,13 @@ public class KASRewrapClient {
             .replacingOccurrences(of: "\r", with: "")
 
         guard let spkiData = Data(base64Encoded: pemLines) else {
-            fputs("DEBUG: Failed to decode base64\n", stderr)
             throw KASRewrapError.invalidWrappedKeyFormat
         }
 
-        fputs("DEBUG: SPKI data size: \(spkiData.count)\n", stderr)
 
         // For P-256 SPKI format, the uncompressed key is at the end
         // The structure is typically ~91 bytes total
         guard spkiData.count >= 91 else {
-            fputs("DEBUG: SPKI data too short\n", stderr)
             throw KASRewrapError.invalidWrappedKeyFormat
         }
 
@@ -360,10 +322,8 @@ public class KASRewrapClient {
             let publicKey = try P256.KeyAgreement.PublicKey(derRepresentation: spkiData)
             // Get the compressed representation
             let compressedKey = publicKey.compressedRepresentation
-            fputs("DEBUG: Successfully extracted compressed key: \(compressedKey.count) bytes\n", stderr)
             return compressedKey
         } catch {
-            fputs("DEBUG: CryptoKit parsing failed: \(error)\n", stderr)
             throw KASRewrapError.invalidWrappedKeyFormat
         }
     }
