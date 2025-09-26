@@ -87,17 +87,13 @@ struct Commands {
         // Create policy with actual attributes
         var policy: Policy
 
-        // Create a valid policy with an attribute that exists in the platform
+        // Create a valid policy with no attributes (open access)
         let policyUUID = UUID().uuidString.lowercased()
         let policyJSON = """
         {
             "uuid": "\(policyUUID)",
             "body": {
-                "dataAttributes": [
-                    {
-                        "attribute": "https://example.com/attr/attr1/value/value1"
-                    }
-                ],
+                "dataAttributes": [],
                 "dissem": []
             }
         }

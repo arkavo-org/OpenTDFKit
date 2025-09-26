@@ -111,28 +111,23 @@ public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: 
         policyBody = policy.body?.body ?? Data()
     case .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
         let plainPolicy = policy.body?.body ?? Data()
-        var policyNonce = Data(count: 12)
-        guard SecRandomCopyBytes(kSecRandomDefault, 12, &policyNonce) == errSecSuccess else {
-            throw CryptoHelperError.keyGenerationFailed
-        }
-        let nonce = try AES.GCM.Nonce(data: policyNonce)
-        let sealed = try AES.GCM.seal(plainPolicy, using: tdfSymmetricKey, nonce: nonce)
-        policyBody = policyNonce + sealed.ciphertext + sealed.tag
+        let zeroNonce = Data(count: 12)
+        let selectedCipher = Cipher.aes256GCM96
+        let (ciphertext, tag) = try GCM.encryptNanoTDF(
+            cipher: selectedCipher,
+            key: tdfSymmetricKey,
+            iv: zeroNonce,
+            plaintext: plainPolicy
+        )
+        policyBody = ciphertext + tag
     }
 
     policy.body = EmbeddedPolicyBody(body: policyBody)
 
-    // Step 5: Calculate the policy binding (GMAC)
-    let policyData = policy.toData()
-    // GMAC is just AES-GCM with empty plaintext
-    var bindingNonce = Data(count: 12)
-    guard SecRandomCopyBytes(kSecRandomDefault, 12, &bindingNonce) == errSecSuccess else {
-        throw CryptoHelperError.keyGenerationFailed
-    }
-    let bindingNonceObj = try AES.GCM.Nonce(data: bindingNonce)
-    let bindingSealed = try AES.GCM.seal(Data(), using: tdfSymmetricKey, nonce: bindingNonceObj, authenticating: policyData)
-    // NanoTDF v1.2 uses only the first 8 bytes (64-bit) of the GMAC tag
-    policy.binding = Data(bindingSealed.tag.prefix(8))
+    // Step 5: Calculate the policy binding
+    // NanoTDF v1.2 uses SHA256 hash of policy body bytes, taking last 8 bytes
+    let digest = SHA256.hash(data: policyBody)
+    policy.binding = Data(digest.suffix(8))
 
     // Step 6: Configure cipher (use aes256GCM96 for otdfctl compatibility)
     let selectedCipher = Cipher.aes256GCM96
