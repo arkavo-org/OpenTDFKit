@@ -112,7 +112,7 @@ public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: 
         let plainPolicy = policy.body?.body ?? Data()
         let zeroNonce = Data(count: 12)
         let selectedCipher = Cipher.aes256GCM96
-        let (ciphertext, tag) = try GCM.encryptNanoTDF(
+        let (ciphertext, tag) = try CryptoHelper.encryptNanoTDF(
             cipher: selectedCipher,
             key: tdfSymmetricKey,
             iv: zeroNonce,

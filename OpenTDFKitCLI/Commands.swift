@@ -426,7 +426,7 @@ enum Commands {
         }
 
         do {
-            return try GCM.decryptNanoTDF(
+            return try OpenTDFKit.CryptoHelper.decryptNanoTDF(
                 cipher: cipher,
                 key: payloadKey,
                 iv: adjustedIV,

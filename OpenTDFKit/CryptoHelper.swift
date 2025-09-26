@@ -1,4 +1,5 @@
 import CryptoKit
+import CryptoSwift
 import Foundation
 
 /// Enum representing the KAS key curves supported for NanoTDF Payload Key Access.
@@ -51,7 +52,7 @@ enum CryptoConstants {
 /// An actor providing helper functions for common cryptographic operations needed for NanoTDF.
 /// Encapsulates key generation, key derivation (ECDH, HKDF), encryption/decryption (AES-GCM),
 /// nonce handling, and signature generation.
-actor CryptoHelper {
+public actor CryptoHelper {
     /// Computes HKDF salt for a given NanoTDF version by hashing the magic number and version byte.
     /// - Parameter version: The NanoTDF version byte (e.g. 0x4C for v12, 0x4D for v13).
     /// - Returns: The resulting salt as Data.
@@ -220,7 +221,7 @@ actor CryptoHelper {
     /// - Throws: `CryptoKitError` if the AES-GCM seal operation fails.
     func createGMACBinding(policyBody: Data, symmetricKey: SymmetricKey) throws -> Data {
         // Seal empty data, authenticating the policyBody. The tag is the GMAC binding.
-        let sealedBox = try AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyBody)
+        let sealedBox = try CryptoKit.AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyBody)
         // Truncate to 64 bits (8 bytes) per spec section 3.3.1.3
         return Data(sealedBox.tag.prefix(8))
     }
@@ -263,8 +264,8 @@ actor CryptoHelper {
     ///   - nonce: The `AES.GCM.Nonce` to use. Must be unique for each encryption with the same key.
     /// - Returns: A tuple containing the `ciphertext` and the authentication `tag`.
     /// - Throws: `CryptoKitError` if encryption fails.
-    func encryptPayload(plaintext: Data, symmetricKey: SymmetricKey, nonce: AES.GCM.Nonce) throws -> (ciphertext: Data, tag: Data) {
-        let sealedBox = try AES.GCM.seal(plaintext, using: symmetricKey, nonce: nonce)
+    func encryptPayload(plaintext: Data, symmetricKey: SymmetricKey, nonce: CryptoKit.AES.GCM.Nonce) throws -> (ciphertext: Data, tag: Data) {
+        let sealedBox = try CryptoKit.AES.GCM.seal(plaintext, using: symmetricKey, nonce: nonce)
         return (sealedBox.ciphertext, sealedBox.tag)
     }
 
@@ -278,8 +279,8 @@ actor CryptoHelper {
     /// - Throws: `CryptoKitError` if encryption fails or if nonce data cannot be converted.
     func encryptPayload(plaintext: Data, symmetricKey: SymmetricKey, nonce: Data) throws -> (ciphertext: Data, tag: Data) {
         // Convert Data to AES.GCM.Nonce before sealing
-        let aesNonce = try AES.GCM.Nonce(data: nonce)
-        let sealedBox = try AES.GCM.seal(plaintext, using: symmetricKey, nonce: aesNonce)
+        let aesNonce = try CryptoKit.AES.GCM.Nonce(data: nonce)
+        let sealedBox = try CryptoKit.AES.GCM.seal(plaintext, using: symmetricKey, nonce: aesNonce)
         return (sealedBox.ciphertext, sealedBox.tag)
     }
 
@@ -292,9 +293,9 @@ actor CryptoHelper {
     ///   - tag: The authentication tag generated during encryption.
     /// - Returns: The original plaintext `Data`.
     /// - Throws: `CryptoKitError` if decryption fails (e.g., incorrect key, invalid tag, corrupted data).
-    func decryptPayload(ciphertext: Data, symmetricKey: SymmetricKey, nonce: AES.GCM.Nonce, tag: Data) throws -> Data {
-        let sealedBox = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
-        return try AES.GCM.open(sealedBox, using: symmetricKey)
+    func decryptPayload(ciphertext: Data, symmetricKey: SymmetricKey, nonce: CryptoKit.AES.GCM.Nonce, tag: Data) throws -> Data {
+        let sealedBox = try CryptoKit.AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
+        return try CryptoKit.AES.GCM.open(sealedBox, using: symmetricKey)
     }
 
     /// Decrypts ciphertext using AES-GCM, taking nonce as `Data`.
@@ -308,9 +309,9 @@ actor CryptoHelper {
     /// - Throws: `CryptoKitError` if decryption fails or if nonce data cannot be converted.
     func decryptPayload(ciphertext: Data, symmetricKey: SymmetricKey, nonce: Data, tag: Data) throws -> Data {
         // Convert Data nonce to AES.GCM.Nonce before constructing SealedBox
-        let aesNonce = try AES.GCM.Nonce(data: nonce)
-        let sealedBox = try AES.GCM.SealedBox(nonce: aesNonce, ciphertext: ciphertext, tag: tag)
-        return try AES.GCM.open(sealedBox, using: symmetricKey)
+        let aesNonce = try CryptoKit.AES.GCM.Nonce(data: nonce)
+        let sealedBox = try CryptoKit.AES.GCM.SealedBox(nonce: aesNonce, ciphertext: ciphertext, tag: tag)
+        return try CryptoKit.AES.GCM.open(sealedBox, using: symmetricKey)
     }
 
     /// Generates an ECDSA signature (specifically P256) for a given message.
@@ -409,5 +410,186 @@ actor CryptoHelper {
 
         // Return the derived key data
         return okm.withUnsafeBytes { Data($0) }
+    }
+
+    // MARK: - NanoTDF GCM Operations
+
+    /// Decrypt NanoTDF payload using the appropriate GCM implementation based on tag size
+    /// - Parameters:
+    ///   - cipher: The NanoTDF cipher mode
+    ///   - key: The symmetric key (SymmetricKey for CryptoKit compatibility)
+    ///   - iv: The IV/nonce (12 bytes)
+    ///   - ciphertext: The encrypted payload
+    ///   - tag: The authentication tag
+    /// - Returns: Decrypted plaintext
+    public static func decryptNanoTDF(
+        cipher: Cipher,
+        key: SymmetricKey,
+        iv: Data,
+        ciphertext: Data,
+        tag: Data,
+    ) throws -> Data {
+        // Validate cipher mode and tag size match
+        let expectedTagSize = tagSize(for: cipher)
+        guard tag.count == expectedTagSize else {
+            throw CryptoHelperError.keyDerivationFailed
+        }
+
+        // Validate key size (must be 32 bytes for AES-256)
+        let keyData = key.withUnsafeBytes { Data($0) }
+        guard keyData.count == 32 else {
+            throw CryptoHelperError.keyDerivationFailed
+        }
+
+        // Validate IV size (must be 12 bytes for GCM)
+        guard iv.count == 12 else {
+            throw CryptoHelperError.keyDerivationFailed
+        }
+
+        // For 128-bit tags, use CryptoKit (it's faster)
+        if cipher == .aes256GCM128 {
+            let nonce = try CryptoKit.AES.GCM.Nonce(data: iv)
+            let sealedBox = try CryptoKit.AES.GCM.SealedBox(
+                nonce: nonce,
+                ciphertext: ciphertext,
+                tag: tag,
+            )
+            return try CryptoKit.AES.GCM.open(sealedBox, using: key)
+        }
+
+        // For all other tag sizes, use CryptoSwift
+        return try decryptWithCryptoSwift(
+            key: keyData,
+            iv: iv,
+            ciphertext: ciphertext,
+            tag: tag,
+            tagLength: expectedTagSize,
+        )
+    }
+
+    /// Encrypt NanoTDF payload using the appropriate GCM implementation based on tag size
+    /// - Parameters:
+    ///   - cipher: The NanoTDF cipher mode
+    ///   - key: The symmetric key
+    ///   - iv: The IV/nonce (12 bytes)
+    ///   - plaintext: The data to encrypt
+    /// - Returns: Tuple of (ciphertext, tag)
+    public static func encryptNanoTDF(
+        cipher: Cipher,
+        key: SymmetricKey,
+        iv: Data,
+        plaintext: Data,
+    ) throws -> (ciphertext: Data, tag: Data) {
+        // Validate key size
+        let keyData = key.withUnsafeBytes { Data($0) }
+        guard keyData.count == 32 else {
+            throw CryptoHelperError.keyDerivationFailed
+        }
+
+        // Validate IV size
+        guard iv.count == 12 else {
+            throw CryptoHelperError.keyDerivationFailed
+        }
+
+        // For 128-bit tags, use CryptoKit
+        if cipher == .aes256GCM128 {
+            let nonce = try CryptoKit.AES.GCM.Nonce(data: iv)
+            let sealedBox = try CryptoKit.AES.GCM.seal(plaintext, using: key, nonce: nonce)
+            return (sealedBox.ciphertext, sealedBox.tag)
+        }
+
+        // For all other tag sizes, use CryptoSwift
+        return try encryptWithCryptoSwift(
+            key: keyData,
+            iv: iv,
+            plaintext: plaintext,
+            tagLength: tagSize(for: cipher),
+        )
+    }
+
+    /// Get the tag size in bytes for a given NanoTDF cipher
+    private static func tagSize(for cipher: Cipher) -> Int {
+        switch cipher {
+        case .aes256GCM64: 8
+        case .aes256GCM96: 12
+        case .aes256GCM104: 13
+        case .aes256GCM112: 14
+        case .aes256GCM120: 15
+        case .aes256GCM128: 16
+        }
+    }
+
+    // MARK: - CryptoSwift Implementation
+
+    private static func decryptWithCryptoSwift(
+        key: Data,
+        iv: Data,
+        ciphertext: Data,
+        tag: Data,
+        tagLength: Int,
+    ) throws -> Data {
+        guard key.count == 32 else {
+            throw CryptoHelperError.keyDerivationFailed
+        }
+        guard iv.count == 12 else {
+            throw CryptoHelperError.keyDerivationFailed
+        }
+
+        // Configure GCM with the specific tag length
+        let gcm = CryptoSwift.GCM(
+            iv: Array(iv),
+            additionalAuthenticatedData: nil,
+            tagLength: tagLength,
+        )
+
+        // IMPORTANT: Set the authentication tag for decryption (detached tag model)
+        gcm.authenticationTag = Array(tag)
+
+        let aes = try CryptoSwift.AES(
+            key: Array(key),
+            blockMode: gcm,
+            padding: .noPadding,
+        )
+
+        // Decrypt just the ciphertext (NOT combined with tag)
+        let plaintextBytes = try aes.decrypt(Array(ciphertext))
+        return Data(plaintextBytes)
+    }
+
+    private static func encryptWithCryptoSwift(
+        key: Data,
+        iv: Data,
+        plaintext: Data,
+        tagLength: Int,
+    ) throws -> (ciphertext: Data, tag: Data) {
+        guard key.count == 32 else {
+            throw CryptoHelperError.keyDerivationFailed
+        }
+        guard iv.count == 12 else {
+            throw CryptoHelperError.keyDerivationFailed
+        }
+
+        // Configure GCM with the specific tag length
+        let gcm = CryptoSwift.GCM(
+            iv: Array(iv),
+            additionalAuthenticatedData: nil,
+            tagLength: tagLength,
+        )
+
+        let aes = try CryptoSwift.AES(
+            key: Array(key),
+            blockMode: gcm,
+            padding: .noPadding,
+        )
+
+        // CryptoSwift returns just the ciphertext (same length as plaintext)
+        let ciphertextBytes = try aes.encrypt(Array(plaintext))
+
+        // Get the authentication tag separately (detached tag model)
+        guard let tagBytes = gcm.authenticationTag else {
+            throw CryptoHelperError.keyDerivationFailed
+        }
+
+        return (Data(ciphertextBytes), Data(tagBytes))
     }
 }
