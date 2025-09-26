@@ -7,7 +7,9 @@ public enum GCM {
     public enum Error: Swift.Error, CustomStringConvertible {
         case invalidKeySize(Int)
         case invalidIVSize(Int)
+        case invalidTagSize(expected: Int, actual: Int)
         case unsupportedCipher
+        case decryptionFailed(String)
 
         public var description: String {
             switch self {
@@ -15,8 +17,12 @@ public enum GCM {
                 "Invalid key size: \(size) bytes (expected 32 for AES-256)"
             case let .invalidIVSize(size):
                 "Invalid IV size: \(size) bytes (expected 12)"
+            case let .invalidTagSize(expected, actual):
+                "Invalid tag size: \(actual) bytes (expected \(expected) for cipher mode)"
             case .unsupportedCipher:
                 "Unsupported cipher mode"
+            case let .decryptionFailed(reason):
+                "Decryption failed: \(reason)"
             }
         }
     }
@@ -36,6 +42,23 @@ public enum GCM {
         ciphertext: Data,
         tag: Data,
     ) throws -> Data {
+        // Validate cipher mode and tag size match
+        let expectedTagSize = tagSize(for: cipher)
+        guard tag.count == expectedTagSize else {
+            throw Error.invalidTagSize(expected: expectedTagSize, actual: tag.count)
+        }
+
+        // Validate key size (must be 32 bytes for AES-256)
+        let keyData = key.withUnsafeBytes { Data($0) }
+        guard keyData.count == 32 else {
+            throw Error.invalidKeySize(keyData.count)
+        }
+
+        // Validate IV size (must be 12 bytes for GCM)
+        guard iv.count == 12 else {
+            throw Error.invalidIVSize(iv.count)
+        }
+
         // For 128-bit tags, use CryptoKit (it's faster)
         if cipher == .aes256GCM128 {
             let nonce = try AES.GCM.Nonce(data: iv)
@@ -48,13 +71,12 @@ public enum GCM {
         }
 
         // For all other tag sizes, use CryptoSwift
-        let keyData = key.withUnsafeBytes { Data($0) }
         return try decryptWithCryptoSwift(
             key: keyData,
             iv: iv,
             ciphertext: ciphertext,
             tag: tag,
-            tagLength: tagSize(for: cipher),
+            tagLength: expectedTagSize,
         )
     }
 
@@ -71,6 +93,17 @@ public enum GCM {
         iv: Data,
         plaintext: Data,
     ) throws -> (ciphertext: Data, tag: Data) {
+        // Validate key size
+        let keyData = key.withUnsafeBytes { Data($0) }
+        guard keyData.count == 32 else {
+            throw Error.invalidKeySize(keyData.count)
+        }
+
+        // Validate IV size
+        guard iv.count == 12 else {
+            throw Error.invalidIVSize(iv.count)
+        }
+
         // For 128-bit tags, use CryptoKit
         if cipher == .aes256GCM128 {
             let nonce = try AES.GCM.Nonce(data: iv)
@@ -79,7 +112,6 @@ public enum GCM {
         }
 
         // For all other tag sizes, use CryptoSwift
-        let keyData = key.withUnsafeBytes { Data($0) }
         return try encryptWithCryptoSwift(
             key: keyData,
             iv: iv,

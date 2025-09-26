@@ -20,8 +20,22 @@ struct Config {
     let withKasAllowlist: [String]
     let withIgnoreKasAllowlist: Bool
 
-    static func fromEnvironment() -> Config {
+    static func fromEnvironment() throws -> Config {
         let env = ProcessInfo.processInfo.environment
+
+        // Required environment variables
+        guard let clientId = env["CLIENTID"] else {
+            throw ConfigError.missingRequired("CLIENTID")
+        }
+        guard let clientSecret = env["CLIENTSECRET"] else {
+            throw ConfigError.missingRequired("CLIENTSECRET")
+        }
+        guard let kasURL = env["KASURL"] else {
+            throw ConfigError.missingRequired("KASURL")
+        }
+        guard let platformURL = env["PLATFORMURL"] else {
+            throw ConfigError.missingRequired("PLATFORMURL")
+        }
 
         // Parse attributes and allowlist from comma-separated strings
         let attributes = (env["XT_WITH_ATTRIBUTES"] ?? "")
@@ -35,10 +49,10 @@ struct Config {
             .filter { !$0.isEmpty }
 
         return Config(
-            clientId: env["CLIENTID"] ?? "opentdf-client",
-            clientSecret: env["CLIENTSECRET"] ?? "secret",
-            kasURL: env["KASURL"] ?? "http://10.0.0.138:8080/kas",
-            platformURL: env["PLATFORMURL"] ?? "http://10.0.0.138:8080",
+            clientId: clientId,
+            clientSecret: clientSecret,
+            kasURL: kasURL,
+            platformURL: platformURL,
             withMimeType: env["XT_WITH_MIME_TYPE"],
             withAttributes: attributes,
             withAssertions: env["XT_WITH_ASSERTIONS"],
@@ -51,6 +65,17 @@ struct Config {
             withKasAllowlist: kasAllowlist,
             withIgnoreKasAllowlist: env["XT_WITH_IGNORE_KAS_ALLOWLIST"] == "true",
         )
+    }
+}
+
+enum ConfigError: Error, CustomStringConvertible {
+    case missingRequired(String)
+
+    var description: String {
+        switch self {
+        case let .missingRequired(name):
+            "Required environment variable '\(name)' is not set"
+        }
     }
 }
 

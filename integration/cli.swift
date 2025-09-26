@@ -24,25 +24,51 @@ struct Config {
     let withKasAllowlist: [String]
     let withIgnoreKasAllowlist: Bool
 
-    static func fromEnvironment() -> Config {
-        Config(
-            clientId: ProcessInfo.processInfo.environment["CLIENTID"] ?? "opentdf-client",
-            clientSecret: ProcessInfo.processInfo.environment["CLIENTSECRET"] ?? "secret",
-            kasURL: ProcessInfo.processInfo.environment["KASURL"] ?? "http://10.0.0.138:8080/kas",
-            platformURL: ProcessInfo.processInfo.environment["PLATFORMURL"] ?? "http://10.0.0.138:8080",
-            withMimeType: ProcessInfo.processInfo.environment["XT_WITH_MIME_TYPE"],
-            withAttributes: (ProcessInfo.processInfo.environment["XT_WITH_ATTRIBUTES"] ?? "").split(separator: ",").map(String.init),
-            withAssertions: ProcessInfo.processInfo.environment["XT_WITH_ASSERTIONS"],
-            withAssertionVerificationKeys: ProcessInfo.processInfo.environment["XT_WITH_ASSERTION_VERIFICATION_KEYS"],
-            withVerifyAssertions: ProcessInfo.processInfo.environment["XT_WITH_VERIFY_ASSERTIONS"] == "true",
-            withECDSABinding: ProcessInfo.processInfo.environment["XT_WITH_ECDSA_BINDING"] == "true",
-            withECWrap: ProcessInfo.processInfo.environment["XT_WITH_ECWRAP"] == "true",
-            withPlaintextPolicy: ProcessInfo.processInfo.environment["XT_WITH_PLAINTEXT_POLICY"] == "true",
-            withTargetMode: ProcessInfo.processInfo.environment["XT_WITH_TARGET_MODE"],
-            withKasAllowlist: (ProcessInfo.processInfo.environment["XT_WITH_KAS_ALLOWLIST"] ??
-                ProcessInfo.processInfo.environment["XT_WITH_KAS_ALLOW_LIST"] ?? "").split(separator: ",").map(String.init),
-            withIgnoreKasAllowlist: ProcessInfo.processInfo.environment["XT_WITH_IGNORE_KAS_ALLOWLIST"] == "true",
+    static func fromEnvironment() throws -> Config {
+        let env = ProcessInfo.processInfo.environment
+
+        guard let clientId = env["CLIENTID"] else {
+            throw ConfigError.missingRequired("CLIENTID")
+        }
+        guard let clientSecret = env["CLIENTSECRET"] else {
+            throw ConfigError.missingRequired("CLIENTSECRET")
+        }
+        guard let kasURL = env["KASURL"] else {
+            throw ConfigError.missingRequired("KASURL")
+        }
+        guard let platformURL = env["PLATFORMURL"] else {
+            throw ConfigError.missingRequired("PLATFORMURL")
+        }
+
+        return Config(
+            clientId: clientId,
+            clientSecret: clientSecret,
+            kasURL: kasURL,
+            platformURL: platformURL,
+            withMimeType: env["XT_WITH_MIME_TYPE"],
+            withAttributes: (env["XT_WITH_ATTRIBUTES"] ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty },
+            withAssertions: env["XT_WITH_ASSERTIONS"],
+            withAssertionVerificationKeys: env["XT_WITH_ASSERTION_VERIFICATION_KEYS"],
+            withVerifyAssertions: env["XT_WITH_VERIFY_ASSERTIONS"] == "true",
+            withECDSABinding: env["XT_WITH_ECDSA_BINDING"] == "true",
+            withECWrap: env["XT_WITH_ECWRAP"] == "true",
+            withPlaintextPolicy: env["XT_WITH_PLAINTEXT_POLICY"] == "true",
+            withTargetMode: env["XT_WITH_TARGET_MODE"],
+            withKasAllowlist: (env["XT_WITH_KAS_ALLOWLIST"] ?? env["XT_WITH_KAS_ALLOW_LIST"] ?? "")
+                .split(separator: ",").map(String.init).filter { !$0.isEmpty },
+            withIgnoreKasAllowlist: env["XT_WITH_IGNORE_KAS_ALLOWLIST"] == "true",
         )
+    }
+}
+
+enum ConfigError: Error, CustomStringConvertible {
+    case missingRequired(String)
+
+    var description: String {
+        switch self {
+        case let .missingRequired(name):
+            "Required environment variable '\(name)' is not set"
+        }
     }
 }
 
@@ -106,7 +132,7 @@ func main() throws {
 // MARK: - Command Handlers
 
 func handleEncrypt(plaintext: String, ciphertext: String, format: Command.TDFFormat) throws {
-    let config = Config.fromEnvironment()
+    let config = try Config.fromEnvironment()
 
     // Read input data
     let inputData = try Data(contentsOf: URL(fileURLWithPath: plaintext))
@@ -155,7 +181,7 @@ func handleEncrypt(plaintext: String, ciphertext: String, format: Command.TDFFor
 }
 
 func handleDecrypt(ciphertext: String, recovered: String, format: Command.TDFFormat) throws {
-    let config = Config.fromEnvironment()
+    let config = try Config.fromEnvironment()
 
     // Read encrypted data
     let encryptedData = try Data(contentsOf: URL(fileURLWithPath: ciphertext))

@@ -124,13 +124,21 @@ public class KASRewrapClient {
     private let kasURL: URL
     private let oauthToken: String
     private let urlSession: URLSession
+    private let signingKey: P256.Signing.PrivateKey
 
     // MARK: - Initialization
 
-    public init(kasURL: URL, oauthToken: String, urlSession: URLSession = .shared) {
+    /// Initialize KAS rewrap client with required parameters
+    /// - Parameters:
+    ///   - kasURL: The KAS endpoint URL
+    ///   - oauthToken: OAuth bearer token for authentication
+    ///   - urlSession: URLSession for network requests (defaults to .shared)
+    ///   - signingKey: Optional P256 private key for JWT signing (generates new key if not provided)
+    public init(kasURL: URL, oauthToken: String, urlSession: URLSession = .shared, signingKey: P256.Signing.PrivateKey? = nil) {
         self.kasURL = kasURL
         self.oauthToken = oauthToken
         self.urlSession = urlSession
+        self.signingKey = signingKey ?? P256.Signing.PrivateKey()
     }
 
     // MARK: - Public Methods
@@ -157,16 +165,8 @@ public class KASRewrapClient {
         // Build the policy from the parsed header
         let policyBody: String
         if let policyBodyData = parsedHeader.policy.body?.body {
-            if parsedHeader.policy.type == .embeddedPlaintext {
-                // For plaintext policies, send the actual JSON content
-                if let jsonString = String(data: policyBodyData, encoding: .utf8) {
-                    policyBody = policyBodyData.base64EncodedString()
-                } else {
-                    policyBody = policyBodyData.base64EncodedString()
-                }
-            } else {
-                policyBody = policyBodyData.base64EncodedString()
-            }
+            // All policy types are base64-encoded for KAS
+            policyBody = policyBodyData.base64EncodedString()
         } else {
             // Send empty JSON object for embedded plaintext policies
             let emptyJSON = "{}".data(using: .utf8)!
@@ -191,8 +191,7 @@ public class KASRewrapClient {
         let requestBodyJSON = try JSONEncoder().encode(unsignedRequest)
 
         // The KAS expects a signed JWT wrapper around the request body
-        // For now, we'll create a simple unsigned JWT (alg: "none") for testing
-        let signedToken = try createUnsignedJWT(requestBody: requestBodyJSON)
+        let signedToken = try createSignedJWT(requestBody: requestBodyJSON, signingKey: signingKey)
         let signedRequest = SignedRewrapRequest(signed_request_token: signedToken)
 
         // Create HTTP request
@@ -225,7 +224,8 @@ public class KASRewrapClient {
             }
 
             guard firstResult.status == "permit" else {
-                throw KASRewrapError.accessDenied("Access denied")
+                let reason = firstResult.metadata?["error"] ?? "Access denied by policy"
+                throw KASRewrapError.accessDenied(reason)
             }
 
             // Extract wrapped key (try kasWrappedKey first, then entityWrappedKey for legacy)
@@ -244,12 +244,27 @@ public class KASRewrapClient {
             let sessionKey = try extractCompressedKeyFromPEM(sessionKeyPEM)
 
             return (wrappedKey, sessionKey)
+        case 400:
+            let errorMessage = String(data: data, encoding: .utf8) ?? "Bad request"
+            throw KASRewrapError.httpError(400, errorMessage)
         case 401:
             throw KASRewrapError.authenticationFailed
         case 403:
-            throw KASRewrapError.accessDenied("Forbidden")
+            let errorMessage = String(data: data, encoding: .utf8)
+            throw KASRewrapError.accessDenied(errorMessage ?? "Forbidden")
+        case 404:
+            throw KASRewrapError.httpError(404, "KAS endpoint not found")
+        case 500:
+            throw KASRewrapError.httpError(500, "Internal server error")
+        case 502:
+            throw KASRewrapError.httpError(502, "Bad gateway - KAS service unavailable")
+        case 503:
+            throw KASRewrapError.httpError(503, "Service unavailable - try again later")
+        case 504:
+            throw KASRewrapError.httpError(504, "Gateway timeout")
         default:
-            throw KASRewrapError.httpError(httpResponse.statusCode)
+            let errorMessage = String(data: data, encoding: .utf8)
+            throw KASRewrapError.httpError(httpResponse.statusCode, errorMessage)
         }
     }
 
@@ -294,40 +309,78 @@ public class KASRewrapClient {
     }
 
     /// Extract compressed P256 public key from PEM format
+    /// - Parameter pem: PEM-encoded public key (supports various formats)
+    /// - Returns: Compressed P-256 public key data (33 bytes)
+    /// - Throws: KASRewrapError.invalidWrappedKeyFormat if PEM parsing fails
     private func extractCompressedKeyFromPEM(_ pem: String) throws -> Data {
-        // Remove PEM headers and decode base64
-        let pemLines = pem
-            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-            .replacingOccurrences(of: "\r", with: "")
+        // Normalize line endings and trim whitespace
+        let normalizedPEM = pem
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard let spkiData = Data(base64Encoded: pemLines) else {
-            throw KASRewrapError.invalidWrappedKeyFormat
+        // Support multiple PEM header formats
+        let beginMarkers = [
+            "-----BEGIN PUBLIC KEY-----",
+            "-----BEGIN EC PUBLIC KEY-----",
+            "-----BEGIN ECDSA PUBLIC KEY-----",
+        ]
+        let endMarkers = [
+            "-----END PUBLIC KEY-----",
+            "-----END EC PUBLIC KEY-----",
+            "-----END ECDSA PUBLIC KEY-----",
+        ]
+
+        // Extract base64 content by removing all markers
+        var base64Content = normalizedPEM
+        for marker in beginMarkers + endMarkers {
+            base64Content = base64Content.replacingOccurrences(of: marker, with: "")
         }
 
-        // For P-256 SPKI format, the uncompressed key is at the end
-        // The structure is typically ~91 bytes total
-        guard spkiData.count >= 91 else {
-            throw KASRewrapError.invalidWrappedKeyFormat
+        // Remove all whitespace and newlines
+        base64Content = base64Content.components(separatedBy: .whitespacesAndNewlines).joined()
+
+        // Validate we have content
+        guard !base64Content.isEmpty else {
+            throw KASRewrapError.pemParsingFailed("Empty PEM content")
         }
 
-        // Use CryptoKit to parse the SPKI format directly
+        // Decode base64
+        guard let derData = Data(base64Encoded: base64Content) else {
+            throw KASRewrapError.pemParsingFailed("Invalid base64 encoding")
+        }
+
+        // Validate minimum SPKI size for P-256 (typically 91 bytes)
+        guard derData.count >= 70 else { // Allow some flexibility
+            throw KASRewrapError.pemParsingFailed("DER data too small: \(derData.count) bytes")
+        }
+
+        // Parse using CryptoKit
         do {
-            // Try to create a P256 key from the SPKI data
-            let publicKey = try P256.KeyAgreement.PublicKey(derRepresentation: spkiData)
-            // Get the compressed representation
+            let publicKey = try P256.KeyAgreement.PublicKey(derRepresentation: derData)
             let compressedKey = publicKey.compressedRepresentation
+
+            // Validate compressed key size
+            guard compressedKey.count == 33 else {
+                throw KASRewrapError.pemParsingFailed("Invalid compressed key size: \(compressedKey.count)")
+            }
+
             return compressedKey
+        } catch let error as CryptoKitError {
+            throw KASRewrapError.pemParsingFailed("CryptoKit error: \(error.localizedDescription)")
         } catch {
-            throw KASRewrapError.invalidWrappedKeyFormat
+            throw KASRewrapError.pemParsingFailed("Failed to parse DER: \(error.localizedDescription)")
         }
     }
 
-    /// Create an unsigned JWT for testing (alg: "none")
-    private func createUnsignedJWT(requestBody: Data) throws -> String {
-        // Create header with alg: "none"
-        let header = ["alg": "none", "typ": "JWT"]
+    /// Create a signed JWT using ES256 algorithm
+    /// - Parameters:
+    ///   - requestBody: The request body data to include in claims
+    ///   - signingKey: P256 private key for signing
+    /// - Returns: Signed JWT string in format header.payload.signature
+    private func createSignedJWT(requestBody: Data, signingKey: P256.Signing.PrivateKey) throws -> String {
+        // Create header with ES256 algorithm
+        let header = ["alg": "ES256", "typ": "JWT"]
         let headerJSON = try JSONSerialization.data(withJSONObject: header)
         let headerBase64 = headerJSON.base64URLEncodedString()
 
@@ -337,18 +390,22 @@ public class KASRewrapClient {
         let claims: [String: Any] = [
             "requestBody": requestBodyString,
             "iat": now,
-            "exp": now + 60, // SDK uses +60 seconds
+            "exp": now + 60,
         ]
         let claimsJSON = try JSONSerialization.data(withJSONObject: claims)
         let claimsBase64 = claimsJSON.base64URLEncodedString()
 
-        // For unsigned JWT, signature is empty
-        return "\(headerBase64).\(claimsBase64)."
+        // Create signature over header.payload
+        let signingInput = "\(headerBase64).\(claimsBase64)".data(using: .utf8)!
+        let signature = try signingKey.signature(for: signingInput)
+        let signatureBase64 = signature.rawRepresentation.base64URLEncodedString()
+
+        return "\(headerBase64).\(claimsBase64).\(signatureBase64)"
     }
 }
 
 /// Errors specific to KAS rewrap operations
-public enum KASRewrapError: Error {
+public enum KASRewrapError: Error, CustomStringConvertible {
     case invalidResponse
     case emptyResponse
     case accessDenied(String)
@@ -356,7 +413,34 @@ public enum KASRewrapError: Error {
     case missingWrappedKey
     case missingSessionKey
     case invalidWrappedKeyFormat
-    case httpError(Int)
+    case pemParsingFailed(String)
+    case jwtSigningFailed(Error)
+    case httpError(Int, String?)
+
+    public var description: String {
+        switch self {
+        case .invalidResponse:
+            "Invalid response from KAS server"
+        case .emptyResponse:
+            "Empty response from KAS server"
+        case let .accessDenied(reason):
+            "Access denied: \(reason)"
+        case .authenticationFailed:
+            "Authentication failed - check OAuth token"
+        case .missingWrappedKey:
+            "KAS response missing wrapped key"
+        case .missingSessionKey:
+            "KAS response missing session public key"
+        case .invalidWrappedKeyFormat:
+            "Invalid wrapped key format"
+        case let .pemParsingFailed(reason):
+            "PEM parsing failed: \(reason)"
+        case let .jwtSigningFailed(error):
+            "JWT signing failed: \(error.localizedDescription)"
+        case let .httpError(code, message):
+            "HTTP error \(code)" + (message.map { ": \($0)" } ?? "")
+        }
+    }
 }
 
 // Use the existing EphemeralKeyPair from KeyStore

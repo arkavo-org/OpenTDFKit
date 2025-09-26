@@ -102,7 +102,6 @@ public class BinaryParser {
 
         let bytes = Array(plaintextCiphertextLengthData)
         let contentLength = (UInt16(bytes[0]) << 8) | UInt16(bytes[1])
-//        print("Policy Body Length: \(contentLength)")
 
         // if no policy added then no read
         // Note 3.4.2.3.2 Body for Embedded Policy states Minimum Length is 1
@@ -125,8 +124,6 @@ public class BinaryParser {
             print("Failed to read BindingMode")
             return nil
         }
-//        let eccModeHex = String(format: "%02x", eccAndBindingMode)
-//        print("ECC Mode Hex:", eccModeHex)
         let ecdsaBinding = (eccAndBindingMode & (1 << 7)) != 0
         let ephemeralECCParamsEnumValue = Curve(rawValue: eccAndBindingMode & 0x7)
 
@@ -135,9 +132,6 @@ public class BinaryParser {
             return nil
         }
 
-//        print("ecdsaBinding: \(ecdsaBinding)")
-//        print("ephemeralECCParamsEnum: \(ephemeralECCParamsEnum)")
-
         return PolicyBindingConfig(ecdsaBinding: ecdsaBinding, curve: ephemeralECCParamsEnum)
     }
 
@@ -145,9 +139,6 @@ public class BinaryParser {
         guard let byte = readByte() else {
             return nil
         }
-        // print("SymmetricAndPayloadConfig read serialized data:", data.map { String($0, radix: 16) })
-        // guard data.count == 1 else { return nil }
-        // let byte = data[0]
         let signed = (byte & 0b1000_0000) != 0
         let signatureECCMode = Curve(rawValue: (byte & 0b0111_0000) >> 4)
         let cipher = Cipher(rawValue: byte & 0b0000_1111)
@@ -161,10 +152,7 @@ public class BinaryParser {
     }
 
     func readPolicyBinding(bindingMode: PolicyBindingConfig) -> Data? {
-        let bindingSize
-//        print("bindingMode", bindingMode)
-            = if bindingMode.ecdsaBinding
-        {
+        let bindingSize = if bindingMode.ecdsaBinding {
             switch bindingMode.curve {
             case .secp256r1:
                 64
@@ -177,7 +165,6 @@ public class BinaryParser {
             // GMAC Tag Binding - 64 bits (8 bytes) per spec section 3.3.1.3
             8
         }
-//        print("bindingSize", bindingSize)
         return read(length: bindingSize)
     }
 
@@ -337,7 +324,7 @@ public class BinaryParser {
         let byte2 = UInt32(b[1]) << 8
         let byte3 = UInt32(b[2])
         let length: UInt32 = byte1 | byte2 | byte3
-//        print("parsePayload length", length)
+
         // IV nonce
         guard let iv = read(length: FieldSize.payloadIvSize)
         else {
@@ -363,7 +350,6 @@ public class BinaryParser {
         }
         // cipherText
         let cipherTextLength = Int(length) - payloadMACSize - FieldSize.payloadIvSize
-//        print("cipherTextLength", cipherTextLength)
         guard cipherTextLength >= 0 else {
             throw ParsingError.invalidPayload("Calculated ciphertext length is negative")
         }
@@ -383,7 +369,6 @@ public class BinaryParser {
         }
         let publicKeyLength: Int
         let signatureLength: Int
-//        print("config.signatureECCMode", config)
         switch config.signatureCurve {
         case .secp256r1:
             publicKeyLength = 33
@@ -398,8 +383,7 @@ public class BinaryParser {
             print("signatureECCMode not found")
             throw ParsingError.invalidFormat
         }
-//        print("publicKeyLength", publicKeyLength)
-//        print("signatureLength", signatureLength)
+
         guard let publicKey = read(length: publicKeyLength),
               let signature = read(length: signatureLength)
         else {

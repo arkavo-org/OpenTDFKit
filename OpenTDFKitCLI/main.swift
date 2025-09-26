@@ -16,6 +16,31 @@ struct OpenTDFKitCLI {
         }
     }
 
+    /// Resolve file path - handles both relative and absolute paths
+    /// - Parameter path: Input file path
+    /// - Returns: Resolved absolute URL
+    /// - Throws: CLIError if path resolution fails
+    static func resolvePath(_ path: String) throws -> URL {
+        // Handle stdin/stdout special cases
+        if path == "-" {
+            throw CLIError.invalidPath("Use explicit file paths (stdin/stdout not supported)")
+        }
+
+        // Create URL from path
+        let url: URL
+        if path.hasPrefix("/") || path.hasPrefix("~") {
+            // Absolute or home-relative path
+            url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        } else {
+            // Relative path - resolve against current directory
+            let currentDir = FileManager.default.currentDirectoryPath
+            url = URL(fileURLWithPath: currentDir).appendingPathComponent(path)
+        }
+
+        // Normalize path (resolve . and ..)
+        return url.standardizedFileURL
+    }
+
     static func run() async throws -> Int32 {
         let args = CommandLine.arguments
 
@@ -90,14 +115,14 @@ struct OpenTDFKitCLI {
             throw CLIError.missingArgument("verify requires a file path")
         }
 
-        let filePath = args[2]
+        let fileURL = try resolvePath(args[2])
 
-        guard FileManager.default.fileExists(atPath: filePath) else {
-            throw CLIError.fileNotFound(filePath)
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            throw CLIError.fileNotFound(fileURL.path)
         }
 
-        let data = try Data(contentsOf: URL(fileURLWithPath: filePath))
-        try Commands.verifyNanoTDF(data: data, filename: filePath)
+        let data = try Data(contentsOf: fileURL)
+        try Commands.verifyNanoTDF(data: data, filename: fileURL.lastPathComponent)
     }
 
     static func encryptCommand(args: [String]) async throws {
@@ -106,8 +131,8 @@ struct OpenTDFKitCLI {
             throw CLIError.missingArgument("encrypt requires: <input> <output> <format>")
         }
 
-        let inputPath = args[2]
-        let outputPath = args[3]
+        let inputURL = try resolvePath(args[2])
+        let outputURL = try resolvePath(args[3])
         let format = args[4]
 
         // Check format support
@@ -115,11 +140,17 @@ struct OpenTDFKitCLI {
             throw CLIError.unsupportedFormat(format)
         }
 
-        guard FileManager.default.fileExists(atPath: inputPath) else {
-            throw CLIError.fileNotFound(inputPath)
+        guard FileManager.default.fileExists(atPath: inputURL.path) else {
+            throw CLIError.fileNotFound(inputURL.path)
         }
 
-        let inputData = try Data(contentsOf: URL(fileURLWithPath: inputPath))
+        // Check if output directory exists
+        let outputDir = outputURL.deletingLastPathComponent()
+        guard FileManager.default.fileExists(atPath: outputDir.path) else {
+            throw CLIError.directoryNotFound(outputDir.path)
+        }
+
+        let inputData = try Data(contentsOf: inputURL)
         let useECDSA = (format == "nano-with-ecdsa")
 
         // Call the async encrypt function
@@ -129,7 +160,7 @@ struct OpenTDFKitCLI {
         )
 
         // Write output file
-        try outputData.write(to: URL(fileURLWithPath: outputPath))
+        try outputData.write(to: outputURL)
     }
 
     static func decryptCommand(args: [String]) async throws {
@@ -138,8 +169,8 @@ struct OpenTDFKitCLI {
             throw CLIError.missingArgument("decrypt requires: <input> <output> <format>")
         }
 
-        let inputPath = args[2]
-        let outputPath = args[3]
+        let inputURL = try resolvePath(args[2])
+        let outputURL = try resolvePath(args[3])
         let format = args[4]
 
         // Check format support
@@ -147,20 +178,26 @@ struct OpenTDFKitCLI {
             throw CLIError.unsupportedFormat(format)
         }
 
-        guard FileManager.default.fileExists(atPath: inputPath) else {
-            throw CLIError.fileNotFound(inputPath)
+        guard FileManager.default.fileExists(atPath: inputURL.path) else {
+            throw CLIError.fileNotFound(inputURL.path)
         }
 
-        let data = try Data(contentsOf: URL(fileURLWithPath: inputPath))
+        // Check if output directory exists
+        let outputDir = outputURL.deletingLastPathComponent()
+        guard FileManager.default.fileExists(atPath: outputDir.path) else {
+            throw CLIError.directoryNotFound(outputDir.path)
+        }
+
+        let data = try Data(contentsOf: inputURL)
 
         // Call the async decrypt function
         let plaintext = try await Commands.decryptNanoTDFWithOutput(
             data: data,
-            filename: inputPath,
+            filename: inputURL.lastPathComponent,
         )
 
         // Write recovered file
-        try plaintext.write(to: URL(fileURLWithPath: outputPath))
+        try plaintext.write(to: outputURL)
     }
 
     static func supportsCommand(args: [String]) -> Int32 {
@@ -190,7 +227,9 @@ struct OpenTDFKitCLI {
 enum CLIError: LocalizedError {
     case missingArgument(String)
     case fileNotFound(String)
+    case directoryNotFound(String)
     case unsupportedFormat(String)
+    case invalidPath(String)
 
     var errorDescription: String? {
         switch self {
@@ -198,8 +237,12 @@ enum CLIError: LocalizedError {
             message
         case let .fileNotFound(path):
             "File not found: \(path)"
+        case let .directoryNotFound(path):
+            "Output directory does not exist: \(path)"
         case let .unsupportedFormat(format):
-            "Unsupported format: \(format)"
+            "Unsupported format: \(format) (supported: nano, nano-with-ecdsa)"
+        case let .invalidPath(message):
+            "Invalid path: \(message)"
         }
     }
 }
