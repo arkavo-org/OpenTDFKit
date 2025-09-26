@@ -177,6 +177,161 @@ OpenTDFKit is composed of several key components that work together to implement
 
 - **PublicKeyStore**: Manages only public keys for sharing with peers. Allows secure distribution of one-time use TDF keys.
 
+- **KASRewrapClient**: Client for interacting with KAS rewrap endpoints. Implements JWT signing (ES256), PEM parsing, and key unwrapping protocols. Designed with protocol-based architecture for testability.
+
+## Architecture
+
+### Component Interactions
+
+```
+┌─────────────┐
+│   Client    │
+└──────┬──────┘
+       │
+       ├─ Create NanoTDF ────────────────────────────────────┐
+       │                                                      │
+       ▼                                                      ▼
+┌─────────────┐      ┌──────────────┐      ┌──────────────────────┐
+│  KeyStore   │◄─────│  KASService  │◄─────│   CryptoHelper       │
+└─────────────┘      └──────┬───────┘      └──────────────────────┘
+                            │                         │
+                            │                         │ ECDH + HKDF
+                            │                         │ AES-GCM Encrypt
+                            │                         │
+       ┌────────────────────┴────────┐                │
+       │                             │                │
+       ▼                             ▼                ▼
+┌─────────────┐              ┌─────────────┐   ┌──────────┐
+│  NanoTDF    │              │   Policy    │   │ Payload  │
+│   Header    │              │   Binding   │   │ Encrypted│
+└─────────────┘              └─────────────┘   └──────────┘
+
+       │
+       ├─ Decrypt NanoTDF ────────────────────────────────────┐
+       │                                                      │
+       ▼                                                      ▼
+┌─────────────────┐                            ┌──────────────────────┐
+│ KASRewrapClient │──── JWT + HTTPS ──────────►│   KAS Server         │
+└─────────┬───────┘                            └──────────┬───────────┘
+          │                                               │
+          │ 1. Send signed JWT with policy                │
+          │ 2. KAS validates policy                       │
+          │ 3. KAS rewraps key                            │
+          │◄──────── Wrapped Key + Session PubKey ────────┤
+          │                                               │
+          ▼                                               ▼
+┌─────────────────┐                            ┌──────────────────────┐
+│  ECDH Unwrap    │                            │  Policy Enforcement  │
+└─────────┬───────┘                            └──────────────────────┘
+          │
+          ▼
+┌─────────────────┐
+│ AES-GCM Decrypt │
+└─────────────────┘
+```
+
+### KAS Rewrap Flow
+
+The KAS rewrap protocol enables secure key distribution with policy enforcement:
+
+1. **Request Preparation**
+   - Client creates ephemeral key pair (P-256)
+   - Constructs rewrap request with NanoTDF header and policy
+   - Signs request with ES256 JWT (60-second expiration)
+
+2. **KAS Processing**
+   - Validates OAuth bearer token
+   - Verifies JWT signature
+   - Evaluates policy against client attributes
+   - Performs ECDH with client's ephemeral public key
+   - Derives symmetric key using HKDF-SHA256 with NanoTDF salt
+   - Encrypts payload key with AES-GCM-128 (platform uses 16-byte tags)
+
+3. **Key Unwrapping**
+   - Client receives wrapped key (nonce + ciphertext + tag format)
+   - Performs ECDH with KAS session public key
+   - Derives same symmetric key using HKDF-SHA256
+   - Decrypts wrapped key with AES-GCM
+   - Uses unwrapped key to decrypt NanoTDF payload
+
+### Cryptographic Operations
+
+#### Key Agreement
+- **Algorithm**: ECDH with P-256 curve (secp256r1)
+- **Key Derivation**: HKDF-SHA256
+  - Salt: SHA256(magicNumber + version) for version compatibility
+  - Info: Empty (per NanoTDF spec section 4)
+  - Output: 32 bytes (AES-256)
+
+#### Symmetric Encryption
+- **Algorithm**: AES-256-GCM
+- **Supported Tag Sizes**: 64, 96, 104, 112, 120, 128 bits
+  - 128-bit tags use CryptoKit (optimized)
+  - Other tag sizes use CryptoSwift
+- **IV Size**: 12 bytes (96 bits)
+- **Nonce Handling**: 3-byte NanoTDF nonce + 9-byte zero padding
+
+#### Policy Binding
+- **Algorithm**: GMAC (GCM with empty plaintext)
+- **Tag Size**: 64 bits (8 bytes, truncated per spec 3.3.1.3)
+- **Purpose**: Cryptographic binding between payload key and policy
+
+#### JWT Signing
+- **Algorithm**: ES256 (ECDSA with P-256 and SHA-256)
+- **Key Type**: Ephemeral P256.Signing.PrivateKey per client instance
+- **Claims**: requestBody, iat, exp (60-second lifetime)
+
+### Error Handling
+
+OpenTDFKit implements comprehensive error handling:
+
+- **KASRewrapError**: HTTP errors (400/401/403/404/500/502/503/504), authentication failures, PEM parsing errors
+- **CryptoHelperError**: Unsupported curves, key derivation failures, invalid states
+- **NanoTDFError**: (component-specific errors defined in NanoTDF.swift)
+
+All errors implement CustomStringConvertible with actionable messages.
+
+## Testing Strategy
+
+### Unit Tests
+- **KASRewrapClientTests**: JWT signing, PEM parsing, HTTP error handling, key unwrapping
+- **GCMEncryptionTests**: All tag sizes (64-128 bits), validation, CryptoKit vs CryptoSwift
+- **CryptoHelperTests**: ECDH, HKDF, encryption/decryption, policy binding
+- **KeyStoreTests**: Key generation, storage, retrieval, serialization
+- **NanoTDFTests**: Header parsing, payload encryption, version compatibility
+
+### Integration Tests
+- **Environment-based**: Uses KASURL, PLATFORMURL, CLIENTID, CLIENTSECRET environment variables
+- **No hardcoded credentials**: All secrets from environment or test fixtures
+- **Graceful skipping**: Tests skip with clear instructions if environment not configured
+- **End-to-end**: Full NanoTDF creation, KAS rewrap, and decryption flow
+
+### Benchmark Tests
+- **Performance metrics**: Encryption/decryption throughput, key generation speed
+- **Memory profiling**: Allocation counts, contiguous memory usage
+- **Comparison baselines**: Track performance across changes
+
+### Running Tests
+```bash
+# Run all tests
+swift test
+
+# Run specific test suite
+swift test --filter KASRewrapClientTests
+swift test --filter GCMEncryptionTests
+swift test --filter IntegrationTests
+
+# Run with environment for integration tests
+export KASURL=http://localhost:8080/kas
+export PLATFORMURL=http://localhost:8080
+export CLIENTID=opentdf-client
+export CLIENTSECRET=secret
+swift test --filter IntegrationTests
+
+# Run benchmarks
+swift test --configuration release --filter "BenchmarkTests"
+```
+
 ## Performance Considerations
 
 OpenTDFKit is designed for high-performance cryptographic operations. When implementing features, keep in mind:

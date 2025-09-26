@@ -2,8 +2,19 @@ import CryptoKit
 import Darwin
 import Foundation
 
+/// Protocol for KAS rewrap client operations, enabling testability through dependency injection
+public protocol KASRewrapClientProtocol {
+    /// Perform NanoTDF rewrap request to KAS
+    /// - Parameters:
+    ///   - header: Raw NanoTDF header bytes
+    ///   - parsedHeader: Parsed header structure to extract policy
+    ///   - clientKeyPair: Client's ephemeral key pair for this request
+    /// - Returns: Tuple containing the wrapped key data and session public key
+    func rewrapNanoTDF(header: Data, parsedHeader: Header, clientKeyPair: EphemeralKeyPair) async throws -> (wrappedKey: Data, sessionPublicKey: Data)
+}
+
 /// Client for interacting with KAS rewrap endpoint for NanoTDF
-public class KASRewrapClient {
+public class KASRewrapClient: KASRewrapClientProtocol {
     // MARK: - Request/Response Structures
 
     /// Key Access Object for NanoTDF rewrap
