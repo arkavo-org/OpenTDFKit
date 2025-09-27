@@ -50,6 +50,63 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         let keyAccessObject: KeyAccessObject
     }
 
+    // MARK: - Standard TDF Request Types
+
+    public struct StandardPolicyBinding: Codable {
+        let hash: String
+        let algorithm: String?
+    }
+
+    public struct StandardKeyAccessObject: Codable {
+        let keyType: String?
+        let kasUrl: String
+        let `protocol`: String
+        let wrappedKey: Data
+        let policyBinding: StandardPolicyBinding
+        let encryptedMetadata: String?
+        let kid: String?
+        let splitId: String?
+        let ephemeralPublicKey: String?
+
+        enum CodingKeys: String, CodingKey {
+            case keyType = "type"
+            case kasUrl = "url"
+            case `protocol`
+            case wrappedKey
+            case policyBinding
+            case encryptedMetadata
+            case kid
+            case splitId = "sid"
+            case ephemeralPublicKey
+        }
+    }
+
+    public struct StandardKeyAccessObjectWrapper: Codable {
+        let keyAccessObjectId: String
+        let keyAccessObject: StandardKeyAccessObject
+    }
+
+    public struct StandardPolicyRequest: Codable {
+        let keyAccessObjects: [StandardKeyAccessObjectWrapper]
+        let policy: Policy
+        let algorithm: String?
+
+        init(
+            keyAccessObjects: [StandardKeyAccessObjectWrapper],
+            policy: Policy,
+            algorithm: String?
+        ) {
+            self.keyAccessObjects = keyAccessObjects
+            self.policy = policy
+            self.algorithm = algorithm
+        }
+    }
+
+    public struct StandardUnsignedRewrapRequest: Codable {
+        let clientPublicKey: String
+        let requests: [StandardPolicyRequest]
+    }
+
     /// Policy structure
     public struct Policy: Codable {
         let id: String
@@ -279,6 +336,170 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         }
     }
 
+    /// Perform Standard TDF rewrap request to KAS.
+    /// - Parameters:
+    ///   - manifest: The parsed TDF manifest containing key access entries.
+    ///   - clientPublicKeyPEM: PEM-encoded client public key for the returned wrapped key.
+    /// - Returns: Mapping of KeyAccessObjectId to wrapped key data and optional session public key when EC wrapping is used.
+    public func rewrapStandardTDF(
+        manifest: TDFManifest,
+        clientPublicKeyPEM: String
+    ) async throws -> StandardTDFKASRewrapResult {
+        let policyBody = manifest.encryptionInformation.policy
+        let keyAccessEntries = manifest.encryptionInformation.keyAccess.filter { matchesKasURL($0.url) }
+
+        guard !keyAccessEntries.isEmpty else {
+            throw KASRewrapError.invalidStandardTDFRequest("No key access entries for KAS \(kasURL.absoluteString)")
+        }
+
+        var wrappers: [StandardKeyAccessObjectWrapper] = []
+        wrappers.reserveCapacity(keyAccessEntries.count)
+
+        for (index, kao) in keyAccessEntries.enumerated() {
+            guard let wrappedKeyData = Data(base64Encoded: kao.wrappedKey) else {
+                throw KASRewrapError.invalidWrappedKeyFormat
+            }
+
+            let binding = StandardPolicyBinding(
+                hash: kao.policyBinding.hash,
+                algorithm: kao.policyBinding.alg
+            )
+
+            let accessObject = StandardKeyAccessObject(
+                keyType: kao.type.rawValue,
+                kasUrl: kao.url,
+                protocol: kao.protocolValue.rawValue,
+                wrappedKey: wrappedKeyData,
+                policyBinding: binding,
+                encryptedMetadata: kao.encryptedMetadata,
+                kid: kao.kid,
+                splitId: kao.sid,
+                ephemeralPublicKey: kao.ephemeralPublicKey
+            )
+
+            let wrapper = StandardKeyAccessObjectWrapper(
+                keyAccessObjectId: String(format: "kao-%d", index),
+                keyAccessObject: accessObject
+            )
+            wrappers.append(wrapper)
+        }
+
+        let policy = Policy(body: policyBody)
+        let policyRequest = StandardPolicyRequest(
+            keyAccessObjects: wrappers,
+            policy: policy,
+            algorithm: nil
+        )
+
+        let unsignedRequest = StandardUnsignedRewrapRequest(
+            clientPublicKey: clientPublicKeyPEM,
+            requests: [policyRequest]
+        )
+
+        let requestBodyJSON = try JSONEncoder().encode(unsignedRequest)
+        let signedToken = try createSignedJWT(requestBody: requestBodyJSON, signingKey: signingKey)
+        let signedRequest = SignedRewrapRequest(signed_request_token: signedToken)
+
+        let rewrapEndpoint = kasURL.appendingPathComponent("v2/rewrap")
+        var request = URLRequest(url: rewrapEndpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.addValue("Bearer \(oauthToken)", forHTTPHeaderField: "Authorization")
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(signedRequest)
+
+        let (data, response) = try await urlSession.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw KASRewrapError.invalidResponse
+        }
+
+        switch httpResponse.statusCode {
+        case 200:
+            let rewrapResponse = try JSONDecoder().decode(RewrapResponse.self, from: data)
+            var wrappedKeys: [String: Data] = [:]
+
+            for policyEntry in rewrapResponse.responses {
+                for result in policyEntry.results {
+                    guard result.status == "permit" else {
+                        let reason = result.metadata?["error"] ?? "Access denied by policy"
+                        throw KASRewrapError.accessDenied(reason)
+                    }
+
+                    guard let wrappedKeyBase64 = result.kasWrappedKey ?? result.entityWrappedKey,
+                          let wrappedKeyData = Data(base64Encoded: wrappedKeyBase64)
+                    else {
+                        throw KASRewrapError.missingWrappedKey
+                    }
+
+                    wrappedKeys[result.keyAccessObjectId] = wrappedKeyData
+                }
+            }
+
+            guard !wrappedKeys.isEmpty else {
+                throw KASRewrapError.emptyResponse
+            }
+
+            return StandardTDFKASRewrapResult(
+                wrappedKeys: wrappedKeys,
+                sessionPublicKeyPEM: rewrapResponse.sessionPublicKey
+            )
+
+        case 400:
+            let message = String(data: data, encoding: .utf8)
+            throw KASRewrapError.httpError(400, message)
+        case 401:
+            throw KASRewrapError.authenticationFailed
+        case 403:
+            let message = String(data: data, encoding: .utf8)
+            throw KASRewrapError.accessDenied(message ?? "Forbidden")
+        case 404:
+            throw KASRewrapError.httpError(404, "KAS endpoint not found")
+        case 500:
+            throw KASRewrapError.httpError(500, "Internal server error")
+        case 502:
+            throw KASRewrapError.httpError(502, "Bad gateway - KAS service unavailable")
+        case 503:
+            throw KASRewrapError.httpError(503, "Service unavailable - try again later")
+        case 504:
+            throw KASRewrapError.httpError(504, "Gateway timeout")
+        default:
+            let message = String(data: data, encoding: .utf8)
+            throw KASRewrapError.httpError(httpResponse.statusCode, message)
+        }
+    }
+
+    private func matchesKasURL(_ otherURLString: String) -> Bool {
+        guard let otherURL = URL(string: otherURLString) else { return false }
+        guard let baseScheme = kasURL.scheme?.lowercased(),
+              let otherScheme = otherURL.scheme?.lowercased(),
+              let baseHost = kasURL.host?.lowercased(),
+              let otherHost = otherURL.host?.lowercased()
+        else {
+            return false
+        }
+
+        guard baseScheme == otherScheme, baseHost == otherHost else {
+            return false
+        }
+
+        return effectivePort(for: kasURL) == effectivePort(for: otherURL)
+    }
+
+    private func effectivePort(for url: URL) -> Int {
+        if let explicitPort = url.port {
+            return explicitPort
+        }
+        switch url.scheme?.lowercased() {
+        case "https":
+            return 443
+        case "http":
+            return 80
+        default:
+            return 0
+        }
+    }
+
     /// Decrypt the wrapped key using ECDH and the session key
     /// - Parameters:
     ///   - wrappedKey: The wrapped key from KAS response
@@ -415,6 +636,11 @@ public class KASRewrapClient: KASRewrapClientProtocol {
     }
 }
 
+public struct StandardTDFKASRewrapResult {
+    public let wrappedKeys: [String: Data]
+    public let sessionPublicKeyPEM: String?
+}
+
 /// Errors specific to KAS rewrap operations
 public enum KASRewrapError: Error, CustomStringConvertible {
     case invalidResponse
@@ -427,6 +653,7 @@ public enum KASRewrapError: Error, CustomStringConvertible {
     case pemParsingFailed(String)
     case jwtSigningFailed(Error)
     case httpError(Int, String?)
+    case invalidStandardTDFRequest(String)
 
     public var description: String {
         switch self {
@@ -450,6 +677,8 @@ public enum KASRewrapError: Error, CustomStringConvertible {
             "JWT signing failed: \(error.localizedDescription)"
         case let .httpError(code, message):
             "HTTP error \(code)" + (message.map { ": \($0)" } ?? "")
+        case let .invalidStandardTDFRequest(reason):
+            "Invalid standard TDF rewrap request: \(reason)"
         }
     }
 }

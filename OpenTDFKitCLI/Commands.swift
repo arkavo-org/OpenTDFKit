@@ -54,6 +54,186 @@ enum CLIConfigError: Error, CustomStringConvertible {
 }
 
 enum Commands {
+    /// Quick signature check to route files to the appropriate parser.
+    static func isLikelyStandardTDF(data: Data) -> Bool {
+        data.starts(with: [0x50, 0x4B])
+    }
+
+    static func resolveOAuthToken(providedToken: String?, tokenPath: String) throws -> String {
+        if let providedToken, !providedToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return providedToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let tokenURL = URL(fileURLWithPath: tokenPath)
+        guard FileManager.default.fileExists(atPath: tokenURL.path) else {
+            throw DecryptError.missingOAuthToken
+        }
+
+        let tokenData = try Data(contentsOf: tokenURL)
+        let oauthToken = String(data: tokenData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        guard !oauthToken.isEmpty else {
+            throw DecryptError.missingOAuthToken
+        }
+
+        return oauthToken
+    }
+
+    /// Parse and report details about a ZIP-based TDF container.
+    static func verifyStandardTDF(data: Data, filename: String) throws {
+        print("Standard TDF Verification Report")
+        print("================================")
+        print("File: \(filename)")
+        print("Size: \(data.count) bytes\n")
+
+        let loader = StandardTDFLoader()
+        let container = try loader.load(from: data)
+        let manifest = container.manifest
+
+        print("✓ Manifest parsed successfully")
+        print("  Spec Version: \(manifest.schemaVersion)")
+        print("  Payload URL: \(manifest.payload.url)")
+        print("  Payload Protocol: \(manifest.payload.protocolValue.rawValue)")
+        print("  Encrypted: \(manifest.payload.isEncrypted)")
+
+        let enc = manifest.encryptionInformation
+        print("\nEncryption Information:")
+        print("  Type: \(enc.type.rawValue)")
+        print("  Key Access Objects: \(enc.keyAccess.count)")
+        print("  Symmetric Algorithm: \(enc.method.algorithm)")
+
+        let integrity = enc.integrityInformation
+        print("\nIntegrity Information:")
+        print("  Segment Hash Alg: \(integrity.segmentHashAlg)")
+        print("  Default Segment Size: \(integrity.segmentSizeDefault)")
+        print("  Segments: \(integrity.segments.count)")
+
+        if let assertions = manifest.assertions {
+            print("\nAssertions: \(assertions.count)")
+        }
+
+        print("\n✓ Standard TDF structure validated")
+    }
+
+    /// Load a ZIP-based TDF container without decrypting payload contents.
+    static func decryptStandardTDF(
+        data: Data,
+        filename: String,
+        symmetricKey: SymmetricKey?,
+        privateKeyPEM: String?,
+        clientPublicKeyPEM: String?,
+        oauthToken: String?
+    ) async throws -> Data {
+        print("Standard TDF Decryption")
+        print("========================")
+        print("File: \(filename)")
+        print("Size: \(data.count) bytes\n")
+
+        let loader = StandardTDFLoader()
+        let container = try loader.load(from: data)
+
+        print("✓ Manifest loaded")
+        print("  Spec Version: \(container.manifest.schemaVersion)")
+        print("  Key Access Entries: \(container.manifest.encryptionInformation.keyAccess.count)")
+
+        let decryptor = StandardTDFDecryptor()
+
+        if let symmetricKey {
+            print("  Using provided symmetric key for decryption")
+            return try decryptor.decrypt(container: container, symmetricKey: symmetricKey)
+        }
+
+        guard let privateKeyPEM else {
+            throw DecryptError.missingSymmetricMaterial
+        }
+
+        guard let clientPublicKeyPEM = clientPublicKeyPEM, !clientPublicKeyPEM.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw DecryptError.missingSymmetricMaterial
+        }
+
+        guard let oauthToken = oauthToken, !oauthToken.isEmpty else {
+            throw DecryptError.missingOAuthToken
+        }
+
+        print("  Requesting rewrap from KAS")
+
+        var aggregatedWrappedKeys: [String: Data] = [:]
+        let uniqueKasURLs = Set(container.manifest.encryptionInformation.keyAccess.map { $0.url })
+
+        for kasURLString in uniqueKasURLs {
+            guard let kasURL = URL(string: kasURLString) else {
+                continue
+            }
+
+            let client = KASRewrapClient(kasURL: kasURL, oauthToken: oauthToken)
+            let result = try await client.rewrapStandardTDF(
+                manifest: container.manifest,
+                clientPublicKeyPEM: clientPublicKeyPEM
+            )
+
+            if let sessionKey = result.sessionPublicKeyPEM, !sessionKey.isEmpty {
+                throw DecryptError.standardTDFUnsupported
+            }
+
+            for (kaoIdentifier, wrappedKey) in result.wrappedKeys {
+                aggregatedWrappedKeys[kaoIdentifier] = wrappedKey
+            }
+        }
+
+        guard !aggregatedWrappedKeys.isEmpty else {
+            throw DecryptError.missingWrappedKey
+        }
+
+        var combinedKeyData: Data?
+        let sortedEntries = aggregatedWrappedKeys.sorted { $0.key < $1.key }
+
+        for (_, wrappedKeyData) in sortedEntries {
+            let base64 = wrappedKeyData.base64EncodedString()
+            let symmetricKeyPart = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
+                privateKeyPEM: privateKeyPEM,
+                wrappedKey: base64
+            )
+            let keyData = StandardTDFCrypto.data(from: symmetricKeyPart)
+
+            if let existing = combinedKeyData {
+                guard existing.count == keyData.count else {
+                    throw DecryptError.invalidWrappedKeyFormat
+                }
+                combinedKeyData = xorKeyData(existing, keyData)
+            } else {
+                combinedKeyData = keyData
+            }
+        }
+
+        guard let finalKeyData = combinedKeyData else {
+            throw DecryptError.missingSymmetricMaterial
+        }
+
+        let finalSymmetricKey = SymmetricKey(data: finalKeyData)
+        return try decryptor.decrypt(container: container, symmetricKey: finalSymmetricKey)
+    }
+
+    private static func xorKeyData(_ lhs: Data, _ rhs: Data) -> Data {
+        precondition(lhs.count == rhs.count, "Key share lengths must match")
+        var result = Data(count: lhs.count)
+        result.withUnsafeMutableBytes { resPtr in
+            lhs.withUnsafeBytes { lhsPtr in
+                rhs.withUnsafeBytes { rhsPtr in
+                    guard let resBytes = resPtr.bindMemory(to: UInt8.self).baseAddress,
+                          let lhsBytes = lhsPtr.bindMemory(to: UInt8.self).baseAddress,
+                          let rhsBytes = rhsPtr.bindMemory(to: UInt8.self).baseAddress
+                    else {
+                        return
+                    }
+                    for index in 0 ..< lhs.count {
+                        resBytes[index] = lhsBytes[index] ^ rhsBytes[index]
+                    }
+                }
+            }
+        }
+        return result
+    }
+
     /// Encrypt plaintext to NanoTDF v1.2 format (L1L) using OpenTDFKit's NanoTDF API
     static func encryptNanoTDF(plaintext: Data, useECDSA: Bool) async throws -> Data {
         print("NanoTDF Encryption")
@@ -155,6 +335,26 @@ enum Commands {
 
         print("✓ Created NanoTDF (\(nanoTDFData.count) bytes)")
         return nanoTDFData
+    }
+
+    /// Encrypt plaintext to Standard TDF using local configuration.
+    static func encryptStandardTDF(
+        plaintext: Data,
+        configuration: StandardTDFEncryptionConfiguration
+    ) throws -> (result: StandardTDFEncryptionResult, archiveData: Data) {
+        print("Standard TDF Encryption")
+        print("=======================")
+        print("Plaintext size: \(plaintext.count) bytes")
+        print("KAS URL: \(configuration.kas.url.absoluteString)")
+
+        let encryptor = StandardTDFEncryptor()
+        let result = try encryptor.encrypt(plaintext: plaintext, configuration: configuration)
+        let archiveData = try result.container.serializedData()
+
+        print("✓ Created Standard TDF archive (\(archiveData.count) bytes)")
+        print("  Key Access entries: \(result.container.manifest.encryptionInformation.keyAccess.count)")
+
+        return (result, archiveData)
     }
 
     /// Fetch KAS public key
@@ -342,15 +542,9 @@ enum Commands {
 
         // Get OAuth token (from parameter or file)
         let oauthToken: String
-        if let providedToken = token {
-            oauthToken = providedToken.trimmingCharacters(in: .whitespacesAndNewlines)
-            if verbose { print("✓ OAuth token provided via parameter") }
-        } else {
-            let tokenURL = URL(fileURLWithPath: tokenPath)
-            let tokenData = try Data(contentsOf: tokenURL)
-            oauthToken = String(data: tokenData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if verbose { print("✓ OAuth token loaded from file") }
+        oauthToken = try resolveOAuthToken(providedToken: token, tokenPath: tokenPath)
+        if verbose {
+            print("✓ OAuth token loaded")
         }
 
         // Generate client ephemeral key pair
@@ -478,6 +672,10 @@ enum DecryptError: Error, CustomStringConvertible {
     case decryptionFailed
     case keyFormatError
     case invalidFormat
+    case missingSymmetricMaterial
+    case standardTDFUnsupported
+    case missingWrappedKey
+    case invalidWrappedKeyFormat
 
     var description: String {
         switch self {
@@ -486,6 +684,10 @@ enum DecryptError: Error, CustomStringConvertible {
         case .decryptionFailed: "Payload decryption failed"
         case .keyFormatError: "Invalid key format"
         case .invalidFormat: "Invalid NanoTDF format"
+        case .missingSymmetricMaterial: "Provide TDF_SYMMETRIC_KEY_PATH or TDF_PRIVATE_KEY_PATH to decrypt standard TDF files"
+        case .standardTDFUnsupported: "Standard TDF operation not yet supported"
+        case .missingWrappedKey: "KAS response missing wrapped key"
+        case .invalidWrappedKeyFormat: "Key share length mismatch in multi-share TDF"
         }
     }
 }
@@ -495,6 +697,7 @@ enum EncryptError: Error, CustomStringConvertible {
     case kasRequestFailed
     case invalidKASPublicKey
     case encryptionFailed
+    case missingConfiguration(String)
 
     var description: String {
         switch self {
@@ -502,6 +705,7 @@ enum EncryptError: Error, CustomStringConvertible {
         case .kasRequestFailed: "KAS public key request failed"
         case .invalidKASPublicKey: "Invalid KAS public key format"
         case .encryptionFailed: "Encryption operation failed"
+        case let .missingConfiguration(message): message
         }
     }
 }

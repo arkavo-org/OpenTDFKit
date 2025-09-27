@@ -1,5 +1,26 @@
+import CryptoKit
 import Darwin
 import Foundation
+import OpenTDFKit
+import UniformTypeIdentifiers
+
+enum CLIDataFormat: String {
+    case nano = "nano"
+    case nanoWithECDSA = "nano-with-ecdsa"
+    case tdf = "tdf"
+    case ztdf = "ztdf"
+
+    static func parse(_ rawValue: String) throws -> CLIDataFormat {
+        let normalized = rawValue.lowercased()
+        if normalized == "nano_with_ecdsa" {
+            return .nanoWithECDSA
+        }
+        guard let format = CLIDataFormat(rawValue: normalized) else {
+            throw CLIError.unsupportedFormat(rawValue)
+        }
+        return format
+    }
+}
 
 @main
 struct OpenTDFKitCLI {
@@ -80,18 +101,20 @@ struct OpenTDFKitCLI {
 
     static func printUsage() {
         print("""
-        OpenTDFKit CLI - NanoTDF Tool
+        OpenTDFKit CLI - Trusted Data Format Tool
 
         Usage:
-          OpenTDFKitCLI encrypt <input> <output> <format>  Encrypt a file to NanoTDF
-          OpenTDFKitCLI decrypt <input> <output> <format>  Decrypt a NanoTDF file
+          OpenTDFKitCLI encrypt <input> <output> <format>  Encrypt a file to the selected format
+          OpenTDFKitCLI decrypt <input> <output> <format>  Decrypt a file from the selected format
           OpenTDFKitCLI supports <feature>                 Check if feature is supported
-          OpenTDFKitCLI verify <file>                      Parse and validate a NanoTDF file
+          OpenTDFKitCLI verify <file>                      Parse and validate a TDF file
           OpenTDFKitCLI --help                             Show this help message
 
         Formats:
           nano               Standard NanoTDF
           nano-with-ecdsa    NanoTDF with ECDSA binding
+          tdf                Standard ZIP-based TDF (in progress)
+          ztdf               ZTDF alias for standard TDF (in progress)
 
         Features (for supports command):
           nano, nano_ecdsa, ztdf, assertions, etc.
@@ -122,7 +145,11 @@ struct OpenTDFKitCLI {
         }
 
         let data = try Data(contentsOf: fileURL)
-        try Commands.verifyNanoTDF(data: data, filename: fileURL.lastPathComponent)
+        if Commands.isLikelyStandardTDF(data: data) {
+            try Commands.verifyStandardTDF(data: data, filename: fileURL.lastPathComponent)
+        } else {
+            try Commands.verifyNanoTDF(data: data, filename: fileURL.lastPathComponent)
+        }
     }
 
     static func encryptCommand(args: [String]) async throws {
@@ -133,12 +160,7 @@ struct OpenTDFKitCLI {
 
         let inputURL = try resolvePath(args[2])
         let outputURL = try resolvePath(args[3])
-        let format = args[4]
-
-        // Check format support
-        guard format == "nano" || format == "nano-with-ecdsa" else {
-            throw CLIError.unsupportedFormat(format)
-        }
+        let format = try CLIDataFormat.parse(args[4])
 
         guard FileManager.default.fileExists(atPath: inputURL.path) else {
             throw CLIError.fileNotFound(inputURL.path)
@@ -151,16 +173,35 @@ struct OpenTDFKitCLI {
         }
 
         let inputData = try Data(contentsOf: inputURL)
-        let useECDSA = (format == "nano-with-ecdsa")
-
-        // Call the async encrypt function
-        let outputData = try await Commands.encryptNanoTDF(
-            plaintext: inputData,
-            useECDSA: useECDSA,
-        )
+        let outputData: Data
+        var standardTDFResult: StandardTDFEncryptionResult?
+        switch format {
+        case .nano:
+            outputData = try await Commands.encryptNanoTDF(
+                plaintext: inputData,
+                useECDSA: false
+            )
+        case .nanoWithECDSA:
+            outputData = try await Commands.encryptNanoTDF(
+                plaintext: inputData,
+                useECDSA: true
+            )
+        case .tdf, .ztdf:
+            let configuration = try buildStandardTDFConfiguration(for: inputURL)
+            let result = try Commands.encryptStandardTDF(
+                plaintext: inputData,
+                configuration: configuration
+            )
+            standardTDFResult = result.result
+            outputData = result.archiveData
+        }
 
         // Write output file
         try outputData.write(to: outputURL)
+
+        if let result = standardTDFResult {
+            try persistSymmetricKeyIfRequested(result.symmetricKey)
+        }
     }
 
     static func decryptCommand(args: [String]) async throws {
@@ -171,12 +212,7 @@ struct OpenTDFKitCLI {
 
         let inputURL = try resolvePath(args[2])
         let outputURL = try resolvePath(args[3])
-        let format = args[4]
-
-        // Check format support
-        guard format == "nano" || format == "nano-with-ecdsa" else {
-            throw CLIError.unsupportedFormat(format)
-        }
+        let format = try CLIDataFormat.parse(args[4])
 
         guard FileManager.default.fileExists(atPath: inputURL.path) else {
             throw CLIError.fileNotFound(inputURL.path)
@@ -190,14 +226,204 @@ struct OpenTDFKitCLI {
 
         let data = try Data(contentsOf: inputURL)
 
-        // Call the async decrypt function
-        let plaintext = try await Commands.decryptNanoTDFWithOutput(
-            data: data,
-            filename: inputURL.lastPathComponent,
-        )
+        let plaintext: Data
+        var usedStandardTDF = false
+        switch format {
+        case .nano, .nanoWithECDSA:
+            plaintext = try await Commands.decryptNanoTDFWithOutput(
+                data: data,
+                filename: inputURL.lastPathComponent
+            )
+        case .tdf, .ztdf:
+            let symmetricKey = try loadSymmetricKeyFromEnvironment()
+            let privateKey = try loadPrivateKeyPEMFromEnvironment()
+            var clientPublicKey: String? = nil
+            var oauthToken: String? = nil
+
+            if symmetricKey == nil {
+                clientPublicKey = try loadClientPublicKeyPEMFromEnvironment()
+                let env = ProcessInfo.processInfo.environment
+                let tokenPath = env["TDF_OAUTH_TOKEN_PATH"] ?? env["OAUTH_TOKEN_PATH"] ?? "fresh_token.txt"
+                oauthToken = try? Commands.resolveOAuthToken(
+                    providedToken: env["TDF_OAUTH_TOKEN"],
+                    tokenPath: tokenPath
+                )
+
+                if privateKey == nil {
+                    throw DecryptError.missingSymmetricMaterial
+                }
+            }
+
+            plaintext = try await Commands.decryptStandardTDF(
+                data: data,
+                filename: inputURL.lastPathComponent,
+                symmetricKey: symmetricKey,
+                privateKeyPEM: privateKey,
+                clientPublicKeyPEM: clientPublicKey,
+                oauthToken: oauthToken
+            )
+            usedStandardTDF = true
+        }
 
         // Write recovered file
         try plaintext.write(to: outputURL)
+
+        if usedStandardTDF {
+            print("✓ Decryption successful")
+        }
+    }
+
+    // MARK: - Standard TDF Helpers
+
+    private static func buildStandardTDFConfiguration(for inputURL: URL) throws -> StandardTDFEncryptionConfiguration {
+        let env = ProcessInfo.processInfo.environment
+
+        guard let kasURLString = env["TDF_KAS_URL"] ?? env["KASURL"], let kasURL = URL(string: kasURLString) else {
+            throw CLIError.missingEnvironmentVariable("TDF_KAS_URL or KASURL")
+        }
+
+        let publicKeyPEM = try loadPEMString(valueKey: "TDF_KAS_PUBLIC_KEY", pathKey: "TDF_KAS_PUBLIC_KEY_PATH")
+        let policyData = try loadPolicyData()
+        let mimeType = env["TDF_MIME_TYPE"] ?? inferMimeType(for: inputURL)
+
+        let kasInfo = StandardTDFKasInfo(
+            url: kasURL,
+            publicKeyPEM: publicKeyPEM,
+            kid: env["TDF_KAS_KID"],
+            schemaVersion: env["TDF_KAS_SCHEMA_VERSION"]
+        )
+
+        let policy = StandardTDFPolicy(json: policyData)
+        let specVersion = env["TDF_SPEC_VERSION"] ?? "1.0.0"
+
+        return StandardTDFEncryptionConfiguration(
+            kas: kasInfo,
+            policy: policy,
+            mimeType: mimeType,
+            tdfSpecVersion: specVersion
+        )
+    }
+
+    private static func loadPolicyData() throws -> Data {
+        let env = ProcessInfo.processInfo.environment
+        if let policyPath = env["TDF_POLICY_PATH"] {
+            let url = try resolvePath(policyPath)
+            return try Data(contentsOf: url)
+        }
+
+        if let policyBase64 = env["TDF_POLICY_BASE64"], let data = Data(base64Encoded: policyBase64) {
+            return data
+        }
+
+        if let inlineJSON = env["TDF_POLICY_JSON"], let data = inlineJSON.data(using: .utf8) {
+            return data
+        }
+
+        let policy: [String: Any] = [
+            "uuid": UUID().uuidString.lowercased(),
+            "body": [
+                "dataAttributes": [],
+                "dissem": [],
+            ],
+        ]
+
+        guard JSONSerialization.isValidJSONObject(policy),
+              let data = try? JSONSerialization.data(withJSONObject: policy, options: [.sortedKeys])
+        else {
+            throw CLIError.invalidPolicy
+        }
+
+        return data
+    }
+
+    private static func loadPEMString(valueKey: String, pathKey: String) throws -> String {
+        let env = ProcessInfo.processInfo.environment
+        if let inline = env[valueKey], inline.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return inline
+        }
+
+        if let path = env[pathKey] {
+            let url = try resolvePath(path)
+            return try String(contentsOf: url, encoding: .utf8)
+        }
+
+        throw CLIError.missingEnvironmentVariable(valueKey)
+    }
+
+    private static func inferMimeType(for url: URL) -> String? {
+        guard let type = UTType(filenameExtension: url.pathExtension), let mime = type.preferredMIMEType else {
+            return nil
+        }
+        return mime
+    }
+
+    private static func persistSymmetricKeyIfRequested(_ key: SymmetricKey) throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let path = env["TDF_OUTPUT_SYMMETRIC_KEY_PATH"] else {
+            return
+        }
+        let keyData = key.withUnsafeBytes { Data($0) }
+        let keyBase64 = keyData.base64EncodedString()
+        let url = try resolvePath(path)
+
+        let directory = url.deletingLastPathComponent()
+        guard FileManager.default.fileExists(atPath: directory.path) else {
+            throw CLIError.directoryNotFound(directory.path)
+        }
+
+        try keyBase64.write(to: url, atomically: true, encoding: .utf8)
+        print("✓ Wrote symmetric key to \(url.path)")
+    }
+
+    private static func loadSymmetricKeyFromEnvironment() throws -> SymmetricKey? {
+        let env = ProcessInfo.processInfo.environment
+
+        if let path = env["TDF_SYMMETRIC_KEY_PATH"] {
+            let url = try resolvePath(path)
+            let raw = try String(contentsOf: url, encoding: .utf8)
+            return try symmetricKey(fromBase64: raw)
+        }
+
+        if let inline = env["TDF_SYMMETRIC_KEY_BASE64"] {
+            return try symmetricKey(fromBase64: inline)
+        }
+
+        return nil
+    }
+
+    private static func symmetricKey(fromBase64 base64: String) throws -> SymmetricKey {
+        let trimmed = base64.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = Data(base64Encoded: trimmed) else {
+            throw CLIError.invalidSymmetricKey
+        }
+        return SymmetricKey(data: data)
+    }
+
+    private static func loadPrivateKeyPEMFromEnvironment() throws -> String? {
+        let env = ProcessInfo.processInfo.environment
+        if let inline = env["TDF_CLIENT_PRIVATE_KEY"], inline.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return inline
+        }
+        if let inline = env["TDF_PRIVATE_KEY"], inline.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return inline
+        }
+        if let path = env["TDF_CLIENT_PRIVATE_KEY_PATH"] {
+            let url = try resolvePath(path)
+            return try String(contentsOf: url, encoding: .utf8)
+        }
+        if let path = env["TDF_PRIVATE_KEY_PATH"] {
+            let url = try resolvePath(path)
+            return try String(contentsOf: url, encoding: .utf8)
+        }
+        return nil
+    }
+
+    private static func loadClientPublicKeyPEMFromEnvironment() throws -> String? {
+        do {
+            return try loadPEMString(valueKey: "TDF_CLIENT_PUBLIC_KEY", pathKey: "TDF_CLIENT_PUBLIC_KEY_PATH")
+        } catch CLIError.missingEnvironmentVariable {
+            return nil
+        }
     }
 
     static func supportsCommand(args: [String]) -> Int32 {
@@ -212,7 +438,9 @@ struct OpenTDFKitCLI {
         switch feature {
         case "nano", "nano_ecdsa":
             return 0
-        case "ztdf", "ztdf-ecwrap", "assertions", "assertion_verification",
+        case "tdf", "ztdf":
+            return 1
+        case "ztdf-ecwrap", "assertions", "assertion_verification",
              "autoconfigure", "better-messages-2024", "bulk_rewrap",
              "connectrpc", "ecwrap", "hexless", "hexaflexible",
              "kasallowlist", "key_management", "nano_attribute_bug",
@@ -230,6 +458,10 @@ enum CLIError: LocalizedError {
     case directoryNotFound(String)
     case unsupportedFormat(String)
     case invalidPath(String)
+    case notYetSupported(String)
+    case missingEnvironmentVariable(String)
+    case invalidSymmetricKey
+    case invalidPolicy
 
     var errorDescription: String? {
         switch self {
@@ -243,6 +475,14 @@ enum CLIError: LocalizedError {
             "Unsupported format: \(format) (supported: nano, nano-with-ecdsa)"
         case let .invalidPath(message):
             "Invalid path: \(message)"
+        case let .notYetSupported(message):
+            message
+        case let .missingEnvironmentVariable(name):
+            "Required environment variable '\(name)' is not set."
+        case .invalidSymmetricKey:
+            "Unable to decode symmetric key. Provide a base64 encoded key via TDF_SYMMETRIC_KEY_PATH or TDF_SYMMETRIC_KEY_BASE64."
+        case .invalidPolicy:
+            "Unable to load policy JSON for standard TDF encryption."
         }
     }
 }
