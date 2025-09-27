@@ -116,7 +116,7 @@ public struct StandardTDFEncryptor {
 
         let container = StandardTDFContainer(
             manifest: manifest,
-            payload: StandardTDFContainer.PayloadStorage.inMemory(payloadData)
+            payload: payloadData
         )
 
         return StandardTDFEncryptionResult(container: container, symmetricKey: symmetricKey, iv: iv, tag: tag)
@@ -141,36 +141,79 @@ public struct StandardTDFDecryptor {
     public init() {}
 
     public func decrypt(container: StandardTDFContainer, privateKeyPEM: String) throws -> Data {
-        guard let kasObject = container.manifest.encryptionInformation.keyAccess.first else {
+        let keyAccess = container.manifest.encryptionInformation.keyAccess
+        guard !keyAccess.isEmpty else {
             throw StandardTDFDecryptError.missingKeyAccess
         }
 
-        let symmetricKey = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
-            privateKeyPEM: privateKeyPEM,
-            wrappedKey: kasObject.wrappedKey
-        )
+        if keyAccess.count == 1 {
+            let symmetricKey = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
+                privateKeyPEM: privateKeyPEM,
+                wrappedKey: keyAccess[0].wrappedKey
+            )
+            return try decrypt(container: container, symmetricKey: symmetricKey)
+        }
 
-        return try decrypt(container: container, symmetricKey: symmetricKey)
+        var combinedKeyData: Data?
+        for kasObject in keyAccess.sorted(by: { ($0.kid ?? "") < ($1.kid ?? "") }) {
+            let symmetricKeyPart = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
+                privateKeyPEM: privateKeyPEM,
+                wrappedKey: kasObject.wrappedKey
+            )
+            let keyData = StandardTDFCrypto.data(from: symmetricKeyPart)
+
+            if let existing = combinedKeyData {
+                guard existing.count == keyData.count else {
+                    throw StandardTDFDecryptError.keyShareSizeMismatch
+                }
+                combinedKeyData = xorKeyData(existing, keyData)
+            } else {
+                combinedKeyData = keyData
+            }
+        }
+
+        guard let finalKeyData = combinedKeyData else {
+            throw StandardTDFDecryptError.missingKeyAccess
+        }
+
+        let finalSymmetricKey = SymmetricKey(data: finalKeyData)
+        return try decrypt(container: container, symmetricKey: finalSymmetricKey)
+    }
+
+    private func xorKeyData(_ lhs: Data, _ rhs: Data) -> Data {
+        Data(zip(lhs, rhs).map { $0 ^ $1 })
     }
 
     public func decrypt(container: StandardTDFContainer, symmetricKey: SymmetricKey) throws -> Data {
-        guard case let .inMemory(payloadData) = container.payload else {
-            throw StandardTDFDecryptError.unsupportedPayloadStorage
-        }
-        guard payloadData.count >= 12 + 16 else {
+        let payloadData = container.payload
+        let ivSize = 12
+        let tagSize = 16
+        let minSize = ivSize + tagSize
+        guard payloadData.count >= minSize else {
             throw StandardTDFDecryptError.malformedPayload
         }
 
-        let iv = payloadData.prefix(12)
-        let ciphertext = payloadData.dropFirst(12).dropLast(16)
-        let tag = payloadData.suffix(16)
+        let iv = payloadData.prefix(ivSize)
+        let ciphertext = payloadData.dropFirst(ivSize).dropLast(tagSize)
+        let tag = payloadData.suffix(tagSize)
 
         return try StandardTDFCrypto.decryptPayload(ciphertext: Data(ciphertext), iv: Data(iv), tag: Data(tag), symmetricKey: symmetricKey)
     }
 }
 
-public enum StandardTDFDecryptError: Error {
+public enum StandardTDFDecryptError: Error, CustomStringConvertible {
     case missingKeyAccess
-    case unsupportedPayloadStorage
     case malformedPayload
+    case keyShareSizeMismatch
+
+    public var description: String {
+        switch self {
+        case .missingKeyAccess:
+            return "No key access objects found in manifest"
+        case .malformedPayload:
+            return "Malformed encrypted payload: insufficient data for IV and authentication tag"
+        case .keyShareSizeMismatch:
+            return "Key share size mismatch: all key shares must have the same length for XOR reconstruction"
+        }
+    }
 }

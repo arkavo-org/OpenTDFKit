@@ -90,7 +90,6 @@ public struct StandardTDFCrypto {
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
             kSecAttrKeyClass as String: kSecAttrKeyClassPublic,
-            kSecAttrKeySizeInBits as String: data.count * 8,
         ]
 
         var error: Unmanaged<CFError>?
@@ -118,7 +117,6 @@ public struct StandardTDFCrypto {
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
             kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
-            kSecAttrKeySizeInBits as String: data.count * 8,
         ]
 
         var error: Unmanaged<CFError>?
@@ -130,10 +128,34 @@ public struct StandardTDFCrypto {
     }
 }
 
-public enum StandardTDFCryptoError: Error {
+public enum StandardTDFCryptoError: Error, CustomStringConvertible {
     case invalidPEM
     case invalidKeyData(CFError?)
     case keyWrapFailed(CFError?)
     case keyUnwrapFailed(CFError?)
     case invalidWrappedKey
+
+    public var description: String {
+        switch self {
+        case .invalidPEM:
+            return "Invalid PEM format: unable to decode base64 content"
+        case let .invalidKeyData(error):
+            if let error {
+                return "Invalid key data: \(error.localizedDescription)"
+            }
+            return "Invalid key data: unable to create SecKey from provided data"
+        case let .keyWrapFailed(error):
+            if let error {
+                return "RSA key wrapping failed: \(error.localizedDescription)"
+            }
+            return "RSA key wrapping failed"
+        case let .keyUnwrapFailed(error):
+            if let error {
+                return "RSA key unwrapping failed: \(error.localizedDescription)"
+            }
+            return "RSA key unwrapping failed"
+        case .invalidWrappedKey:
+            return "Invalid wrapped key: unable to decode base64 content"
+        }
+    }
 }

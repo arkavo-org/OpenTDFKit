@@ -4,11 +4,12 @@ public struct StandardTDFBuilder {
     public init() {}
 
     public func container(manifest: TDFManifest, payload: Data) -> StandardTDFContainer {
-        StandardTDFContainer(manifest: manifest, payload: StandardTDFContainer.PayloadStorage.inMemory(payload))
+        StandardTDFContainer(manifest: manifest, payload: payload)
     }
 
-    public func container(manifest: TDFManifest, payloadURL: URL) -> StandardTDFContainer {
-        StandardTDFContainer(manifest: manifest, payload: StandardTDFContainer.PayloadStorage.fileURL(payloadURL))
+    public func container(manifest: TDFManifest, payloadURL: URL) throws -> StandardTDFContainer {
+        let payload = try Data(contentsOf: payloadURL)
+        return StandardTDFContainer(manifest: manifest, payload: payload)
     }
 }
 
@@ -19,29 +20,13 @@ public struct StandardTDFLoader {
         let reader = try TDFArchiveReader(data: data)
         let manifest = try reader.manifest()
         let payload = try reader.payloadData()
-        return StandardTDFContainer(manifest: manifest, payload: StandardTDFContainer.PayloadStorage.inMemory(payload))
+        return StandardTDFContainer(manifest: manifest, payload: payload)
     }
 
     public func load(from url: URL) throws -> StandardTDFContainer {
         let reader = try TDFArchiveReader(url: url)
         let manifest = try reader.manifest()
-        let payloadURL = try writePayloadToTemporaryURL(reader: reader)
-        return StandardTDFContainer(
-            manifest: manifest,
-            payload: StandardTDFContainer.PayloadStorage.fileURL(payloadURL)
-        )
-    }
-
-    private func writePayloadToTemporaryURL(reader: TDFArchiveReader) throws -> URL {
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        let filename = UUID().uuidString + ".payload"
-        let fileURL = directory.appendingPathComponent(filename, isDirectory: false)
-        FileManager.default.createFile(atPath: fileURL.path, contents: nil)
-        guard let handle = try? FileHandle(forWritingTo: fileURL) else {
-            throw StandardTDFError.invalidPayloadLocator
-        }
-        defer { try? handle.close() }
-        try reader.writePayload(to: handle)
-        return fileURL
+        let payload = try reader.payloadData()
+        return StandardTDFContainer(manifest: manifest, payload: payload)
     }
 }

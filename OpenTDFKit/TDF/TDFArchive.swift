@@ -70,13 +70,8 @@ public struct TDFArchiveReader {
         guard let entry = archive[payloadEntryName] else {
             throw TDFArchiveError.missingPayload
         }
-        var remaining = Int(entry.uncompressedSize)
-        let _ = try archive.extract(entry) { chunk in
-            if remaining <= 0 {
-                return
-            }
+        _ = try archive.extract(entry) { chunk in
             try handle.write(contentsOf: chunk)
-            remaining -= chunk.count
         }
     }
 }
@@ -131,10 +126,25 @@ public struct TDFArchiveWriter {
     }
 }
 
-public enum TDFArchiveError: Error {
+public enum TDFArchiveError: Error, CustomStringConvertible {
     case unreadableArchive
     case missingManifest
     case missingPayload
     case manifestTooLarge
     case creationFailed
+
+    public var description: String {
+        switch self {
+        case .unreadableArchive:
+            return "Unable to read TDF archive: invalid ZIP format or corrupted file"
+        case .missingManifest:
+            return "Missing manifest: 0.manifest.json not found in archive"
+        case .missingPayload:
+            return "Missing payload: 0.payload not found in archive"
+        case .manifestTooLarge:
+            return "Manifest exceeds maximum allowed size"
+        case .creationFailed:
+            return "Failed to create TDF archive"
+        }
+    }
 }
