@@ -89,27 +89,20 @@ public struct StandardTDFEncryptor {
         configuration: StandardTDFEncryptionConfiguration,
         chunkSize: Int = StreamingStandardTDFCrypto.defaultChunkSize,
     ) throws -> StandardTDFEncryptionResult {
-        let inputHandle = try FileHandle(forReadingFrom: inputURL)
-        defer { try? inputHandle.close() }
-
-        let tempPayloadURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("payload")
-        defer { try? FileManager.default.removeItem(at: tempPayloadURL) }
-
-        FileManager.default.createFile(atPath: tempPayloadURL.path, contents: nil)
-        let outputHandle = try FileHandle(forWritingTo: tempPayloadURL)
-        defer { try? outputHandle.close() }
-
         let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
-        let streamingResult = try StreamingStandardTDFCrypto.encryptPayloadStreaming(
-            inputHandle: inputHandle,
-            outputHandle: outputHandle,
-            symmetricKey: symmetricKey,
-            chunkSize: chunkSize,
-        )
+        let payloadData: Data
+        let streamingResult: StreamingStandardTDFCrypto.StreamingEncryptionResult
 
-        let payloadData = try Data(contentsOf: tempPayloadURL)
+        do {
+            let inputHandle = try FileHandle(forReadingFrom: inputURL)
+            defer { try? inputHandle.close() }
+
+            (payloadData, streamingResult) = try StreamingStandardTDFCrypto.encryptPayloadStreamingToMemory(
+                inputHandle: inputHandle,
+                symmetricKey: symmetricKey,
+                chunkSize: chunkSize,
+            )
+        }
 
         let policyBinding = StandardTDFCrypto.policyBinding(policy: configuration.policy.json, symmetricKey: symmetricKey)
         let wrappedKey = try StandardTDFCrypto.wrapSymmetricKeyWithRSA(
@@ -207,27 +200,20 @@ public struct StandardTDFEncryptor {
             throw StreamingCryptoError.invalidSegmentSize
         }
 
-        let inputHandle = try FileHandle(forReadingFrom: inputURL)
-        defer { try? inputHandle.close() }
-
-        let tempPayloadURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("payload")
-        defer { try? FileManager.default.removeItem(at: tempPayloadURL) }
-
-        FileManager.default.createFile(atPath: tempPayloadURL.path, contents: nil)
-        let outputHandle = try FileHandle(forWritingTo: tempPayloadURL)
-        defer { try? outputHandle.close() }
-
         let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
-        let streamingResult = try StreamingStandardTDFCrypto.encryptPayloadStreamingMultiSegment(
-            inputHandle: inputHandle,
-            outputHandle: outputHandle,
-            symmetricKey: symmetricKey,
-            segmentSizes: segmentSizes,
-        )
+        let payloadData: Data
+        let streamingResult: StreamingStandardTDFCrypto.StreamingEncryptionResult
 
-        let payloadData = try Data(contentsOf: tempPayloadURL)
+        do {
+            let inputHandle = try FileHandle(forReadingFrom: inputURL)
+            defer { try? inputHandle.close() }
+
+            (payloadData, streamingResult) = try StreamingStandardTDFCrypto.encryptPayloadStreamingMultiSegmentToMemory(
+                inputHandle: inputHandle,
+                symmetricKey: symmetricKey,
+                segmentSizes: segmentSizes,
+            )
+        }
 
         let policyBinding = StandardTDFCrypto.policyBinding(policy: configuration.policy.json, symmetricKey: symmetricKey)
         let wrappedKey = try StandardTDFCrypto.wrapSymmetricKeyWithRSA(
@@ -417,7 +403,7 @@ public struct StandardTDFDecryptor {
         inputURL: URL,
         outputURL: URL,
         symmetricKey: SymmetricKey,
-        chunkSize: Int = StreamingStandardTDFCrypto.defaultChunkSize,
+        chunkSize _: Int = StreamingStandardTDFCrypto.defaultChunkSize,
     ) throws {
         let loader = StandardTDFLoader()
         let container = try loader.load(from: inputURL)
@@ -431,30 +417,17 @@ public struct StandardTDFDecryptor {
         }
 
         let iv = payloadData.prefix(ivSize)
+        let ciphertext = payloadData.dropFirst(ivSize).dropLast(tagSize)
         let tag = payloadData.suffix(tagSize)
 
-        let tempPayloadURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("encrypted")
-        defer { try? FileManager.default.removeItem(at: tempPayloadURL) }
-
-        try payloadData.write(to: tempPayloadURL)
-
-        let inputHandle = try FileHandle(forReadingFrom: tempPayloadURL)
-        defer { try? inputHandle.close() }
-
-        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
-        let outputHandle = try FileHandle(forWritingTo: outputURL)
-        defer { try? outputHandle.close() }
-
-        try StreamingStandardTDFCrypto.decryptPayloadStreaming(
-            inputHandle: inputHandle,
-            outputHandle: outputHandle,
+        let plaintext = try StandardTDFCrypto.decryptPayload(
+            ciphertext: Data(ciphertext),
             iv: Data(iv),
             tag: Data(tag),
             symmetricKey: symmetricKey,
-            chunkSize: chunkSize,
         )
+
+        try plaintext.write(to: outputURL)
     }
 
     public func decryptFile(
@@ -509,7 +482,7 @@ public struct StandardTDFDecryptor {
         inputURL: URL,
         outputURL: URL,
         symmetricKey: SymmetricKey,
-        chunkSize: Int = StreamingStandardTDFCrypto.defaultChunkSize,
+        chunkSize _: Int = StreamingStandardTDFCrypto.defaultChunkSize,
     ) throws {
         let loader = StandardTDFLoader()
         let container = try loader.load(from: inputURL)
@@ -523,27 +496,13 @@ public struct StandardTDFDecryptor {
             )
         }
 
-        let tempPayloadURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("encrypted")
-        defer { try? FileManager.default.removeItem(at: tempPayloadURL) }
-
-        try container.payload.write(to: tempPayloadURL)
-
-        let inputHandle = try FileHandle(forReadingFrom: tempPayloadURL)
-        defer { try? inputHandle.close() }
-
-        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
-        let outputHandle = try FileHandle(forWritingTo: outputURL)
-        defer { try? outputHandle.close() }
-
-        try StreamingStandardTDFCrypto.decryptPayloadStreamingMultiSegment(
-            inputHandle: inputHandle,
-            outputHandle: outputHandle,
+        let plaintext = try StreamingStandardTDFCrypto.decryptPayloadMultiSegmentFromMemory(
+            encryptedPayload: container.payload,
             segments: segments,
             symmetricKey: symmetricKey,
-            chunkSize: chunkSize,
         )
+
+        try plaintext.write(to: outputURL)
     }
 
     public func decrypt(container: StandardTDFContainer, privateKeyPEM: String) throws -> Data {
