@@ -5,10 +5,10 @@ import OpenTDFKit
 import UniformTypeIdentifiers
 
 enum CLIDataFormat: String {
-    case nano = "nano"
+    case nano
     case nanoWithECDSA = "nano-with-ecdsa"
-    case tdf = "tdf"
-    case ztdf = "ztdf"
+    case tdf
+    case ztdf
 
     static func parse(_ rawValue: String) throws -> CLIDataFormat {
         let normalized = rawValue.lowercased()
@@ -113,8 +113,8 @@ struct OpenTDFKitCLI {
         Formats:
           nano               Standard NanoTDF
           nano-with-ecdsa    NanoTDF with ECDSA binding
-          tdf                Standard ZIP-based TDF (in progress)
-          ztdf               ZTDF alias for standard TDF (in progress)
+          tdf                Standard ZIP-based TDF
+          ztdf               ZTDF alias for standard TDF
 
         Features (for supports command):
           nano, nano_ecdsa, ztdf, assertions, etc.
@@ -179,18 +179,18 @@ struct OpenTDFKitCLI {
         case .nano:
             outputData = try await Commands.encryptNanoTDF(
                 plaintext: inputData,
-                useECDSA: false
+                useECDSA: false,
             )
         case .nanoWithECDSA:
             outputData = try await Commands.encryptNanoTDF(
                 plaintext: inputData,
-                useECDSA: true
+                useECDSA: true,
             )
         case .tdf, .ztdf:
             let configuration = try buildStandardTDFConfiguration(for: inputURL)
             let result = try Commands.encryptStandardTDF(
                 plaintext: inputData,
-                configuration: configuration
+                configuration: configuration,
             )
             standardTDFResult = result.result
             outputData = result.archiveData
@@ -232,7 +232,7 @@ struct OpenTDFKitCLI {
         case .nano, .nanoWithECDSA:
             plaintext = try await Commands.decryptNanoTDFWithOutput(
                 data: data,
-                filename: inputURL.lastPathComponent
+                filename: inputURL.lastPathComponent,
             )
         case .tdf, .ztdf:
             let symmetricKey = try loadSymmetricKeyFromEnvironment()
@@ -246,7 +246,7 @@ struct OpenTDFKitCLI {
                 let tokenPath = env["TDF_OAUTH_TOKEN_PATH"] ?? env["OAUTH_TOKEN_PATH"] ?? "fresh_token.txt"
                 oauthToken = try? Commands.resolveOAuthToken(
                     providedToken: env["TDF_OAUTH_TOKEN"],
-                    tokenPath: tokenPath
+                    tokenPath: tokenPath,
                 )
 
                 if privateKey == nil {
@@ -260,7 +260,7 @@ struct OpenTDFKitCLI {
                 symmetricKey: symmetricKey,
                 privateKeyPEM: privateKey,
                 clientPublicKeyPEM: clientPublicKey,
-                oauthToken: oauthToken
+                oauthToken: oauthToken,
             )
             usedStandardTDF = true
         }
@@ -290,7 +290,7 @@ struct OpenTDFKitCLI {
             url: kasURL,
             publicKeyPEM: publicKeyPEM,
             kid: env["TDF_KAS_KID"],
-            schemaVersion: env["TDF_KAS_SCHEMA_VERSION"]
+            schemaVersion: env["TDF_KAS_SCHEMA_VERSION"],
         )
 
         let policy = StandardTDFPolicy(json: policyData)
@@ -300,7 +300,7 @@ struct OpenTDFKitCLI {
             kas: kasInfo,
             policy: policy,
             mimeType: mimeType,
-            tdfSpecVersion: specVersion
+            tdfSpecVersion: specVersion,
         )
     }
 
@@ -439,7 +439,7 @@ struct OpenTDFKitCLI {
         case "nano", "nano_ecdsa":
             return 0
         case "tdf", "ztdf":
-            return 1
+            return 0
         case "ztdf-ecwrap", "assertions", "assertion_verification",
              "autoconfigure", "better-messages-2024", "bulk_rewrap",
              "connectrpc", "ecwrap", "hexless", "hexaflexible",

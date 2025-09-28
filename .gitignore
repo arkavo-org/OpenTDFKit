@@ -113,3 +113,4 @@ cli.sh
 otdfctl-config.yaml
 OpenTDFKitCLI/otdfctl
 OpenTDFKitCLI/.otdfctl.yaml
+/xtest/otdfctl

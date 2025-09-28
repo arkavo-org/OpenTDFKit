@@ -94,7 +94,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         init(
             keyAccessObjects: [StandardKeyAccessObjectWrapper],
             policy: Policy,
-            algorithm: String?
+            algorithm: String?,
         ) {
             self.keyAccessObjects = keyAccessObjects
             self.policy = policy
@@ -343,7 +343,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
     /// - Returns: Mapping of KeyAccessObjectId to wrapped key data and optional session public key when EC wrapping is used.
     public func rewrapStandardTDF(
         manifest: TDFManifest,
-        clientPublicKeyPEM: String
+        clientPublicKeyPEM: String,
     ) async throws -> StandardTDFKASRewrapResult {
         let policyBody = manifest.encryptionInformation.policy
         let keyAccessEntries = manifest.encryptionInformation.keyAccess.filter { matchesKasURL($0.url) }
@@ -362,7 +362,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
 
             let binding = StandardPolicyBinding(
                 hash: kao.policyBinding.hash,
-                algorithm: kao.policyBinding.alg
+                algorithm: kao.policyBinding.alg,
             )
 
             let accessObject = StandardKeyAccessObject(
@@ -374,12 +374,12 @@ public class KASRewrapClient: KASRewrapClientProtocol {
                 encryptedMetadata: kao.encryptedMetadata,
                 kid: kao.kid,
                 splitId: kao.sid,
-                ephemeralPublicKey: kao.ephemeralPublicKey
+                ephemeralPublicKey: kao.ephemeralPublicKey,
             )
 
             let wrapper = StandardKeyAccessObjectWrapper(
                 keyAccessObjectId: String(format: "kao-%d", index),
-                keyAccessObject: accessObject
+                keyAccessObject: accessObject,
             )
             wrappers.append(wrapper)
         }
@@ -388,12 +388,12 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         let policyRequest = StandardPolicyRequest(
             keyAccessObjects: wrappers,
             policy: policy,
-            algorithm: nil
+            algorithm: nil,
         )
 
         let unsignedRequest = StandardUnsignedRewrapRequest(
             clientPublicKey: clientPublicKeyPEM,
-            requests: [policyRequest]
+            requests: [policyRequest],
         )
 
         let requestBodyJSON = try JSONEncoder().encode(unsignedRequest)
@@ -442,9 +442,8 @@ public class KASRewrapClient: KASRewrapClientProtocol {
 
             return StandardTDFKASRewrapResult(
                 wrappedKeys: wrappedKeys,
-                sessionPublicKeyPEM: rewrapResponse.sessionPublicKey
+                sessionPublicKeyPEM: rewrapResponse.sessionPublicKey,
             )
-
         case 400:
             let message = String(data: data, encoding: .utf8)
             throw KASRewrapError.httpError(400, message)

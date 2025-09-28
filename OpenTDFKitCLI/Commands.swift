@@ -122,7 +122,7 @@ enum Commands {
         symmetricKey: SymmetricKey?,
         privateKeyPEM: String?,
         clientPublicKeyPEM: String?,
-        oauthToken: String?
+        oauthToken: String?,
     ) async throws -> Data {
         print("Standard TDF Decryption")
         print("========================")
@@ -147,18 +147,18 @@ enum Commands {
             throw DecryptError.missingSymmetricMaterial
         }
 
-        guard let clientPublicKeyPEM = clientPublicKeyPEM, !clientPublicKeyPEM.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard let clientPublicKeyPEM, !clientPublicKeyPEM.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw DecryptError.missingSymmetricMaterial
         }
 
-        guard let oauthToken = oauthToken, !oauthToken.isEmpty else {
+        guard let oauthToken, !oauthToken.isEmpty else {
             throw DecryptError.missingOAuthToken
         }
 
         print("  Requesting rewrap from KAS")
 
         var aggregatedWrappedKeys: [String: Data] = [:]
-        let uniqueKasURLs = Set(container.manifest.encryptionInformation.keyAccess.map { $0.url })
+        let uniqueKasURLs = Set(container.manifest.encryptionInformation.keyAccess.map(\.url))
 
         for kasURLString in uniqueKasURLs {
             guard let kasURL = URL(string: kasURLString) else {
@@ -168,7 +168,7 @@ enum Commands {
             let client = KASRewrapClient(kasURL: kasURL, oauthToken: oauthToken)
             let result = try await client.rewrapStandardTDF(
                 manifest: container.manifest,
-                clientPublicKeyPEM: clientPublicKeyPEM
+                clientPublicKeyPEM: clientPublicKeyPEM,
             )
 
             if let sessionKey = result.sessionPublicKeyPEM, !sessionKey.isEmpty {
@@ -191,7 +191,7 @@ enum Commands {
             let base64 = wrappedKeyData.base64EncodedString()
             let symmetricKeyPart = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
                 privateKeyPEM: privateKeyPEM,
-                wrappedKey: base64
+                wrappedKey: base64,
             )
             let keyData = StandardTDFCrypto.data(from: symmetricKeyPart)
 
@@ -340,7 +340,7 @@ enum Commands {
     /// Encrypt plaintext to Standard TDF using local configuration.
     static func encryptStandardTDF(
         plaintext: Data,
-        configuration: StandardTDFEncryptionConfiguration
+        configuration: StandardTDFEncryptionConfiguration,
     ) throws -> (result: StandardTDFEncryptionResult, archiveData: Data) {
         print("Standard TDF Encryption")
         print("=======================")

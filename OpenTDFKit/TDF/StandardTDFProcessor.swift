@@ -61,13 +61,13 @@ public struct StandardTDFEncryptor {
         let method = TDFMethodDescriptor(
             algorithm: "AES-256-GCM",
             iv: iv.base64EncodedString(),
-            isStreamable: false
+            isStreamable: false,
         )
 
         let segment = TDFSegment(
             hash: segmentSignatureBase64,
             segmentSize: Int64(plaintext.count),
-            encryptedSegmentSize: Int64(payloadData.count)
+            encryptedSegmentSize: Int64(payloadData.count),
         )
 
         let integrity = TDFIntegrityInformation(
@@ -75,7 +75,7 @@ public struct StandardTDFEncryptor {
             segmentHashAlg: "HS256",
             segmentSizeDefault: Int64(plaintext.count),
             encryptedSegmentSizeDefault: Int64(payloadData.count),
-            segments: [segment]
+            segments: [segment],
         )
 
         let kasObject = TDFKeyAccessObject(
@@ -88,7 +88,7 @@ public struct StandardTDFEncryptor {
             kid: configuration.kas.kid,
             sid: nil,
             schemaVersion: configuration.kas.schemaVersion,
-            ephemeralPublicKey: nil
+            ephemeralPublicKey: nil,
         )
 
         let encryptionInformation = TDFEncryptionInformation(
@@ -96,7 +96,7 @@ public struct StandardTDFEncryptor {
             keyAccess: [kasObject],
             method: method,
             integrityInformation: integrity,
-            policy: configuration.policy.base64String
+            policy: configuration.policy.base64String,
         )
 
         let payloadDescriptor = TDFPayloadDescriptor(
@@ -104,19 +104,19 @@ public struct StandardTDFEncryptor {
             url: "0.payload",
             protocolValue: .zip,
             isEncrypted: true,
-            mimeType: configuration.mimeType
+            mimeType: configuration.mimeType,
         )
 
         let manifest = TDFManifest(
             schemaVersion: configuration.tdfSpecVersion,
             payload: payloadDescriptor,
             encryptionInformation: encryptionInformation,
-            assertions: nil
+            assertions: nil,
         )
 
         let container = StandardTDFContainer(
             manifest: manifest,
-            payload: payloadData
+            payload: payloadData,
         )
 
         return StandardTDFEncryptionResult(container: container, symmetricKey: symmetricKey, iv: iv, tag: tag)
@@ -149,7 +149,7 @@ public struct StandardTDFDecryptor {
         if keyAccess.count == 1 {
             let symmetricKey = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
                 privateKeyPEM: privateKeyPEM,
-                wrappedKey: keyAccess[0].wrappedKey
+                wrappedKey: keyAccess[0].wrappedKey,
             )
             return try decrypt(container: container, symmetricKey: symmetricKey)
         }
@@ -158,7 +158,7 @@ public struct StandardTDFDecryptor {
         for kasObject in keyAccess.sorted(by: { ($0.kid ?? "") < ($1.kid ?? "") }) {
             let symmetricKeyPart = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
                 privateKeyPEM: privateKeyPEM,
-                wrappedKey: kasObject.wrappedKey
+                wrappedKey: kasObject.wrappedKey,
             )
             let keyData = StandardTDFCrypto.data(from: symmetricKeyPart)
 
@@ -209,11 +209,11 @@ public enum StandardTDFDecryptError: Error, CustomStringConvertible {
     public var description: String {
         switch self {
         case .missingKeyAccess:
-            return "No key access objects found in manifest"
+            "No key access objects found in manifest"
         case .malformedPayload:
-            return "Malformed encrypted payload: insufficient data for IV and authentication tag"
+            "Malformed encrypted payload: insufficient data for IV and authentication tag"
         case .keyShareSizeMismatch:
-            return "Key share size mismatch: all key shares must have the same length for XOR reconstruction"
+            "Key share size mismatch: all key shares must have the same length for XOR reconstruction"
         }
     }
 }

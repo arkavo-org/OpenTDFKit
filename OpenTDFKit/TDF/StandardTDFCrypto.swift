@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-public struct StandardTDFCrypto {
+public enum StandardTDFCrypto {
     public static func generateSymmetricKey() throws -> SymmetricKey {
         let keyData = try randomBytes(count: 32)
         return SymmetricKey(data: keyData)
@@ -51,7 +51,7 @@ public struct StandardTDFCrypto {
             publicKey,
             .rsaEncryptionOAEPSHA256,
             keyData as CFData,
-            &error
+            &error,
         ) as Data? else {
             throw StandardTDFCryptoError.keyWrapFailed(error?.takeRetainedValue())
         }
@@ -68,7 +68,7 @@ public struct StandardTDFCrypto {
             privateKey,
             .rsaEncryptionOAEPSHA256,
             wrappedData as CFData,
-            &error
+            &error,
         ) as Data? else {
             throw StandardTDFCryptoError.keyUnwrapFailed(error?.takeRetainedValue())
         }

@@ -11,7 +11,7 @@ public struct TDFManifest: Codable, Sendable {
         schemaVersion: String,
         payload: TDFPayloadDescriptor,
         encryptionInformation: TDFEncryptionInformation,
-        assertions: [TDFAssertion]? = nil
+        assertions: [TDFAssertion]? = nil,
     ) {
         self.schemaVersion = schemaVersion
         self.payload = payload
@@ -52,7 +52,7 @@ public struct TDFPayloadDescriptor: Codable, Sendable {
         url: String,
         protocolValue: PayloadProtocol,
         isEncrypted: Bool,
-        mimeType: String? = nil
+        mimeType: String? = nil,
     ) {
         self.type = type
         self.url = url
@@ -79,7 +79,7 @@ public struct TDFEncryptionInformation: Codable, Sendable {
         keyAccess: [TDFKeyAccessObject],
         method: TDFMethodDescriptor,
         integrityInformation: TDFIntegrityInformation,
-        policy: String
+        policy: String,
     ) {
         self.type = type
         self.keyAccess = keyAccess
@@ -134,7 +134,7 @@ public struct TDFKeyAccessObject: Codable, Sendable {
         kid: String? = nil,
         sid: String? = nil,
         schemaVersion: String? = nil,
-        ephemeralPublicKey: String? = nil
+        ephemeralPublicKey: String? = nil,
     ) {
         self.type = type
         self.url = url
@@ -183,7 +183,7 @@ public struct TDFIntegrityInformation: Codable, Sendable {
         segmentHashAlg: String,
         segmentSizeDefault: Int64,
         encryptedSegmentSizeDefault: Int64? = nil,
-        segments: [TDFSegment]
+        segments: [TDFSegment],
     ) {
         self.rootSignature = rootSignature
         self.segmentHashAlg = segmentHashAlg
@@ -229,7 +229,7 @@ public struct TDFAssertion: Codable, Sendable {
         scope: String? = nil,
         appliesToState: String? = nil,
         statement: TDFAssertionStatement,
-        binding: TDFAssertionBinding? = nil
+        binding: TDFAssertionBinding? = nil,
     ) {
         self.id = id
         self.type = type
@@ -293,7 +293,7 @@ public enum CodableValue: Codable, Sendable {
             self = .array(value)
         } else {
             throw DecodingError.dataCorrupted(
-                DecodingError.Context(codingPath: container.codingPath, debugDescription: "Unsupported JSON value")
+                DecodingError.Context(codingPath: container.codingPath, debugDescription: "Unsupported JSON value"),
             )
         }
     }

@@ -121,7 +121,7 @@ public struct TDFArchiveWriter {
                 }
                 let upper = min(start + size, data.count)
                 return data.subdata(in: start ..< upper)
-            }
+            },
         )
     }
 }
@@ -136,15 +136,15 @@ public enum TDFArchiveError: Error, CustomStringConvertible {
     public var description: String {
         switch self {
         case .unreadableArchive:
-            return "Unable to read TDF archive: invalid ZIP format or corrupted file"
+            "Unable to read TDF archive: invalid ZIP format or corrupted file"
         case .missingManifest:
-            return "Missing manifest: 0.manifest.json not found in archive"
+            "Missing manifest: 0.manifest.json not found in archive"
         case .missingPayload:
-            return "Missing payload: 0.payload not found in archive"
+            "Missing payload: 0.payload not found in archive"
         case .manifestTooLarge:
-            return "Manifest exceeds maximum allowed size"
+            "Manifest exceeds maximum allowed size"
         case .creationFailed:
-            return "Failed to create TDF archive"
+            "Failed to create TDF archive"
         }
     }
 }
