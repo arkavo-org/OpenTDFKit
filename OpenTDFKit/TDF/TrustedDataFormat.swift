@@ -21,7 +21,7 @@ public struct StandardTDFContainer: TrustedDataContainer {
     public init(
         manifest: TDFManifest,
         payload: Data,
-        compression: ZIPFoundation.CompressionMethod = .deflate,
+        compression: ZIPFoundation.CompressionMethod = .none,
     ) {
         self.manifest = manifest
         self.payload = payload
