@@ -92,6 +92,10 @@ struct OpenTDFKitCLI {
         case "supports":
             return supportsCommand(args: args)
 
+        case "benchmark":
+            try await benchmarkCommand(args: args)
+            return 0
+
         default:
             fputs("Error: Unknown command '\(command)'\n", stderr)
             printUsage()
@@ -104,17 +108,22 @@ struct OpenTDFKitCLI {
         OpenTDFKit CLI - Trusted Data Format Tool
 
         Usage:
-          OpenTDFKitCLI encrypt <input> <output> <format>  Encrypt a file to the selected format
-          OpenTDFKitCLI decrypt <input> <output> <format>  Decrypt a file from the selected format
+          OpenTDFKitCLI encrypt <input> <output> <format> [--chunk-size <size>] [--segments <sizes>]
+          OpenTDFKitCLI decrypt <input> <output> <format> [--chunk-size <size>]
           OpenTDFKitCLI supports <feature>                 Check if feature is supported
           OpenTDFKitCLI verify <file>                      Parse and validate a TDF file
+          OpenTDFKitCLI benchmark <input> <format>         Benchmark different chunk sizes
           OpenTDFKitCLI --help                             Show this help message
 
         Formats:
           nano               Standard NanoTDF
           nano-with-ecdsa    NanoTDF with ECDSA binding
-          tdf                Standard ZIP-based TDF
+          tdf                Standard ZIP-based TDF (supports streaming)
           ztdf               ZTDF alias for standard TDF
+
+        Options:
+          --chunk-size <size>    Chunk size for streaming (2m, 5m, 25m, or bytes)
+          --segments <sizes>     Comma-separated segment sizes (e.g., 2m,5m,2m)
 
         Features (for supports command):
           nano, nano_ecdsa, ztdf, assertions, etc.
@@ -127,10 +136,47 @@ struct OpenTDFKitCLI {
 
         Examples:
           OpenTDFKitCLI encrypt input.txt output.ntdf nano
-          OpenTDFKitCLI decrypt output.ntdf recovered.txt nano
+          OpenTDFKitCLI encrypt large.dat output.tdf tdf --chunk-size 5m
+          OpenTDFKitCLI encrypt large.dat output.tdf tdf --segments 2m,5m,25m
+          OpenTDFKitCLI decrypt output.tdf recovered.dat tdf --chunk-size 5m
+          OpenTDFKitCLI benchmark test.dat tdf
           OpenTDFKitCLI supports nano
           OpenTDFKitCLI verify test.ntdf
         """)
+    }
+
+    static func parseChunkSize(_ sizeString: String) throws -> Int {
+        let trimmed = sizeString.lowercased().trimmingCharacters(in: .whitespaces)
+        if trimmed.hasSuffix("m") || trimmed.hasSuffix("mb") {
+            let numStr = trimmed.replacingOccurrences(of: "m", with: "").replacingOccurrences(of: "b", with: "")
+            guard let num = Int(numStr) else {
+                throw CLIError.invalidChunkSize(sizeString)
+            }
+            return num * 1024 * 1024
+        } else if trimmed.hasSuffix("k") || trimmed.hasSuffix("kb") {
+            let numStr = trimmed.replacingOccurrences(of: "k", with: "").replacingOccurrences(of: "b", with: "")
+            guard let num = Int(numStr) else {
+                throw CLIError.invalidChunkSize(sizeString)
+            }
+            return num * 1024
+        } else {
+            guard let num = Int(trimmed) else {
+                throw CLIError.invalidChunkSize(sizeString)
+            }
+            return num
+        }
+    }
+
+    static func parseSegmentSizes(_ segmentString: String) throws -> [Int] {
+        let parts = segmentString.split(separator: ",").map { String($0) }
+        return try parts.map { try parseChunkSize($0) }
+    }
+
+    static func findFlag(_ flag: String, in args: [String]) -> (found: Bool, value: String?) {
+        guard let index = args.firstIndex(of: flag), index + 1 < args.count else {
+            return (false, nil)
+        }
+        return (true, args[index + 1])
     }
 
     static func verifyCommand(args: [String]) throws {
@@ -153,7 +199,7 @@ struct OpenTDFKitCLI {
     }
 
     static func encryptCommand(args: [String]) async throws {
-        // encrypt <input> <output> <format>
+        // encrypt <input> <output> <format> [--chunk-size <size>] [--segments <sizes>]
         guard args.count >= 5 else {
             throw CLIError.missingArgument("encrypt requires: <input> <output> <format>")
         }
@@ -172,32 +218,66 @@ struct OpenTDFKitCLI {
             throw CLIError.directoryNotFound(outputDir.path)
         }
 
-        let inputData = try Data(contentsOf: inputURL)
+        let chunkSizeFlag = findFlag("--chunk-size", in: args)
+        let segmentsFlag = findFlag("--segments", in: args)
+
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: inputURL.path)
+        let fileSize = fileAttributes[.size] as? Int64 ?? 0
+
+        let streamingThreshold: Int64 = 10 * 1024 * 1024
+
         let outputData: Data
         var standardTDFResult: StandardTDFEncryptionResult?
         switch format {
         case .nano:
+            let inputData = try Data(contentsOf: inputURL)
             outputData = try await Commands.encryptNanoTDF(
                 plaintext: inputData,
                 useECDSA: false,
             )
         case .nanoWithECDSA:
+            let inputData = try Data(contentsOf: inputURL)
             outputData = try await Commands.encryptNanoTDF(
                 plaintext: inputData,
                 useECDSA: true,
             )
         case .tdf, .ztdf:
             let configuration = try buildStandardTDFConfiguration(for: inputURL)
-            let result = try Commands.encryptStandardTDF(
-                plaintext: inputData,
-                configuration: configuration,
-            )
-            standardTDFResult = result.result
-            outputData = result.archiveData
-        }
 
-        // Write output file
-        try outputData.write(to: outputURL)
+            if let segmentString = segmentsFlag.value {
+                let segmentSizes = try parseSegmentSizes(segmentString)
+                print("Using multi-segment encryption with sizes: \(segmentSizes.map { "\($0 / 1024 / 1024)MB" }.joined(separator: ", "))")
+                let encryptor = StandardTDFEncryptor()
+                standardTDFResult = try encryptor.encryptFileMultiSegment(
+                    inputURL: inputURL,
+                    outputURL: outputURL,
+                    configuration: configuration,
+                    segmentSizes: segmentSizes,
+                )
+                outputData = try Data(contentsOf: outputURL)
+            } else if fileSize > streamingThreshold || chunkSizeFlag.found {
+                let chunkSize = try chunkSizeFlag.value.map { try parseChunkSize($0) } ?? StreamingStandardTDFCrypto.defaultChunkSize
+                print("Using streaming encryption (file: \(fileSize / 1024 / 1024)MB, chunk: \(chunkSize / 1024 / 1024)MB)")
+                let encryptor = StandardTDFEncryptor()
+                standardTDFResult = try encryptor.encryptFile(
+                    inputURL: inputURL,
+                    outputURL: outputURL,
+                    configuration: configuration,
+                    chunkSize: chunkSize,
+                )
+                outputData = try Data(contentsOf: outputURL)
+            } else {
+                let inputData = try Data(contentsOf: inputURL)
+                print("Using in-memory encryption (file: \(fileSize / 1024 / 1024)MB)")
+                let result = try Commands.encryptStandardTDF(
+                    plaintext: inputData,
+                    configuration: configuration,
+                )
+                standardTDFResult = result.result
+                outputData = result.archiveData
+                try outputData.write(to: outputURL)
+            }
+        }
 
         if let result = standardTDFResult {
             try persistSymmetricKeyIfRequested(result.symmetricKey)
@@ -271,6 +351,94 @@ struct OpenTDFKitCLI {
         if usedStandardTDF {
             print("✓ Decryption successful")
         }
+    }
+
+    static func benchmarkCommand(args: [String]) async throws {
+        guard args.count >= 4 else {
+            throw CLIError.missingArgument("benchmark requires: <input> <format>")
+        }
+
+        let inputURL = try resolvePath(args[2])
+        let format = try CLIDataFormat.parse(args[3])
+
+        guard FileManager.default.fileExists(atPath: inputURL.path) else {
+            throw CLIError.fileNotFound(inputURL.path)
+        }
+
+        guard format == .tdf || format == .ztdf else {
+            throw CLIError.notYetSupported("Benchmark only supports TDF format currently")
+        }
+
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: inputURL.path)
+        let fileSize = fileAttributes[.size] as? Int64 ?? 0
+
+        print("Benchmark: Standard TDF Streaming Performance")
+        print("==============================================")
+        print("Input file: \(inputURL.lastPathComponent)")
+        print("File size: \(fileSize / 1024 / 1024) MB (\(fileSize) bytes)\n")
+
+        let chunkSizes: [(name: String, size: Int)] = [
+            ("2MB", StreamingStandardTDFCrypto.defaultChunkSize),
+            ("5MB", StreamingStandardTDFCrypto.chunkSize5MB),
+            ("25MB", StreamingStandardTDFCrypto.chunkSize25MB),
+        ]
+
+        for (name, chunkSize) in chunkSizes {
+            print("Testing chunk size: \(name)")
+            print("----------------------------")
+
+            let tempEncrypted = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("tdf")
+            let tempDecrypted = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("dat")
+
+            defer {
+                try? FileManager.default.removeItem(at: tempEncrypted)
+                try? FileManager.default.removeItem(at: tempDecrypted)
+            }
+
+            let configuration = try buildStandardTDFConfiguration(for: inputURL)
+            let encryptor = StandardTDFEncryptor()
+
+            let encryptStart = Date()
+            let result = try encryptor.encryptFile(
+                inputURL: inputURL,
+                outputURL: tempEncrypted,
+                configuration: configuration,
+                chunkSize: chunkSize,
+            )
+            let encryptTime = Date().timeIntervalSince(encryptStart)
+            let encryptThroughput = Double(fileSize) / encryptTime / 1024 / 1024
+
+            let encryptedSize = try FileManager.default.attributesOfItem(atPath: tempEncrypted.path)[.size] as? Int64 ?? 0
+
+            let decryptor = StandardTDFDecryptor()
+            let decryptStart = Date()
+            try decryptor.decryptFile(
+                inputURL: tempEncrypted,
+                outputURL: tempDecrypted,
+                symmetricKey: result.symmetricKey,
+                chunkSize: chunkSize,
+            )
+            let decryptTime = Date().timeIntervalSince(decryptStart)
+            let decryptThroughput = Double(fileSize) / decryptTime / 1024 / 1024
+
+            let decryptedSize = try FileManager.default.attributesOfItem(atPath: tempDecrypted.path)[.size] as? Int64 ?? 0
+
+            guard decryptedSize == fileSize else {
+                throw CLIError.notYetSupported("Decryption verification failed: size mismatch")
+            }
+
+            print("  Encryption time: \(String(format: "%.2f", encryptTime))s (\(String(format: "%.2f", encryptThroughput)) MB/s)")
+            print("  Decryption time: \(String(format: "%.2f", decryptTime))s (\(String(format: "%.2f", decryptThroughput)) MB/s)")
+            print("  Encrypted size: \(encryptedSize / 1024 / 1024) MB")
+            print("  Overhead: \(String(format: "%.2f", Double(encryptedSize - fileSize) / Double(fileSize) * 100))%")
+            print("")
+        }
+
+        print("Benchmark complete!")
     }
 
     // MARK: - Standard TDF Helpers
@@ -462,6 +630,7 @@ enum CLIError: LocalizedError {
     case missingEnvironmentVariable(String)
     case invalidSymmetricKey
     case invalidPolicy
+    case invalidChunkSize(String)
 
     var errorDescription: String? {
         switch self {
@@ -483,6 +652,8 @@ enum CLIError: LocalizedError {
             "Unable to decode symmetric key. Provide a base64 encoded key via TDF_SYMMETRIC_KEY_PATH or TDF_SYMMETRIC_KEY_BASE64."
         case .invalidPolicy:
             "Unable to load policy JSON for standard TDF encryption."
+        case let .invalidChunkSize(value):
+            "Invalid chunk size: '\(value)'. Use format like: 2m, 5m, 25m, 1024k, or raw bytes."
         }
     }
 }
