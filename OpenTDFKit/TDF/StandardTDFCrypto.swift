@@ -1,6 +1,15 @@
 import CryptoKit
 import Foundation
 
+extension Data {
+    mutating func secureZero() {
+        withUnsafeMutableBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return }
+            memset_s(baseAddress, buffer.count, 0, buffer.count)
+        }
+    }
+}
+
 public enum StandardTDFCrypto {
     public static func generateSymmetricKey() throws -> SymmetricKey {
         let keyData = try randomBytes(count: 32)
@@ -70,7 +79,7 @@ public enum StandardTDFCrypto {
             throw StandardTDFCryptoError.invalidWrappedKey
         }
         var error: Unmanaged<CFError>?
-        guard let decrypted = SecKeyCreateDecryptedData(
+        guard var decrypted = SecKeyCreateDecryptedData(
             privateKey,
             .rsaEncryptionOAEPSHA256,
             wrappedData as CFData,
@@ -78,6 +87,11 @@ public enum StandardTDFCrypto {
         ) as Data? else {
             throw StandardTDFCryptoError.keyUnwrapFailed(error?.takeRetainedValue())
         }
+
+        defer {
+            decrypted.secureZero()
+        }
+
         return SymmetricKey(data: decrypted)
     }
 
@@ -160,28 +174,32 @@ public enum StandardTDFCryptoError: Error, CustomStringConvertible {
     public var description: String {
         switch self {
         case .invalidPEM:
-            return "Invalid PEM format: unable to decode base64 content"
+            return "Invalid PEM format"
         case let .invalidKeyData(error):
             if let error {
                 return "Invalid key data: \(error.localizedDescription)"
             }
-            return "Invalid key data: unable to create SecKey from provided data"
+            return "Invalid key data"
         case let .keyWrapFailed(error):
             if let error {
-                return "RSA key wrapping failed: \(error.localizedDescription)"
+                return "Key wrapping failed: \(error.localizedDescription)"
             }
-            return "RSA key wrapping failed"
+            return "Key wrapping failed"
         case let .keyUnwrapFailed(error):
             if let error {
-                return "RSA key unwrapping failed: \(error.localizedDescription)"
+                return "Key unwrapping failed: \(error.localizedDescription)"
             }
-            return "RSA key unwrapping failed"
+            return "Key unwrapping failed"
         case .invalidWrappedKey:
-            return "Invalid wrapped key: unable to decode base64 content"
+            return "Invalid wrapped key format"
         case let .weakKey(keySize, minimum):
-            return "RSA key size \(keySize) bits is too weak. Minimum required: \(minimum) bits"
+            #if DEBUG
+                return "RSA key size \(keySize) bits is too weak. Minimum required: \(minimum) bits"
+            #else
+                return "Cryptographic key does not meet security requirements"
+            #endif
         case .cannotDetermineKeySize:
-            return "Unable to determine RSA key size from key attributes"
+            return "Unable to validate key strength"
         }
     }
 }
