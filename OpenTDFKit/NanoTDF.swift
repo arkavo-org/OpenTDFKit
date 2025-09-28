@@ -1,5 +1,6 @@
 @preconcurrency import CryptoKit
 import Foundation
+import Security
 
 /// Represents a NanoTDF (Nano Trusted Data Format) object, containing a header, payload, and optional signature.
 /// Conforms to `Sendable` for safe use in concurrent contexts.
@@ -134,7 +135,13 @@ public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: 
 
     // Step 7: Generate 3-byte IV for payload
     var payloadIV = Data(count: 3)
-    guard SecRandomCopyBytes(kSecRandomDefault, 3, &payloadIV) == errSecSuccess else {
+    let ivStatus = payloadIV.withUnsafeMutableBytes { buffer -> OSStatus in
+        guard let baseAddress = buffer.baseAddress else {
+            return errSecAllocate
+        }
+        return SecRandomCopyBytes(kSecRandomDefault, 3, baseAddress)
+    }
+    guard ivStatus == errSecSuccess else {
         throw CryptoHelperError.keyGenerationFailed
     }
 

@@ -283,4 +283,147 @@ final class IntegrationTests: XCTestCase {
 
         return token
     }
+
+    func testEndToEndStandardTDFWithKASRewrap() async throws {
+        try skipIfEnvironmentNotConfigured()
+
+        guard let platformURL else {
+            XCTFail("Environment not configured")
+            return
+        }
+
+        let testPlaintext = "Integration test: Standard TDF with KAS rewrap".data(using: .utf8)!
+
+        let token = try await getOAuthToken()
+
+        let kasRSAPublicKeyURL = platformURL.appendingPathComponent("/kas/v2/kas_public_key")
+        var keyRequest = URLRequest(url: kasRSAPublicKeyURL)
+        keyRequest.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let (keyData, keyResponse) = try await URLSession.shared.data(for: keyRequest)
+
+        guard let httpKeyResponse = keyResponse as? HTTPURLResponse,
+              httpKeyResponse.statusCode == 200
+        else {
+            throw XCTSkip("Failed to retrieve KAS RSA public key")
+        }
+
+        struct KASPublicKeyResponse: Codable {
+            let publicKey: String
+        }
+
+        let kasPublicKeyResponse = try JSONDecoder().decode(KASPublicKeyResponse.self, from: keyData)
+        let kasPublicKeyPEM = kasPublicKeyResponse.publicKey
+
+        let policyJSON = """
+        {
+            "uuid": "integration-test-\(UUID().uuidString)",
+            "body": {
+                "dataAttributes": [],
+                "dissem": []
+            }
+        }
+        """.data(using: .utf8)!
+
+        let kasInfo = StandardTDFKasInfo(
+            url: platformURL.appendingPathComponent("/kas"),
+            publicKeyPEM: kasPublicKeyPEM,
+            kid: "kas-integration-test",
+            schemaVersion: "1.0",
+        )
+
+        let policy = try StandardTDFPolicy(json: policyJSON)
+        let configuration = StandardTDFEncryptionConfiguration(
+            kas: kasInfo,
+            policy: policy,
+            mimeType: "text/plain",
+            tdfSpecVersion: "4.3.0",
+        )
+
+        let encryptor = StandardTDFEncryptor()
+        let encryptionResult = try encryptor.encrypt(plaintext: testPlaintext, configuration: configuration)
+
+        let tdfData = try encryptionResult.container.serializedData()
+        XCTAssertGreaterThan(tdfData.count, 0, "TDF data should not be empty")
+        XCTAssertTrue(tdfData.starts(with: [0x50, 0x4B]), "TDF should be a ZIP archive")
+
+        let clientPrivateKey = try generateTestRSAKeyPair()
+
+        let loader = StandardTDFLoader()
+        let container = try loader.load(from: tdfData)
+
+        guard let kasURL = URL(string: container.manifest.encryptionInformation.keyAccess[0].url) else {
+            XCTFail("Invalid KAS URL in manifest")
+            return
+        }
+
+        let kasClient = KASRewrapClient(kasURL: kasURL, oauthToken: token)
+        let rewrapResult = try await kasClient.rewrapStandardTDF(
+            manifest: container.manifest,
+            clientPublicKeyPEM: clientPrivateKey.publicKeyPEM,
+        )
+
+        XCTAssertFalse(rewrapResult.wrappedKeys.isEmpty, "Should receive wrapped keys from KAS")
+
+        var reconstructedKeyData: Data?
+        for (_, wrappedKey) in rewrapResult.wrappedKeys.sorted(by: { $0.key < $1.key }) {
+            let unwrappedKey = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
+                privateKeyPEM: clientPrivateKey.privateKeyPEM,
+                wrappedKey: wrappedKey.base64EncodedString(),
+            )
+            let keyData = StandardTDFCrypto.data(from: unwrappedKey)
+
+            if let existing = reconstructedKeyData {
+                reconstructedKeyData = Data(zip(existing, keyData).map { $0 ^ $1 })
+            } else {
+                reconstructedKeyData = keyData
+            }
+        }
+
+        guard let finalKeyData = reconstructedKeyData else {
+            XCTFail("Failed to reconstruct key")
+            return
+        }
+
+        let reconstructedKey = SymmetricKey(data: finalKeyData)
+
+        let decryptor = StandardTDFDecryptor()
+        let decryptedPlaintext = try decryptor.decrypt(container: container, symmetricKey: reconstructedKey)
+
+        XCTAssertEqual(decryptedPlaintext, testPlaintext, "Decrypted plaintext should match original")
+    }
+
+    private func generateTestRSAKeyPair() throws -> (privateKeyPEM: String, publicKeyPEM: String) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
+        task.arguments = ["genrsa", "2048"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+
+        try task.run()
+        task.waitUntilExit()
+
+        let privateKeyPEM = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)!
+
+        let pubTask = Process()
+        pubTask.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
+        pubTask.arguments = ["rsa", "-pubout"]
+
+        let pubPipe = Pipe()
+        let inPipe = Pipe()
+        pubTask.standardInput = inPipe
+        pubTask.standardOutput = pubPipe
+        pubTask.standardError = Pipe()
+
+        try pubTask.run()
+        inPipe.fileHandleForWriting.write(privateKeyPEM.data(using: .utf8)!)
+        try inPipe.fileHandleForWriting.close()
+        pubTask.waitUntilExit()
+
+        let publicKeyPEM = String(data: pubPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)!
+
+        return (privateKeyPEM, publicKeyPEM)
+    }
 }

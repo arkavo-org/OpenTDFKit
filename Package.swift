@@ -25,11 +25,15 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/krzyzanowskim/CryptoSwift", from: "1.8.0"),
+        .package(url: "https://github.com/weichsel/ZIPFoundation", from: "0.9.0"),
     ],
     targets: [
         .target(
             name: "OpenTDFKit",
-            dependencies: ["CryptoSwift"],
+            dependencies: [
+                "CryptoSwift",
+                .product(name: "ZIPFoundation", package: "ZIPFoundation"),
+            ],
             path: "OpenTDFKit",
         ),
         .executableTarget(

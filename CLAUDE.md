@@ -1,6 +1,6 @@
 # OpenTDFKit Guide for Claude
 
-OpenTDFKit is a Swift implementation of the OpenTDF (Trusted Data Format) specification, focusing on the NanoTDF format. It provides a secure framework for encrypting, decrypting, and managing protected data with policy-based access controls in Apple ecosystems.
+OpenTDFKit is a Swift implementation of the OpenTDF (Trusted Data Format) specification, supporting both **NanoTDF** (compact binary format) and **Standard TDF** (ZIP-based format). It provides a secure framework for encrypting, decrypting, and managing protected data with policy-based access controls in Apple ecosystems.
 
 ## Prerequisites
 
@@ -112,16 +112,27 @@ swift build -c release --product OpenTDFKitCLI
 # Decrypt a NanoTDF file
 .build/release/OpenTDFKitCLI decrypt output.ntdf recovered.txt nano
 
+# Encrypt to Standard TDF
+.build/release/OpenTDFKitCLI encrypt input.txt output.tdf tdf
+
+# Decrypt Standard TDF
+.build/release/OpenTDFKitCLI decrypt output.tdf recovered.txt tdf
+
+# Verify TDF structure
+.build/release/OpenTDFKitCLI verify output.tdf
+
 # Check supported features
 .build/release/OpenTDFKitCLI supports nano          # exit 0 (supported)
 .build/release/OpenTDFKitCLI supports nano_ecdsa    # exit 0 (supported)
-.build/release/OpenTDFKitCLI supports ztdf          # exit 1 (not supported)
+.build/release/OpenTDFKitCLI supports tdf           # exit 0 (supported)
+.build/release/OpenTDFKitCLI supports ztdf          # exit 0 (supported)
 ```
 
 ### Environment Configuration
 
 The CLI reads configuration from environment variables (compatible with xtest):
 
+#### NanoTDF Configuration
 ```bash
 # Required for KAS integration
 export CLIENTID=opentdf-client
@@ -134,6 +145,29 @@ export XT_WITH_ECDSA_BINDING=true
 export XT_WITH_PLAINTEXT_POLICY=true
 export XT_WITH_ATTRIBUTES="attr1,attr2"
 export XT_WITH_MIME_TYPE="application/pdf"
+```
+
+#### Standard TDF Configuration
+```bash
+# Required for encryption
+export TDF_KAS_URL=http://localhost:8080/kas
+export TDF_KAS_PUBLIC_KEY_PATH=/path/to/kas-rsa-public.pem  # RSA public key (min 2048-bit)
+export TDF_OUTPUT_SYMMETRIC_KEY_PATH=/path/to/save-key.txt  # Where to save generated key
+
+# Required for decryption (choose one method)
+# Method 1: Offline decryption with symmetric key
+export TDF_SYMMETRIC_KEY_PATH=/path/to/symmetric-key.txt    # Symmetric key from encryption
+
+# Method 2: KAS rewrap decryption (recommended for production)
+export TDF_CLIENT_PRIVATE_KEY_PATH=/path/to/client-private.pem  # RSA private key for unwrapping
+export TDF_CLIENT_PUBLIC_KEY_PATH=/path/to/client-public.pem    # RSA public key for rewrap request
+# Also requires OAuth token (via fresh_token.txt or inline)
+
+# Optional configuration
+export TDF_MIME_TYPE=application/pdf                         # Content MIME type
+export TDF_POLICY_JSON='{"uuid":"...","body":{...}}'         # Custom policy JSON
+export TDF_POLICY_PATH=/path/to/policy.json                  # Or load from file
+export TDF_SPEC_VERSION=4.3.0                                # TDF spec version (default: 4.3.0)
 ```
 
 ### Integration Testing
@@ -165,7 +199,9 @@ otdfctl decrypt test.ntdf --out recovered.txt
 
 ## Project Structure
 
-OpenTDFKit is composed of several key components that work together to implement the NanoTDF specification:
+OpenTDFKit is composed of several key components that work together to implement both NanoTDF and Standard TDF specifications:
+
+### NanoTDF Components
 
 - **KeyStore**: Manages cryptographic keys with support for various elliptic curves. Provides efficient key generation, storage, and retrieval in a thread-safe manner. Supports serialization for key data persistence.
 
@@ -177,7 +213,21 @@ OpenTDFKit is composed of several key components that work together to implement
 
 - **PublicKeyStore**: Manages only public keys for sharing with peers. Allows secure distribution of one-time use TDF keys.
 
-- **KASRewrapClient**: Client for interacting with KAS rewrap endpoints. Implements JWT signing (ES256), PEM parsing, and key unwrapping protocols. Designed with protocol-based architecture for testability.
+- **KASRewrapClient**: Client for interacting with KAS rewrap endpoints. Implements JWT signing (ES256), PEM parsing, and key unwrapping protocols. Supports both NanoTDF (EC key wrapping) and Standard TDF (RSA key wrapping) rewrap requests. Designed with protocol-based architecture for testability.
+
+### Standard TDF Components
+
+- **TDFManifest**: Complete OpenTDF schema data structures for Standard TDF v1.0.0. Includes manifest, payload descriptor, encryption information, key access objects, and integrity information with proper Codable conformance.
+
+- **StandardTDFCrypto**: RSA and AES cryptographic operations for Standard TDF. Implements RSA-2048+ key wrapping with OAEP padding, AES-256-GCM encryption, HMAC-SHA256 for integrity and policy binding. Includes key size validation (minimum 2048 bits).
+
+- **StandardTDFProcessor**: High-level encryption and decryption operations. Handles symmetric key generation, key wrapping, policy binding, segment signatures, and multi-KAS key reconstruction via XOR. Supports both offline decryption (with symmetric key) and KAS rewrap decryption (with RSA key pair).
+
+- **TDFArchive**: ZIP archive I/O using ZIPFoundation. Reads and writes Standard TDF containers with proper `0.manifest.json` and `0.payload` structure. Supports both camelCase (standard) JSON encoding.
+
+- **TrustedDataFormat**: Format abstraction protocol enabling polymorphic handling of both NanoTDF and Standard TDF containers.
+
+- **StandardTDFBuilder/Loader**: Builder pattern for container creation and loader for parsing existing TDF files.
 
 ## Architecture
 
@@ -332,6 +382,47 @@ swift test --filter IntegrationTests
 swift test --configuration release --filter "BenchmarkTests"
 ```
 
+## Format Selection Guide
+
+### When to Use NanoTDF
+
+**Advantages:**
+- Compact binary format (~240-260 bytes overhead)
+- Optimized for small payloads (<10KB)
+- Full KAS integration with rewrap support
+- ECDSA binding available
+- Lower bandwidth requirements
+
+**Use Cases:**
+- IoT device communications
+- Real-time messaging
+- Small file transfers
+- Bandwidth-constrained environments
+
+### When to Use Standard TDF
+
+**Advantages:**
+- Industry-standard ZIP-based format
+- Better for large files (>1KB)
+- Cross-SDK compatibility (with caveats)
+- Extensible with assertions (future)
+- Human-readable manifest (JSON)
+
+**Use Cases:**
+- Document encryption
+- Large file storage
+- Multi-segment files (future)
+- Cross-platform workflows
+
+**File Size Overhead:**
+| Input Size | NanoTDF Overhead | Standard TDF Overhead | Recommendation |
+|-----------|------------------|----------------------|----------------|
+| 10 bytes  | ~250 bytes (2500%) | ~1,110 bytes (11,060%) | NanoTDF |
+| 100 bytes | ~250 bytes (250%) | ~1,110 bytes (1,108%) | NanoTDF |
+| 1 KB      | ~250 bytes (25%) | ~1,110 bytes (111%) | Either |
+| 10 KB     | ~250 bytes (2.5%) | ~1,115 bytes (11%) | Standard TDF |
+| 100 KB    | ~250 bytes (0.25%) | ~1,141 bytes (1.1%) | Standard TDF |
+
 ## Performance Considerations
 
 OpenTDFKit is designed for high-performance cryptographic operations. When implementing features, keep in mind:
@@ -340,6 +431,13 @@ OpenTDFKit is designed for high-performance cryptographic operations. When imple
 - Use contiguous memory where possible for better performance
 - Leverage Swift's value semantics for thread safety without excessive locking
 - Consider the documented performance benchmarks when making changes
+
+### Standard TDF Specific Notes
+
+- **Memory Usage**: Current implementation loads entire payload into memory
+- **Large Files**: For files >100MB, consider external chunking before encryption
+- **Single-Segment**: Only single-segment TDFs currently supported
+- **RSA Operations**: Key wrapping/unwrapping is computationally intensive
 
 ## Version Compatibility
 
