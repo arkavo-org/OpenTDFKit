@@ -56,12 +56,12 @@ public struct StandardTDFEncryptor {
         let segmentSignature = try StandardTDFCrypto.segmentSignatureGMAC(segmentCiphertext: payloadData, symmetricKey: symmetricKey)
         let segmentSignatureBase64 = segmentSignature.base64EncodedString()
 
-        let rootSignature = try StandardTDFCrypto.segmentSignatureGMAC(segmentCiphertext: segmentSignature, symmetricKey: symmetricKey).base64EncodedString()
+        let rootSignature = StandardTDFCrypto.segmentSignature(segmentCiphertext: segmentSignature, symmetricKey: symmetricKey).base64EncodedString()
 
         let method = TDFMethodDescriptor(
             algorithm: "AES-256-GCM",
-            iv: iv.base64EncodedString(),
-            isStreamable: false,
+            iv: "",
+            isStreamable: true,
         )
 
         let segment = TDFSegment(
@@ -71,10 +71,10 @@ public struct StandardTDFEncryptor {
         )
 
         let integrity = TDFIntegrityInformation(
-            rootSignature: TDFRootSignature(alg: "GMAC", sig: rootSignature),
+            rootSignature: TDFRootSignature(alg: "HS256", sig: rootSignature),
             segmentHashAlg: "GMAC",
-            segmentSizeDefault: Int64(plaintext.count),
-            encryptedSegmentSizeDefault: Int64(payloadData.count),
+            segmentSizeDefault: 2097152,
+            encryptedSegmentSizeDefault: 2097180,
             segments: [segment],
         )
 
