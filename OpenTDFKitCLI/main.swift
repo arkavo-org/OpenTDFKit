@@ -294,7 +294,7 @@ struct OpenTDFKitCLI {
         )
 
         let policy = StandardTDFPolicy(json: policyData)
-        let specVersion = env["TDF_SPEC_VERSION"] ?? "1.0.0"
+        let specVersion = env["TDF_SPEC_VERSION"] ?? "4.3.0"
 
         return StandardTDFEncryptionConfiguration(
             kas: kasInfo,

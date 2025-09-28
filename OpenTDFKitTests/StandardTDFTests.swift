@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 @testable import OpenTDFKit
 import XCTest
+@preconcurrency import ZIPFoundation
 
 final class StandardTDFTests: XCTestCase {
     let testPlaintext = "Test data for Standard TDF".data(using: .utf8)!
@@ -220,6 +221,324 @@ final class StandardTDFTests: XCTestCase {
             encryptionInformation: encryptionInfo,
             assertions: nil,
         )
+    }
+
+    func testMalformedZIPArchive() throws {
+        let invalidZIPData = "This is not a ZIP archive".data(using: .utf8)!
+
+        XCTAssertThrowsError(try TDFArchiveReader(data: invalidZIPData)) { error in
+            guard let archiveError = error as? TDFArchiveError else {
+                XCTFail("Expected TDFArchiveError, got \(type(of: error))")
+                return
+            }
+            XCTAssertEqual(archiveError, TDFArchiveError.unreadableArchive)
+        }
+    }
+
+    func testMissingManifestInArchive() throws {
+        let writer = TDFArchiveWriter()
+        let manifest = createTestManifest()
+        let archiveData = try writer.buildArchive(manifest: manifest, payload: testPlaintext)
+
+        guard var archive = try? ZIPFoundation.Archive(data: archiveData, accessMode: .update) else {
+            XCTFail("Could not open test archive")
+            return
+        }
+
+        try archive.remove(archive["0.manifest.json"]!)
+
+        guard let corruptedData = archive.data else {
+            XCTFail("Could not get corrupted archive data")
+            return
+        }
+
+        let reader = try TDFArchiveReader(data: corruptedData)
+        XCTAssertThrowsError(try reader.manifest()) { error in
+            guard let archiveError = error as? TDFArchiveError else {
+                XCTFail("Expected TDFArchiveError, got \(type(of: error))")
+                return
+            }
+            XCTAssertEqual(archiveError, TDFArchiveError.missingManifest)
+        }
+    }
+
+    func testMissingPayloadInArchive() throws {
+        let writer = TDFArchiveWriter()
+        let manifest = createTestManifest()
+        let archiveData = try writer.buildArchive(manifest: manifest, payload: testPlaintext)
+
+        guard var archive = try? ZIPFoundation.Archive(data: archiveData, accessMode: .update) else {
+            XCTFail("Could not open test archive")
+            return
+        }
+
+        try archive.remove(archive["0.payload"]!)
+
+        guard let corruptedData = archive.data else {
+            XCTFail("Could not get corrupted archive data")
+            return
+        }
+
+        let reader = try TDFArchiveReader(data: corruptedData)
+        XCTAssertThrowsError(try reader.payloadData()) { error in
+            guard let archiveError = error as? TDFArchiveError else {
+                XCTFail("Expected TDFArchiveError, got \(type(of: error))")
+                return
+            }
+            XCTAssertEqual(archiveError, TDFArchiveError.missingPayload)
+        }
+    }
+
+    func testTruncatedPayload() throws {
+        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
+        let tooShortPayload = Data([0x01, 0x02, 0x03])
+
+        let manifest = createTestManifest()
+        let container = StandardTDFContainer(manifest: manifest, payload: tooShortPayload)
+
+        let decryptor = StandardTDFDecryptor()
+        XCTAssertThrowsError(try decryptor.decrypt(container: container, symmetricKey: symmetricKey)) { error in
+            guard let decryptError = error as? StandardTDFDecryptError else {
+                XCTFail("Expected StandardTDFDecryptError, got \(type(of: error))")
+                return
+            }
+            XCTAssertEqual(decryptError, StandardTDFDecryptError.malformedPayload)
+        }
+    }
+
+    func testWrongKeyDecryption() throws {
+        let keyPair = try generateTestRSAKeyPair()
+
+        let kasInfo = StandardTDFKasInfo(
+            url: URL(string: "http://localhost:8080/kas")!,
+            publicKeyPEM: keyPair.publicKeyPEM,
+            kid: "test-key",
+        )
+
+        let policy = StandardTDFPolicy(json: """
+        {"uuid":"test","body":{"dataAttributes":[],"dissem":[]}}
+        """.data(using: .utf8)!)
+
+        let config = StandardTDFEncryptionConfiguration(kas: kasInfo, policy: policy)
+
+        let encryptor = StandardTDFEncryptor()
+        let result = try encryptor.encrypt(plaintext: testPlaintext, configuration: config)
+
+        let wrongKey = try StandardTDFCrypto.generateSymmetricKey()
+
+        let decryptor = StandardTDFDecryptor()
+        XCTAssertThrowsError(try decryptor.decrypt(container: result.container, symmetricKey: wrongKey))
+    }
+
+    func testInvalidBase64InWrappedKey() throws {
+        let decryptor = StandardTDFDecryptor()
+        let keyPair = try generateTestRSAKeyPair()
+
+        let kasObject = TDFKeyAccessObject(
+            type: .wrapped,
+            url: "http://localhost:8080/kas",
+            protocolValue: .kas,
+            wrappedKey: "not-valid-base64!!!",
+            policyBinding: TDFPolicyBinding(alg: "HS256", hash: "test"),
+            kid: "test",
+        )
+
+        let method = TDFMethodDescriptor(algorithm: "AES-256-GCM", iv: Data(count: 12).base64EncodedString())
+        let segment = TDFSegment(hash: Data(count: 32).base64EncodedString(), segmentSize: 100)
+        let integrity = TDFIntegrityInformation(
+            rootSignature: TDFRootSignature(alg: "HS256", sig: Data(count: 32).base64EncodedString()),
+            segmentHashAlg: "HS256",
+            segmentSizeDefault: 100,
+            segments: [segment],
+        )
+
+        let encryptionInfo = TDFEncryptionInformation(
+            type: .split,
+            keyAccess: [kasObject],
+            method: method,
+            integrityInformation: integrity,
+            policy: "test",
+        )
+
+        let payload = TDFPayloadDescriptor(
+            type: .reference,
+            url: "0.payload",
+            protocolValue: .zip,
+            isEncrypted: true,
+        )
+
+        let manifest = TDFManifest(
+            schemaVersion: "1.0.0",
+            payload: payload,
+            encryptionInformation: encryptionInfo,
+        )
+
+        let container = StandardTDFContainer(manifest: manifest, payload: Data(count: 100))
+
+        XCTAssertThrowsError(try decryptor.decrypt(container: container, privateKeyPEM: keyPair.privateKeyPEM))
+    }
+
+    func testWeakRSAKeyRejection() throws {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
+        task.arguments = ["genrsa", "1024"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+
+        try task.run()
+        task.waitUntilExit()
+
+        let privateKeyPEM = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)!
+
+        let pubTask = Process()
+        pubTask.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
+        pubTask.arguments = ["rsa", "-pubout"]
+
+        let pubPipe = Pipe()
+        let inPipe = Pipe()
+        pubTask.standardInput = inPipe
+        pubTask.standardOutput = pubPipe
+        pubTask.standardError = Pipe()
+
+        try pubTask.run()
+        inPipe.fileHandleForWriting.write(privateKeyPEM.data(using: .utf8)!)
+        try inPipe.fileHandleForWriting.close()
+        pubTask.waitUntilExit()
+
+        let weakPublicKeyPEM = String(data: pubPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)!
+
+        XCTAssertThrowsError(try StandardTDFCrypto.loadRSAPublicKey(fromPEM: weakPublicKeyPEM)) { error in
+            guard let cryptoError = error as? StandardTDFCryptoError,
+                  case let .weakKey(keySize, minimum) = cryptoError else {
+                XCTFail("Expected weakKey error, got \(error)")
+                return
+            }
+            XCTAssertEqual(keySize, 1024)
+            XCTAssertEqual(minimum, 2048)
+        }
+    }
+
+    func testRSA3072KeyWrapping() throws {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
+        task.arguments = ["genrsa", "3072"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+
+        try task.run()
+        task.waitUntilExit()
+
+        let privateKeyPEM = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)!
+
+        let pubTask = Process()
+        pubTask.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
+        pubTask.arguments = ["rsa", "-pubout"]
+
+        let pubPipe = Pipe()
+        let inPipe = Pipe()
+        pubTask.standardInput = inPipe
+        pubTask.standardOutput = pubPipe
+        pubTask.standardError = Pipe()
+
+        try pubTask.run()
+        inPipe.fileHandleForWriting.write(privateKeyPEM.data(using: .utf8)!)
+        try inPipe.fileHandleForWriting.close()
+        pubTask.waitUntilExit()
+
+        let publicKeyPEM = String(data: pubPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)!
+
+        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
+        let wrappedKey = try StandardTDFCrypto.wrapSymmetricKeyWithRSA(
+            publicKeyPEM: publicKeyPEM,
+            symmetricKey: symmetricKey,
+        )
+
+        XCTAssertFalse(wrappedKey.isEmpty)
+
+        let unwrappedKey = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
+            privateKeyPEM: privateKeyPEM,
+            wrappedKey: wrappedKey,
+        )
+
+        let originalKeyData = symmetricKey.withUnsafeBytes { Data($0) }
+        let unwrappedKeyData = unwrappedKey.withUnsafeBytes { Data($0) }
+
+        XCTAssertEqual(originalKeyData, unwrappedKeyData)
+    }
+
+    func testMultiKASKeyReconstruction() throws {
+        let keyData1 = Data([0x01, 0x02, 0x03, 0x04])
+        let keyData2 = Data([0x05, 0x06, 0x07, 0x08])
+        let key1 = SymmetricKey(data: keyData1)
+        let key2 = SymmetricKey(data: keyData2)
+
+        let keyPair = try generateTestRSAKeyPair()
+
+        let wrapped1 = try StandardTDFCrypto.wrapSymmetricKeyWithRSA(
+            publicKeyPEM: keyPair.publicKeyPEM,
+            symmetricKey: key1,
+        )
+
+        let wrapped2 = try StandardTDFCrypto.wrapSymmetricKeyWithRSA(
+            publicKeyPEM: keyPair.publicKeyPEM,
+            symmetricKey: key2,
+        )
+
+        let kasObject1 = TDFKeyAccessObject(
+            type: .wrapped,
+            url: "http://localhost:8080/kas",
+            protocolValue: .kas,
+            wrappedKey: wrapped1,
+            policyBinding: TDFPolicyBinding(alg: "HS256", hash: "test"),
+            kid: "kas-1",
+        )
+
+        let kasObject2 = TDFKeyAccessObject(
+            type: .wrapped,
+            url: "http://localhost:8080/kas",
+            protocolValue: .kas,
+            wrappedKey: wrapped2,
+            policyBinding: TDFPolicyBinding(alg: "HS256", hash: "test"),
+            kid: "kas-2",
+        )
+
+        let method = TDFMethodDescriptor(algorithm: "AES-256-GCM", iv: Data(count: 12).base64EncodedString())
+        let segment = TDFSegment(hash: Data(count: 32).base64EncodedString(), segmentSize: 100)
+        let integrity = TDFIntegrityInformation(
+            rootSignature: TDFRootSignature(alg: "HS256", sig: Data(count: 32).base64EncodedString()),
+            segmentHashAlg: "HS256",
+            segmentSizeDefault: 100,
+            segments: [segment],
+        )
+
+        let encryptionInfo = TDFEncryptionInformation(
+            type: .split,
+            keyAccess: [kasObject1, kasObject2],
+            method: method,
+            integrityInformation: integrity,
+            policy: "test",
+        )
+
+        let payload = TDFPayloadDescriptor(
+            type: .reference,
+            url: "0.payload",
+            protocolValue: .zip,
+            isEncrypted: true,
+        )
+
+        let manifest = TDFManifest(
+            schemaVersion: "1.0.0",
+            payload: payload,
+            encryptionInformation: encryptionInfo,
+        )
+
+        let expectedXOR = Data(zip(keyData1, keyData2).map { $0 ^ $1 })
+
+        XCTAssertEqual(expectedXOR, Data([0x04, 0x04, 0x04, 0x0C]))
     }
 
     private func generateTestRSAKeyPair() throws -> (publicKeyPEM: String, privateKeyPEM: String) {

@@ -41,6 +41,12 @@ public enum StandardTDFCrypto {
         return Data(hmac)
     }
 
+    public static func segmentSignatureGMAC(segmentCiphertext: Data, symmetricKey: SymmetricKey) throws -> Data {
+        let nonce = try AES.GCM.Nonce(data: Data(count: 12))
+        let sealed = try AES.GCM.seal(Data(), using: symmetricKey, nonce: nonce, authenticating: segmentCiphertext)
+        return Data(sealed.tag)
+    }
+
     public static func wrapSymmetricKeyWithRSA(publicKeyPEM: String, symmetricKey: SymmetricKey) throws -> String {
         let keyData = symmetricKey.withUnsafeBytes { rawBuffer -> Data in
             Data(rawBuffer)
@@ -97,6 +103,7 @@ public enum StandardTDFCrypto {
             throw StandardTDFCryptoError.invalidKeyData(error?.takeRetainedValue())
         }
 
+        try validateRSAKeySize(key, minimumBits: 2048)
         return key
     }
 
@@ -124,7 +131,19 @@ public enum StandardTDFCrypto {
             throw StandardTDFCryptoError.invalidKeyData(error?.takeRetainedValue())
         }
 
+        try validateRSAKeySize(key, minimumBits: 2048)
         return key
+    }
+
+    private static func validateRSAKeySize(_ key: SecKey, minimumBits: Int) throws {
+        guard let attributes = SecKeyCopyAttributes(key) as? [String: Any],
+              let keySize = attributes[kSecAttrKeySizeInBits as String] as? Int else {
+            throw StandardTDFCryptoError.cannotDetermineKeySize
+        }
+
+        guard keySize >= minimumBits else {
+            throw StandardTDFCryptoError.weakKey(keySize: keySize, minimum: minimumBits)
+        }
     }
 }
 
@@ -134,6 +153,8 @@ public enum StandardTDFCryptoError: Error, CustomStringConvertible {
     case keyWrapFailed(CFError?)
     case keyUnwrapFailed(CFError?)
     case invalidWrappedKey
+    case weakKey(keySize: Int, minimum: Int)
+    case cannotDetermineKeySize
 
     public var description: String {
         switch self {
@@ -156,6 +177,10 @@ public enum StandardTDFCryptoError: Error, CustomStringConvertible {
             return "RSA key unwrapping failed"
         case .invalidWrappedKey:
             return "Invalid wrapped key: unable to decode base64 content"
+        case let .weakKey(keySize, minimum):
+            return "RSA key size \(keySize) bits is too weak. Minimum required: \(minimum) bits"
+        case .cannotDetermineKeySize:
+            return "Unable to determine RSA key size from key attributes"
         }
     }
 }

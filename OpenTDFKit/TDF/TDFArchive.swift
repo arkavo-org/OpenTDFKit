@@ -44,7 +44,6 @@ public struct TDFArchiveReader {
     public func manifest(maxSize: Int = TDFArchiveReader.defaultManifestMaxSize) throws -> TDFManifest {
         let data = try manifestData(maxSize: maxSize)
         let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(TDFManifest.self, from: data)
     }
 
@@ -91,7 +90,6 @@ public struct TDFArchiveWriter {
             throw TDFArchiveError.creationFailed
         }
         let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
         encoder.outputFormatting = [.sortedKeys]
         let manifestData = try encoder.encode(manifest)
         try addEntry(named: manifestEntryName, data: manifestData, to: archive)
@@ -126,7 +124,7 @@ public struct TDFArchiveWriter {
     }
 }
 
-public enum TDFArchiveError: Error, CustomStringConvertible {
+public enum TDFArchiveError: Error, CustomStringConvertible, Equatable {
     case unreadableArchive
     case missingManifest
     case missingPayload

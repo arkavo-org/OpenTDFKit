@@ -33,7 +33,7 @@ public struct StandardTDFEncryptionConfiguration: Sendable {
     public let mimeType: String?
     public let tdfSpecVersion: String
 
-    public init(kas: StandardTDFKasInfo, policy: StandardTDFPolicy, mimeType: String? = nil, tdfSpecVersion: String = "1.0.0") {
+    public init(kas: StandardTDFKasInfo, policy: StandardTDFPolicy, mimeType: String? = nil, tdfSpecVersion: String = "4.3.0") {
         self.kas = kas
         self.policy = policy
         self.mimeType = mimeType
@@ -53,10 +53,10 @@ public struct StandardTDFEncryptor {
         let policyBinding = StandardTDFCrypto.policyBinding(policy: configuration.policy.json, symmetricKey: symmetricKey)
         let wrappedKey = try StandardTDFCrypto.wrapSymmetricKeyWithRSA(publicKeyPEM: configuration.kas.publicKeyPEM, symmetricKey: symmetricKey)
 
-        let segmentSignature = StandardTDFCrypto.segmentSignature(segmentCiphertext: payloadData, symmetricKey: symmetricKey)
+        let segmentSignature = try StandardTDFCrypto.segmentSignatureGMAC(segmentCiphertext: payloadData, symmetricKey: symmetricKey)
         let segmentSignatureBase64 = segmentSignature.base64EncodedString()
 
-        let rootSignature = StandardTDFCrypto.segmentSignature(segmentCiphertext: segmentSignature, symmetricKey: symmetricKey).base64EncodedString()
+        let rootSignature = try StandardTDFCrypto.segmentSignatureGMAC(segmentCiphertext: segmentSignature, symmetricKey: symmetricKey).base64EncodedString()
 
         let method = TDFMethodDescriptor(
             algorithm: "AES-256-GCM",
@@ -71,8 +71,8 @@ public struct StandardTDFEncryptor {
         )
 
         let integrity = TDFIntegrityInformation(
-            rootSignature: TDFRootSignature(alg: "HS256", sig: rootSignature),
-            segmentHashAlg: "HS256",
+            rootSignature: TDFRootSignature(alg: "GMAC", sig: rootSignature),
+            segmentHashAlg: "GMAC",
             segmentSizeDefault: Int64(plaintext.count),
             encryptedSegmentSizeDefault: Int64(payloadData.count),
             segments: [segment],
@@ -87,7 +87,7 @@ public struct StandardTDFEncryptor {
             encryptedMetadata: nil,
             kid: configuration.kas.kid,
             sid: nil,
-            schemaVersion: configuration.kas.schemaVersion,
+            schemaVersion: configuration.kas.schemaVersion ?? "1.0",
             ephemeralPublicKey: nil,
         )
 
@@ -201,7 +201,7 @@ public struct StandardTDFDecryptor {
     }
 }
 
-public enum StandardTDFDecryptError: Error, CustomStringConvertible {
+public enum StandardTDFDecryptError: Error, CustomStringConvertible, Equatable {
     case missingKeyAccess
     case malformedPayload
     case keyShareSizeMismatch
