@@ -121,7 +121,7 @@ final class StandardTDFTests: XCTestCase {
             kid: "test-key-1",
         )
 
-        let policy = StandardTDFPolicy(json: """
+        let policy = try StandardTDFPolicy(json: """
         {
             "uuid": "test-policy",
             "body": {
@@ -315,7 +315,7 @@ final class StandardTDFTests: XCTestCase {
             kid: "test-key",
         )
 
-        let policy = StandardTDFPolicy(json: """
+        let policy = try StandardTDFPolicy(json: """
         {"uuid":"test","body":{"dataAttributes":[],"dissem":[]}}
         """.data(using: .utf8)!)
 
@@ -574,5 +574,69 @@ final class StandardTDFTests: XCTestCase {
         let publicKeyPEM = String(data: pubPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)!
 
         return (publicKeyPEM, privateKeyPEM)
+    }
+
+    func testPerformanceEncryption1KB() throws {
+        let plaintext = Data(repeating: 0x41, count: 1024)
+        let keyPair = try generateTestRSAKeyPair()
+        let kasInfo = StandardTDFKasInfo(url: URL(string: "http://localhost:8080/kas")!, publicKeyPEM: keyPair.publicKeyPEM, kid: "perf-test")
+        let policy = try StandardTDFPolicy(json: """
+        {"uuid":"perf-test","body":{"dataAttributes":[],"dissem":[]}}
+        """.data(using: .utf8)!)
+        let config = StandardTDFEncryptionConfiguration(kas: kasInfo, policy: policy)
+        let encryptor = StandardTDFEncryptor()
+
+        measure {
+            _ = try? encryptor.encrypt(plaintext: plaintext, configuration: config)
+        }
+    }
+
+    func testPerformanceEncryption100KB() throws {
+        let plaintext = Data(repeating: 0x41, count: 100 * 1024)
+        let keyPair = try generateTestRSAKeyPair()
+        let kasInfo = StandardTDFKasInfo(url: URL(string: "http://localhost:8080/kas")!, publicKeyPEM: keyPair.publicKeyPEM, kid: "perf-test")
+        let policy = try StandardTDFPolicy(json: """
+        {"uuid":"perf-test","body":{"dataAttributes":[],"dissem":[]}}
+        """.data(using: .utf8)!)
+        let config = StandardTDFEncryptionConfiguration(kas: kasInfo, policy: policy)
+        let encryptor = StandardTDFEncryptor()
+
+        measure {
+            _ = try? encryptor.encrypt(plaintext: plaintext, configuration: config)
+        }
+    }
+
+    func testPerformanceDecryption1KB() throws {
+        let plaintext = Data(repeating: 0x41, count: 1024)
+        let keyPair = try generateTestRSAKeyPair()
+        let kasInfo = StandardTDFKasInfo(url: URL(string: "http://localhost:8080/kas")!, publicKeyPEM: keyPair.publicKeyPEM, kid: "perf-test")
+        let policy = try StandardTDFPolicy(json: """
+        {"uuid":"perf-test","body":{"dataAttributes":[],"dissem":[]}}
+        """.data(using: .utf8)!)
+        let config = StandardTDFEncryptionConfiguration(kas: kasInfo, policy: policy)
+        let encryptor = StandardTDFEncryptor()
+        let result = try encryptor.encrypt(plaintext: plaintext, configuration: config)
+        let decryptor = StandardTDFDecryptor()
+
+        measure {
+            _ = try? decryptor.decrypt(container: result.container, symmetricKey: result.symmetricKey)
+        }
+    }
+
+    func testPerformanceDecryption100KB() throws {
+        let plaintext = Data(repeating: 0x41, count: 100 * 1024)
+        let keyPair = try generateTestRSAKeyPair()
+        let kasInfo = StandardTDFKasInfo(url: URL(string: "http://localhost:8080/kas")!, publicKeyPEM: keyPair.publicKeyPEM, kid: "perf-test")
+        let policy = try StandardTDFPolicy(json: """
+        {"uuid":"perf-test","body":{"dataAttributes":[],"dissem":[]}}
+        """.data(using: .utf8)!)
+        let config = StandardTDFEncryptionConfiguration(kas: kasInfo, policy: policy)
+        let encryptor = StandardTDFEncryptor()
+        let result = try encryptor.encrypt(plaintext: plaintext, configuration: config)
+        let decryptor = StandardTDFDecryptor()
+
+        measure {
+            _ = try? decryptor.decrypt(container: result.container, symmetricKey: result.symmetricKey)
+        }
     }
 }

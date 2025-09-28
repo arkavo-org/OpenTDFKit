@@ -18,12 +18,51 @@ public struct StandardTDFKasInfo: Sendable {
 public struct StandardTDFPolicy: Sendable {
     public let json: Data
 
-    public init(json: Data) {
+    public init(json: Data) throws {
+        try Self.validate(json)
         self.json = json
     }
 
     public var base64String: String {
         json.base64EncodedString()
+    }
+
+    private static func validate(_ policyJSON: Data) throws {
+        guard let policyObject = try? JSONSerialization.jsonObject(with: policyJSON) as? [String: Any] else {
+            throw StandardTDFPolicyError.invalidJSON
+        }
+
+        guard policyObject["uuid"] != nil else {
+            throw StandardTDFPolicyError.missingUUID
+        }
+
+        guard let body = policyObject["body"] as? [String: Any] else {
+            throw StandardTDFPolicyError.missingBody
+        }
+
+        if body["dataAttributes"] == nil, body["dissem"] == nil {
+            throw StandardTDFPolicyError.emptyPolicy
+        }
+    }
+}
+
+public enum StandardTDFPolicyError: Error, CustomStringConvertible {
+    case invalidJSON
+    case missingUUID
+    case missingBody
+    case emptyPolicy
+
+    public var description: String {
+        switch self {
+        case .invalidJSON:
+            "Policy must be valid JSON object"
+        case .missingUUID:
+            "Policy must contain 'uuid' field"
+        case .missingBody:
+            "Policy must contain 'body' field"
+        case .emptyPolicy:
+            "Policy body must contain 'dataAttributes' or 'dissem' fields"
+        }
     }
 }
 

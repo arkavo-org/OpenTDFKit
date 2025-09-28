@@ -29,6 +29,9 @@ public struct TDFArchiveReader {
         guard let entry = archive[manifestEntryName] else {
             throw TDFArchiveError.missingManifest
         }
+
+        try validateEntryPath(entry.path)
+
         var total = 0
         var result = Data()
         let _ = try archive.extract(entry) { chunk in
@@ -58,6 +61,9 @@ public struct TDFArchiveReader {
         guard let entry = archive[payloadEntryName] else {
             throw TDFArchiveError.missingPayload
         }
+
+        try validateEntryPath(entry.path)
+
         var result = Data(capacity: Int(entry.uncompressedSize))
         let _ = try archive.extract(entry) { chunk in
             result.append(chunk)
@@ -69,8 +75,22 @@ public struct TDFArchiveReader {
         guard let entry = archive[payloadEntryName] else {
             throw TDFArchiveError.missingPayload
         }
+
+        try validateEntryPath(entry.path)
+
         _ = try archive.extract(entry) { chunk in
             try handle.write(contentsOf: chunk)
+        }
+    }
+
+    private func validateEntryPath(_ path: String) throws {
+        if path.contains("../") || path.hasPrefix("/") || path.contains("\\") {
+            throw TDFArchiveError.maliciousPath
+        }
+
+        let normalizedPath = path.replacingOccurrences(of: "//", with: "/")
+        if normalizedPath != path {
+            throw TDFArchiveError.maliciousPath
         }
     }
 }
@@ -130,6 +150,7 @@ public enum TDFArchiveError: Error, CustomStringConvertible, Equatable {
     case missingPayload
     case manifestTooLarge
     case creationFailed
+    case maliciousPath
 
     public var description: String {
         switch self {
@@ -143,6 +164,8 @@ public enum TDFArchiveError: Error, CustomStringConvertible, Equatable {
             "Manifest exceeds maximum allowed size"
         case .creationFailed:
             "Failed to create TDF archive"
+        case .maliciousPath:
+            "Archive contains unsafe path: path traversal detected"
         }
     }
 }

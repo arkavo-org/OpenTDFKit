@@ -332,7 +332,7 @@ final class IntegrationTests: XCTestCase {
             schemaVersion: "1.0",
         )
 
-        let policy = StandardTDFPolicy(json: policyJSON)
+        let policy = try StandardTDFPolicy(json: policyJSON)
         let configuration = StandardTDFEncryptionConfiguration(
             kas: kasInfo,
             policy: policy,
