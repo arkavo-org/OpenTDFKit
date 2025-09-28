@@ -137,7 +137,8 @@ public enum StandardTDFCrypto {
 
     private static func validateRSAKeySize(_ key: SecKey, minimumBits: Int) throws {
         guard let attributes = SecKeyCopyAttributes(key) as? [String: Any],
-              let keySize = attributes[kSecAttrKeySizeInBits as String] as? Int else {
+              let keySize = attributes[kSecAttrKeySizeInBits as String] as? Int
+        else {
             throw StandardTDFCryptoError.cannotDetermineKeySize
         }
 

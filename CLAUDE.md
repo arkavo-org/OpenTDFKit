@@ -165,7 +165,7 @@ export TDF_CLIENT_PUBLIC_KEY_PATH=/path/to/client-public.pem
 export TDF_MIME_TYPE=application/pdf                         # Content MIME type
 export TDF_POLICY_JSON='{"uuid":"...","body":{...}}'         # Custom policy JSON
 export TDF_POLICY_PATH=/path/to/policy.json                  # Or load from file
-export TDF_SPEC_VERSION=1.0.0                                # TDF spec version (default: 1.0.0)
+export TDF_SPEC_VERSION=4.3.0                                # TDF spec version (default: 4.3.0)
 ```
 
 ### Integration Testing

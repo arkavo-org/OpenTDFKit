@@ -411,7 +411,8 @@ final class StandardTDFTests: XCTestCase {
 
         XCTAssertThrowsError(try StandardTDFCrypto.loadRSAPublicKey(fromPEM: weakPublicKeyPEM)) { error in
             guard let cryptoError = error as? StandardTDFCryptoError,
-                  case let .weakKey(keySize, minimum) = cryptoError else {
+                  case let .weakKey(keySize, minimum) = cryptoError
+            else {
                 XCTFail("Expected weakKey error, got \(error)")
                 return
             }

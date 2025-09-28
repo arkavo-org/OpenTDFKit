@@ -73,8 +73,8 @@ public struct StandardTDFEncryptor {
         let integrity = TDFIntegrityInformation(
             rootSignature: TDFRootSignature(alg: "HS256", sig: rootSignature),
             segmentHashAlg: "GMAC",
-            segmentSizeDefault: 2097152,
-            encryptedSegmentSizeDefault: 2097180,
+            segmentSizeDefault: 2_097_152,
+            encryptedSegmentSizeDefault: 2_097_180,
             segments: [segment],
         )
 
