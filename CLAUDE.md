@@ -154,12 +154,14 @@ export TDF_KAS_URL=http://localhost:8080/kas
 export TDF_KAS_PUBLIC_KEY_PATH=/path/to/kas-rsa-public.pem  # RSA public key (min 2048-bit)
 export TDF_OUTPUT_SYMMETRIC_KEY_PATH=/path/to/save-key.txt  # Where to save generated key
 
-# Required for decryption
+# Required for decryption (choose one method)
+# Method 1: Offline decryption with symmetric key
 export TDF_SYMMETRIC_KEY_PATH=/path/to/symmetric-key.txt    # Symmetric key from encryption
 
-# Optional for future KAS rewrap support
-export TDF_CLIENT_PRIVATE_KEY_PATH=/path/to/client-private.pem
-export TDF_CLIENT_PUBLIC_KEY_PATH=/path/to/client-public.pem
+# Method 2: KAS rewrap decryption (recommended for production)
+export TDF_CLIENT_PRIVATE_KEY_PATH=/path/to/client-private.pem  # RSA private key for unwrapping
+export TDF_CLIENT_PUBLIC_KEY_PATH=/path/to/client-public.pem    # RSA public key for rewrap request
+# Also requires OAuth token (via fresh_token.txt or inline)
 
 # Optional configuration
 export TDF_MIME_TYPE=application/pdf                         # Content MIME type
@@ -211,7 +213,7 @@ OpenTDFKit is composed of several key components that work together to implement
 
 - **PublicKeyStore**: Manages only public keys for sharing with peers. Allows secure distribution of one-time use TDF keys.
 
-- **KASRewrapClient**: Client for interacting with KAS rewrap endpoints. Implements JWT signing (ES256), PEM parsing, and key unwrapping protocols. Designed with protocol-based architecture for testability.
+- **KASRewrapClient**: Client for interacting with KAS rewrap endpoints. Implements JWT signing (ES256), PEM parsing, and key unwrapping protocols. Supports both NanoTDF (EC key wrapping) and Standard TDF (RSA key wrapping) rewrap requests. Designed with protocol-based architecture for testability.
 
 ### Standard TDF Components
 
@@ -219,7 +221,7 @@ OpenTDFKit is composed of several key components that work together to implement
 
 - **StandardTDFCrypto**: RSA and AES cryptographic operations for Standard TDF. Implements RSA-2048+ key wrapping with OAEP padding, AES-256-GCM encryption, HMAC-SHA256 for integrity and policy binding. Includes key size validation (minimum 2048 bits).
 
-- **StandardTDFProcessor**: High-level encryption and decryption operations. Handles symmetric key generation, key wrapping, policy binding, segment signatures, and multi-KAS key reconstruction via XOR.
+- **StandardTDFProcessor**: High-level encryption and decryption operations. Handles symmetric key generation, key wrapping, policy binding, segment signatures, and multi-KAS key reconstruction via XOR. Supports both offline decryption (with symmetric key) and KAS rewrap decryption (with RSA key pair).
 
 - **TDFArchive**: ZIP archive I/O using ZIPFoundation. Reads and writes Standard TDF containers with proper `0.manifest.json` and `0.payload` structure. Supports both camelCase (standard) JSON encoding.
 

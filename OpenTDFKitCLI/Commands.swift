@@ -171,10 +171,6 @@ enum Commands {
                 clientPublicKeyPEM: clientPublicKeyPEM,
             )
 
-            if let sessionKey = result.sessionPublicKeyPEM, !sessionKey.isEmpty {
-                throw DecryptError.standardTDFUnsupported
-            }
-
             for (kaoIdentifier, wrappedKey) in result.wrappedKeys {
                 aggregatedWrappedKeys[kaoIdentifier] = wrappedKey
             }
@@ -673,7 +669,6 @@ enum DecryptError: Error, CustomStringConvertible {
     case keyFormatError
     case invalidFormat
     case missingSymmetricMaterial
-    case standardTDFUnsupported
     case missingWrappedKey
     case invalidWrappedKeyFormat
 
@@ -685,7 +680,6 @@ enum DecryptError: Error, CustomStringConvertible {
         case .keyFormatError: "Invalid key format"
         case .invalidFormat: "Invalid NanoTDF format"
         case .missingSymmetricMaterial: "Provide TDF_SYMMETRIC_KEY_PATH or TDF_PRIVATE_KEY_PATH to decrypt standard TDF files"
-        case .standardTDFUnsupported: "Standard TDF operation not yet supported"
         case .missingWrappedKey: "KAS response missing wrapped key"
         case .invalidWrappedKeyFormat: "Key share length mismatch in multi-share TDF"
         }
