@@ -487,7 +487,11 @@ public struct StandardTDFDecryptor {
         let loader = StandardTDFLoader()
         let container = try loader.load(from: inputURL)
 
-        let segments = container.manifest.encryptionInformation.integrityInformation.segments.enumerated().map { index, seg in
+        guard let integrityInfo = container.manifest.encryptionInformation.integrityInformation else {
+            throw StandardTDFDecryptError.missingIntegrityInformation
+        }
+
+        let segments = integrityInfo.segments.enumerated().map { index, seg in
             StreamingStandardTDFCrypto.EncryptedSegment(
                 segmentIndex: index,
                 plaintextSize: seg.segmentSize,
@@ -570,6 +574,7 @@ public enum StandardTDFDecryptError: Error, CustomStringConvertible, Equatable {
     case missingKeyAccess
     case malformedPayload
     case keyShareSizeMismatch
+    case missingIntegrityInformation
 
     public var description: String {
         switch self {
@@ -579,6 +584,8 @@ public enum StandardTDFDecryptError: Error, CustomStringConvertible, Equatable {
             "Malformed encrypted payload: insufficient data for IV and authentication tag"
         case .keyShareSizeMismatch:
             "Key share size mismatch: all key shares must have the same length for XOR reconstruction"
+        case .missingIntegrityInformation:
+            "Multi-segment decryption requires integrity information with segment metadata"
         }
     }
 }

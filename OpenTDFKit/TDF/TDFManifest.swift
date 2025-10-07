@@ -71,14 +71,14 @@ public struct TDFEncryptionInformation: Codable, Sendable {
     public var type: KeyAccessType
     public var keyAccess: [TDFKeyAccessObject]
     public var method: TDFMethodDescriptor
-    public var integrityInformation: TDFIntegrityInformation
+    public var integrityInformation: TDFIntegrityInformation?
     public var policy: String
 
     public init(
         type: KeyAccessType,
         keyAccess: [TDFKeyAccessObject],
         method: TDFMethodDescriptor,
-        integrityInformation: TDFIntegrityInformation,
+        integrityInformation: TDFIntegrityInformation? = nil,
         policy: String,
     ) {
         self.type = type
@@ -190,6 +190,17 @@ public struct TDFIntegrityInformation: Codable, Sendable {
         self.segmentSizeDefault = segmentSizeDefault
         self.encryptedSegmentSizeDefault = encryptedSegmentSizeDefault
         self.segments = segments
+    }
+
+    /// Minimal integrity information for simple use cases without segment hashing
+    public static var minimal: TDFIntegrityInformation {
+        TDFIntegrityInformation(
+            rootSignature: TDFRootSignature(alg: "HS256", sig: ""),
+            segmentHashAlg: "GMAC",
+            segmentSizeDefault: 0,
+            encryptedSegmentSizeDefault: nil,
+            segments: [],
+        )
     }
 }
 

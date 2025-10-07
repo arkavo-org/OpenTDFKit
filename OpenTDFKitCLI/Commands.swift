@@ -102,11 +102,14 @@ enum Commands {
         print("  Key Access Objects: \(enc.keyAccess.count)")
         print("  Symmetric Algorithm: \(enc.method.algorithm)")
 
-        let integrity = enc.integrityInformation
-        print("\nIntegrity Information:")
-        print("  Segment Hash Alg: \(integrity.segmentHashAlg)")
-        print("  Default Segment Size: \(integrity.segmentSizeDefault)")
-        print("  Segments: \(integrity.segments.count)")
+        if let integrity = enc.integrityInformation {
+            print("\nIntegrity Information:")
+            print("  Segment Hash Alg: \(integrity.segmentHashAlg)")
+            print("  Default Segment Size: \(integrity.segmentSizeDefault)")
+            print("  Segments: \(integrity.segments.count)")
+        } else {
+            print("\nIntegrity Information: None")
+        }
 
         if let assertions = manifest.assertions {
             print("\nAssertions: \(assertions.count)")
