@@ -125,6 +125,18 @@ public struct TDFArchiveWriter {
         return try buildArchive(manifest: manifest, payload: payloadData)
     }
 
+    /// Build archive directly to file, avoiding memory overhead for large payloads
+    public func buildArchiveToFile(manifest: TDFManifest, payload: Data, outputURL: URL) throws {
+        let archiveData = try buildArchive(manifest: manifest, payload: payload)
+        try archiveData.write(to: outputURL)
+    }
+
+    /// Build archive directly to file from payload file, avoiding double memory load
+    public func buildArchiveToFile(manifest: TDFManifest, payloadURL: URL, outputURL: URL) throws {
+        let archiveData = try buildArchive(manifest: manifest, payloadURL: payloadURL)
+        try archiveData.write(to: outputURL)
+    }
+
     private func addEntry(named name: String, data: Data, to archive: ZIPFoundation.Archive) throws {
         try archive.addEntry(
             with: name,

@@ -59,7 +59,7 @@ final class StreamingBenchmarkTests: XCTestCase {
         )
         let encryptionTime = Date().timeIntervalSince(startTime)
 
-        XCTAssertGreaterThan(result.container.manifest.encryptionInformation.integrityInformation.segments.count, 1)
+        XCTAssertGreaterThan(result.container.manifest.encryptionInformation.integrityInformation?.segments.count ?? 0, 1)
         print("Multi-segment encryption (2MB/5MB/25MB): \(String(format: "%.2f", encryptionTime))s")
 
         let decryptedURL = temporaryFileURL(extension: "dat")
@@ -108,7 +108,7 @@ final class StreamingBenchmarkTests: XCTestCase {
             segmentSizes: segmentSizes,
         )
 
-        XCTAssertEqual(result.container.manifest.encryptionInformation.integrityInformation.segments.count, segmentSizes.count)
+        XCTAssertEqual(result.container.manifest.encryptionInformation.integrityInformation?.segments.count, segmentSizes.count)
 
         let decryptedURL = temporaryFileURL(extension: "dat")
         defer { try? FileManager.default.removeItem(at: decryptedURL) }
