@@ -15,7 +15,7 @@ This guide covers breaking changes across all OpenTDFKit versions.
 | Old Name (v3.x) | New Name (v4.0) |
 |----------------|-----------------|
 | `StandardTDFContainer` | `TDFContainer` |
-| `TDFEncryptor` | `TDFEncryptor` |
+| `StandardTDFEncryptor` | `TDFEncryptor` |
 | `StandardTDFDecryptor` | `TDFDecryptor` |
 | `StandardTDFEncryptionResult` | `TDFEncryptionResult` |
 | `StandardTDFEncryptionConfiguration` | `TDFEncryptionConfiguration` |
