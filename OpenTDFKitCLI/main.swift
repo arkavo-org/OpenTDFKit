@@ -191,8 +191,8 @@ struct OpenTDFKitCLI {
         }
 
         let data = try Data(contentsOf: fileURL)
-        if Commands.isLikelyStandardTDF(data: data) {
-            try Commands.verifyStandardTDF(data: data, filename: fileURL.lastPathComponent)
+        if Commands.isLikelyArchiveTDF(data: data) {
+            try Commands.verifyTDF(data: data, filename: fileURL.lastPathComponent)
         } else {
             try Commands.verifyNanoTDF(data: data, filename: fileURL.lastPathComponent)
         }
@@ -227,7 +227,7 @@ struct OpenTDFKitCLI {
         let streamingThreshold: Int64 = 10 * 1024 * 1024
 
         let outputData: Data
-        var standardTDFResult: StandardTDFEncryptionResult?
+        var standardTDFResult: TDFEncryptionResult?
         switch format {
         case .nano:
             let inputData = try Data(contentsOf: inputURL)
@@ -242,12 +242,12 @@ struct OpenTDFKitCLI {
                 useECDSA: true,
             )
         case .tdf, .ztdf:
-            let configuration = try buildStandardTDFConfiguration(for: inputURL)
+            let configuration = try buildTDFConfiguration(for: inputURL)
 
             if let segmentString = segmentsFlag.value {
                 let segmentSizes = try parseSegmentSizes(segmentString)
                 print("Using multi-segment encryption with sizes: \(segmentSizes.map { "\($0 / 1024 / 1024)MB" }.joined(separator: ", "))")
-                let encryptor = StandardTDFEncryptor()
+                let encryptor = TDFEncryptor()
                 standardTDFResult = try encryptor.encryptFileMultiSegment(
                     inputURL: inputURL,
                     outputURL: outputURL,
@@ -256,9 +256,9 @@ struct OpenTDFKitCLI {
                 )
                 outputData = try Data(contentsOf: outputURL)
             } else if fileSize > streamingThreshold || chunkSizeFlag.found {
-                let chunkSize = try chunkSizeFlag.value.map { try parseChunkSize($0) } ?? StreamingStandardTDFCrypto.defaultChunkSize
+                let chunkSize = try chunkSizeFlag.value.map { try parseChunkSize($0) } ?? StreamingTDFCrypto.defaultChunkSize
                 print("Using streaming encryption (file: \(fileSize / 1024 / 1024)MB, chunk: \(chunkSize / 1024 / 1024)MB)")
-                let encryptor = StandardTDFEncryptor()
+                let encryptor = TDFEncryptor()
                 standardTDFResult = try encryptor.encryptFile(
                     inputURL: inputURL,
                     outputURL: outputURL,
@@ -269,7 +269,7 @@ struct OpenTDFKitCLI {
             } else {
                 let inputData = try Data(contentsOf: inputURL)
                 print("Using in-memory encryption (file: \(fileSize / 1024 / 1024)MB)")
-                let result = try Commands.encryptStandardTDF(
+                let result = try Commands.encryptTDF(
                     plaintext: inputData,
                     configuration: configuration,
                 )
@@ -334,7 +334,7 @@ struct OpenTDFKitCLI {
                 }
             }
 
-            plaintext = try await Commands.decryptStandardTDF(
+            plaintext = try await Commands.decryptTDF(
                 data: data,
                 filename: inputURL.lastPathComponent,
                 symmetricKey: symmetricKey,
@@ -378,9 +378,9 @@ struct OpenTDFKitCLI {
         print("File size: \(fileSize / 1024 / 1024) MB (\(fileSize) bytes)\n")
 
         let chunkSizes: [(name: String, size: Int)] = [
-            ("2MB", StreamingStandardTDFCrypto.defaultChunkSize),
-            ("5MB", StreamingStandardTDFCrypto.chunkSize5MB),
-            ("25MB", StreamingStandardTDFCrypto.chunkSize25MB),
+            ("2MB", StreamingTDFCrypto.defaultChunkSize),
+            ("5MB", StreamingTDFCrypto.chunkSize5MB),
+            ("25MB", StreamingTDFCrypto.chunkSize25MB),
         ]
 
         for (name, chunkSize) in chunkSizes {
@@ -399,8 +399,8 @@ struct OpenTDFKitCLI {
                 try? FileManager.default.removeItem(at: tempDecrypted)
             }
 
-            let configuration = try buildStandardTDFConfiguration(for: inputURL)
-            let encryptor = StandardTDFEncryptor()
+            let configuration = try buildTDFConfiguration(for: inputURL)
+            let encryptor = TDFEncryptor()
 
             let encryptStart = Date()
             let result = try encryptor.encryptFile(
@@ -414,7 +414,7 @@ struct OpenTDFKitCLI {
 
             let encryptedSize = try FileManager.default.attributesOfItem(atPath: tempEncrypted.path)[.size] as? Int64 ?? 0
 
-            let decryptor = StandardTDFDecryptor()
+            let decryptor = TDFDecryptor()
             let decryptStart = Date()
             try decryptor.decryptFile(
                 inputURL: tempEncrypted,
@@ -443,7 +443,7 @@ struct OpenTDFKitCLI {
 
     // MARK: - Standard TDF Helpers
 
-    private static func buildStandardTDFConfiguration(for inputURL: URL) throws -> StandardTDFEncryptionConfiguration {
+    private static func buildTDFConfiguration(for inputURL: URL) throws -> TDFEncryptionConfiguration {
         let env = ProcessInfo.processInfo.environment
 
         guard let kasURLString = env["TDF_KAS_URL"] ?? env["KASURL"], let kasURL = URL(string: kasURLString) else {
@@ -454,17 +454,17 @@ struct OpenTDFKitCLI {
         let policyData = try loadPolicyData()
         let mimeType = env["TDF_MIME_TYPE"] ?? inferMimeType(for: inputURL)
 
-        let kasInfo = StandardTDFKasInfo(
+        let kasInfo = TDFKasInfo(
             url: kasURL,
             publicKeyPEM: publicKeyPEM,
             kid: env["TDF_KAS_KID"],
             schemaVersion: env["TDF_KAS_SCHEMA_VERSION"],
         )
 
-        let policy = try StandardTDFPolicy(json: policyData)
+        let policy = try TDFPolicy(json: policyData)
         let specVersion = env["TDF_SPEC_VERSION"] ?? "4.3.0"
 
-        return StandardTDFEncryptionConfiguration(
+        return TDFEncryptionConfiguration(
             kas: kasInfo,
             policy: policy,
             mimeType: mimeType,

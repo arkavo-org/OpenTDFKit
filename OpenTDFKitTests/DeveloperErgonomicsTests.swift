@@ -11,10 +11,10 @@ final class DeveloperErgonomicsTests: XCTestCase {
 
     func testOptionalIntegrityInformation() throws {
         // Create manifest without integrity information
-        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
+        let symmetricKey = try TDFCrypto.generateSymmetricKey()
         let policyJSON = testPolicyJSON()
 
-        let policyBinding = StandardTDFCrypto.policyBinding(policy: policyJSON, symmetricKey: symmetricKey)
+        let policyBinding = TDFCrypto.policyBinding(policy: policyJSON, symmetricKey: symmetricKey)
         let wrappedKey = "test-wrapped-key"
 
         let kasObject = TDFKeyAccessObject(
@@ -73,10 +73,10 @@ final class DeveloperErgonomicsTests: XCTestCase {
 
     func testManifestBuilderStandard() throws {
         let builder = TDFManifestBuilder()
-        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
+        let symmetricKey = try TDFCrypto.generateSymmetricKey()
         let policyJSON = testPolicyJSON()
 
-        let policyBinding = StandardTDFCrypto.policyBinding(policy: policyJSON, symmetricKey: symmetricKey)
+        let policyBinding = TDFCrypto.policyBinding(policy: policyJSON, symmetricKey: symmetricKey)
         let wrappedKey = "test-wrapped-key"
 
         let manifest = builder.buildStandardManifest(
@@ -98,10 +98,10 @@ final class DeveloperErgonomicsTests: XCTestCase {
 
     func testManifestBuilderWithIntegrity() throws {
         let builder = TDFManifestBuilder()
-        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
+        let symmetricKey = try TDFCrypto.generateSymmetricKey()
         let policyJSON = testPolicyJSON()
 
-        let policyBinding = StandardTDFCrypto.policyBinding(policy: policyJSON, symmetricKey: symmetricKey)
+        let policyBinding = TDFCrypto.policyBinding(policy: policyJSON, symmetricKey: symmetricKey)
         let wrappedKey = "test-wrapped-key"
 
         let manifest = builder.buildStandardManifest(
@@ -119,10 +119,10 @@ final class DeveloperErgonomicsTests: XCTestCase {
 
     func testManifestBuilderMultiKAS() throws {
         let builder = TDFManifestBuilder()
-        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
+        let symmetricKey = try TDFCrypto.generateSymmetricKey()
         let policyJSON = testPolicyJSON()
 
-        let policyBinding = StandardTDFCrypto.policyBinding(policy: policyJSON, symmetricKey: symmetricKey)
+        let policyBinding = TDFCrypto.policyBinding(policy: policyJSON, symmetricKey: symmetricKey)
 
         let kasObjects = [
             TDFKeyAccessObject(

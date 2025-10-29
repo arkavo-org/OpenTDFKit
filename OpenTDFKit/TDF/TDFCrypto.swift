@@ -10,7 +10,7 @@ extension Data {
     }
 }
 
-public enum StandardTDFCrypto {
+public enum TDFCrypto {
     public static func generateSymmetricKey() throws -> SymmetricKey {
         let keyData = try randomBytes(count: 32)
         return SymmetricKey(data: keyData)
@@ -68,7 +68,7 @@ public enum StandardTDFCrypto {
             keyData as CFData,
             &error,
         ) as Data? else {
-            throw StandardTDFCryptoError.keyWrapFailed(error?.takeRetainedValue())
+            throw TDFCryptoError.keyWrapFailed(error?.takeRetainedValue())
         }
         return encrypted.base64EncodedString()
     }
@@ -76,7 +76,7 @@ public enum StandardTDFCrypto {
     public static func unwrapSymmetricKeyWithRSA(privateKeyPEM: String, wrappedKey: String) throws -> SymmetricKey {
         let privateKey = try loadRSAPrivateKey(fromPEM: privateKeyPEM)
         guard let wrappedData = Data(base64Encoded: wrappedKey) else {
-            throw StandardTDFCryptoError.invalidWrappedKey
+            throw TDFCryptoError.invalidWrappedKey
         }
         var error: Unmanaged<CFError>?
         guard var decrypted = SecKeyCreateDecryptedData(
@@ -85,7 +85,7 @@ public enum StandardTDFCrypto {
             wrappedData as CFData,
             &error,
         ) as Data? else {
-            throw StandardTDFCryptoError.keyUnwrapFailed(error?.takeRetainedValue())
+            throw TDFCryptoError.keyUnwrapFailed(error?.takeRetainedValue())
         }
 
         defer {
@@ -104,7 +104,7 @@ public enum StandardTDFCrypto {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard let data = Data(base64Encoded: stripped) else {
-            throw StandardTDFCryptoError.invalidPEM
+            throw TDFCryptoError.invalidPEM
         }
 
         let attributes: [String: Any] = [
@@ -114,7 +114,7 @@ public enum StandardTDFCrypto {
 
         var error: Unmanaged<CFError>?
         guard let key = SecKeyCreateWithData(data as CFData, attributes as CFDictionary, &error) else {
-            throw StandardTDFCryptoError.invalidKeyData(error?.takeRetainedValue())
+            throw TDFCryptoError.invalidKeyData(error?.takeRetainedValue())
         }
 
         try validateRSAKeySize(key, minimumBits: 2048)
@@ -132,7 +132,7 @@ public enum StandardTDFCrypto {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard let data = Data(base64Encoded: stripped) else {
-            throw StandardTDFCryptoError.invalidPEM
+            throw TDFCryptoError.invalidPEM
         }
 
         let attributes: [String: Any] = [
@@ -142,7 +142,7 @@ public enum StandardTDFCrypto {
 
         var error: Unmanaged<CFError>?
         guard let key = SecKeyCreateWithData(data as CFData, attributes as CFDictionary, &error) else {
-            throw StandardTDFCryptoError.invalidKeyData(error?.takeRetainedValue())
+            throw TDFCryptoError.invalidKeyData(error?.takeRetainedValue())
         }
 
         try validateRSAKeySize(key, minimumBits: 2048)
@@ -153,16 +153,16 @@ public enum StandardTDFCrypto {
         guard let attributes = SecKeyCopyAttributes(key) as? [String: Any],
               let keySize = attributes[kSecAttrKeySizeInBits as String] as? Int
         else {
-            throw StandardTDFCryptoError.cannotDetermineKeySize
+            throw TDFCryptoError.cannotDetermineKeySize
         }
 
         guard keySize >= minimumBits else {
-            throw StandardTDFCryptoError.weakKey(keySize: keySize, minimum: minimumBits)
+            throw TDFCryptoError.weakKey(keySize: keySize, minimum: minimumBits)
         }
     }
 }
 
-public enum StandardTDFCryptoError: Error, CustomStringConvertible {
+public enum TDFCryptoError: Error, CustomStringConvertible {
     case invalidPEM
     case invalidKeyData(CFError?)
     case keyWrapFailed(CFError?)

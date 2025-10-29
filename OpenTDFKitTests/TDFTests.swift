@@ -8,8 +8,8 @@ final class StandardTDFTests: XCTestCase {
     let testPlaintext = "Test data for Standard TDF".data(using: .utf8)!
 
     func testTDFEncryptionAndDecryption() throws {
-        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
-        let (iv, ciphertext, tag) = try StandardTDFCrypto.encryptPayload(
+        let symmetricKey = try TDFCrypto.generateSymmetricKey()
+        let (iv, ciphertext, tag) = try TDFCrypto.encryptPayload(
             plaintext: testPlaintext,
             symmetricKey: symmetricKey,
         )
@@ -18,7 +18,7 @@ final class StandardTDFTests: XCTestCase {
         XCTAssertEqual(tag.count, 16, "Tag should be 16 bytes")
         XCTAssertGreaterThan(ciphertext.count, 0, "Ciphertext should not be empty")
 
-        let decrypted = try StandardTDFCrypto.decryptPayload(
+        let decrypted = try TDFCrypto.decryptPayload(
             ciphertext: ciphertext,
             iv: iv,
             tag: tag,
@@ -29,7 +29,7 @@ final class StandardTDFTests: XCTestCase {
     }
 
     func testPolicyBinding() throws {
-        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
+        let symmetricKey = try TDFCrypto.generateSymmetricKey()
         let policyJSON = """
         {
             "uuid": "test-uuid",
@@ -40,17 +40,17 @@ final class StandardTDFTests: XCTestCase {
         }
         """.data(using: .utf8)!
 
-        let binding = StandardTDFCrypto.policyBinding(policy: policyJSON, symmetricKey: symmetricKey)
+        let binding = TDFCrypto.policyBinding(policy: policyJSON, symmetricKey: symmetricKey)
 
         XCTAssertFalse(binding.alg.isEmpty, "Policy binding algorithm should not be empty")
         XCTAssertFalse(binding.hash.isEmpty, "Policy binding hash should not be empty")
     }
 
     func testSegmentSignature() throws {
-        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
+        let symmetricKey = try TDFCrypto.generateSymmetricKey()
         let segmentData = "Segment data".data(using: .utf8)!
 
-        let signature = StandardTDFCrypto.segmentSignature(
+        let signature = TDFCrypto.segmentSignature(
             segmentCiphertext: segmentData,
             symmetricKey: symmetricKey,
         )
@@ -60,16 +60,16 @@ final class StandardTDFTests: XCTestCase {
 
     func testRSAKeyWrapping() throws {
         let keyPair = try generateTestRSAKeyPair()
-        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
+        let symmetricKey = try TDFCrypto.generateSymmetricKey()
 
-        let wrappedKey = try StandardTDFCrypto.wrapSymmetricKeyWithRSA(
+        let wrappedKey = try TDFCrypto.wrapSymmetricKeyWithRSA(
             publicKeyPEM: keyPair.publicKeyPEM,
             symmetricKey: symmetricKey,
         )
 
         XCTAssertFalse(wrappedKey.isEmpty, "Wrapped key should not be empty")
 
-        let unwrappedKey = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
+        let unwrappedKey = try TDFCrypto.unwrapSymmetricKeyWithRSA(
             privateKeyPEM: keyPair.privateKeyPEM,
             wrappedKey: wrappedKey,
         )
@@ -84,7 +84,7 @@ final class StandardTDFTests: XCTestCase {
         let manifest = createTestManifest()
         let payload = testPlaintext
 
-        let container = StandardTDFContainer(manifest: manifest, payload: payload)
+        let container = TDFContainer(manifest: manifest, payload: payload)
 
         XCTAssertEqual(container.manifest.schemaVersion, "1.0.0")
         XCTAssertEqual(container.payload, testPlaintext)
@@ -92,7 +92,7 @@ final class StandardTDFTests: XCTestCase {
 
     func testTDFContainerSerialization() throws {
         let manifest = createTestManifest()
-        let container = StandardTDFContainer(manifest: manifest, payload: testPlaintext)
+        let container = TDFContainer(manifest: manifest, payload: testPlaintext)
 
         let serialized = try container.serializedData()
 
@@ -102,10 +102,10 @@ final class StandardTDFTests: XCTestCase {
 
     func testTDFContainerDeserialization() throws {
         let manifest = createTestManifest()
-        let container = StandardTDFContainer(manifest: manifest, payload: testPlaintext)
+        let container = TDFContainer(manifest: manifest, payload: testPlaintext)
         let serialized = try container.serializedData()
 
-        let loader = StandardTDFLoader()
+        let loader = TDFLoader()
         let loaded = try loader.load(from: serialized)
 
         XCTAssertEqual(loaded.manifest.schemaVersion, "1.0.0")
@@ -115,13 +115,13 @@ final class StandardTDFTests: XCTestCase {
     func testEndToEndEncryptionDecryption() throws {
         let keyPair = try generateTestRSAKeyPair()
 
-        let kasInfo = StandardTDFKasInfo(
+        let kasInfo = TDFKasInfo(
             url: URL(string: "http://localhost:8080/kas")!,
             publicKeyPEM: keyPair.publicKeyPEM,
             kid: "test-key-1",
         )
 
-        let policy = try StandardTDFPolicy(json: """
+        let policy = try TDFPolicy(json: """
         {
             "uuid": "test-policy",
             "body": {
@@ -131,19 +131,19 @@ final class StandardTDFTests: XCTestCase {
         }
         """.data(using: .utf8)!)
 
-        let config = StandardTDFEncryptionConfiguration(
+        let config = TDFEncryptionConfiguration(
             kas: kasInfo,
             policy: policy,
             mimeType: "text/plain",
         )
 
-        let encryptor = StandardTDFEncryptor()
+        let encryptor = TDFEncryptor()
         let result = try encryptor.encrypt(plaintext: testPlaintext, configuration: config)
 
         XCTAssertNotNil(result.container)
         XCTAssertEqual(result.container.manifest.encryptionInformation.keyAccess.count, 1)
 
-        let decryptor = StandardTDFDecryptor()
+        let decryptor = TDFDecryptor()
         let decrypted = try decryptor.decrypt(
             container: result.container,
             symmetricKey: result.symmetricKey,
@@ -290,48 +290,48 @@ final class StandardTDFTests: XCTestCase {
     }
 
     func testTruncatedPayload() throws {
-        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
+        let symmetricKey = try TDFCrypto.generateSymmetricKey()
         let tooShortPayload = Data([0x01, 0x02, 0x03])
 
         let manifest = createTestManifest()
-        let container = StandardTDFContainer(manifest: manifest, payload: tooShortPayload)
+        let container = TDFContainer(manifest: manifest, payload: tooShortPayload)
 
-        let decryptor = StandardTDFDecryptor()
+        let decryptor = TDFDecryptor()
         XCTAssertThrowsError(try decryptor.decrypt(container: container, symmetricKey: symmetricKey)) { error in
-            guard let decryptError = error as? StandardTDFDecryptError else {
-                XCTFail("Expected StandardTDFDecryptError, got \(type(of: error))")
+            guard let decryptError = error as? TDFDecryptError else {
+                XCTFail("Expected TDFDecryptError, got \(type(of: error))")
                 return
             }
-            XCTAssertEqual(decryptError, StandardTDFDecryptError.malformedPayload)
+            XCTAssertEqual(decryptError, TDFDecryptError.malformedPayload)
         }
     }
 
     func testWrongKeyDecryption() throws {
         let keyPair = try generateTestRSAKeyPair()
 
-        let kasInfo = StandardTDFKasInfo(
+        let kasInfo = TDFKasInfo(
             url: URL(string: "http://localhost:8080/kas")!,
             publicKeyPEM: keyPair.publicKeyPEM,
             kid: "test-key",
         )
 
-        let policy = try StandardTDFPolicy(json: """
+        let policy = try TDFPolicy(json: """
         {"uuid":"test","body":{"dataAttributes":[],"dissem":[]}}
         """.data(using: .utf8)!)
 
-        let config = StandardTDFEncryptionConfiguration(kas: kasInfo, policy: policy)
+        let config = TDFEncryptionConfiguration(kas: kasInfo, policy: policy)
 
-        let encryptor = StandardTDFEncryptor()
+        let encryptor = TDFEncryptor()
         let result = try encryptor.encrypt(plaintext: testPlaintext, configuration: config)
 
-        let wrongKey = try StandardTDFCrypto.generateSymmetricKey()
+        let wrongKey = try TDFCrypto.generateSymmetricKey()
 
-        let decryptor = StandardTDFDecryptor()
+        let decryptor = TDFDecryptor()
         XCTAssertThrowsError(try decryptor.decrypt(container: result.container, symmetricKey: wrongKey))
     }
 
     func testInvalidBase64InWrappedKey() throws {
-        let decryptor = StandardTDFDecryptor()
+        let decryptor = TDFDecryptor()
         let keyPair = try generateTestRSAKeyPair()
 
         let kasObject = TDFKeyAccessObject(
@@ -373,7 +373,7 @@ final class StandardTDFTests: XCTestCase {
             encryptionInformation: encryptionInfo,
         )
 
-        let container = StandardTDFContainer(manifest: manifest, payload: Data(count: 100))
+        let container = TDFContainer(manifest: manifest, payload: Data(count: 100))
 
         XCTAssertThrowsError(try decryptor.decrypt(container: container, privateKeyPEM: keyPair.privateKeyPEM))
     }
@@ -409,8 +409,8 @@ final class StandardTDFTests: XCTestCase {
 
         let weakPublicKeyPEM = String(data: pubPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)!
 
-        XCTAssertThrowsError(try StandardTDFCrypto.loadRSAPublicKey(fromPEM: weakPublicKeyPEM)) { error in
-            guard let cryptoError = error as? StandardTDFCryptoError,
+        XCTAssertThrowsError(try TDFCrypto.loadRSAPublicKey(fromPEM: weakPublicKeyPEM)) { error in
+            guard let cryptoError = error as? TDFCryptoError,
                   case let .weakKey(keySize, minimum) = cryptoError
             else {
                 XCTFail("Expected weakKey error, got \(error)")
@@ -452,15 +452,15 @@ final class StandardTDFTests: XCTestCase {
 
         let publicKeyPEM = String(data: pubPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)!
 
-        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
-        let wrappedKey = try StandardTDFCrypto.wrapSymmetricKeyWithRSA(
+        let symmetricKey = try TDFCrypto.generateSymmetricKey()
+        let wrappedKey = try TDFCrypto.wrapSymmetricKeyWithRSA(
             publicKeyPEM: publicKeyPEM,
             symmetricKey: symmetricKey,
         )
 
         XCTAssertFalse(wrappedKey.isEmpty)
 
-        let unwrappedKey = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
+        let unwrappedKey = try TDFCrypto.unwrapSymmetricKeyWithRSA(
             privateKeyPEM: privateKeyPEM,
             wrappedKey: wrappedKey,
         )
@@ -479,12 +479,12 @@ final class StandardTDFTests: XCTestCase {
 
         let keyPair = try generateTestRSAKeyPair()
 
-        let wrapped1 = try StandardTDFCrypto.wrapSymmetricKeyWithRSA(
+        let wrapped1 = try TDFCrypto.wrapSymmetricKeyWithRSA(
             publicKeyPEM: keyPair.publicKeyPEM,
             symmetricKey: key1,
         )
 
-        let wrapped2 = try StandardTDFCrypto.wrapSymmetricKeyWithRSA(
+        let wrapped2 = try TDFCrypto.wrapSymmetricKeyWithRSA(
             publicKeyPEM: keyPair.publicKeyPEM,
             symmetricKey: key2,
         )
@@ -579,12 +579,12 @@ final class StandardTDFTests: XCTestCase {
     func testPerformanceEncryption1KB() throws {
         let plaintext = Data(repeating: 0x41, count: 1024)
         let keyPair = try generateTestRSAKeyPair()
-        let kasInfo = StandardTDFKasInfo(url: URL(string: "http://localhost:8080/kas")!, publicKeyPEM: keyPair.publicKeyPEM, kid: "perf-test")
-        let policy = try StandardTDFPolicy(json: """
+        let kasInfo = TDFKasInfo(url: URL(string: "http://localhost:8080/kas")!, publicKeyPEM: keyPair.publicKeyPEM, kid: "perf-test")
+        let policy = try TDFPolicy(json: """
         {"uuid":"perf-test","body":{"dataAttributes":[],"dissem":[]}}
         """.data(using: .utf8)!)
-        let config = StandardTDFEncryptionConfiguration(kas: kasInfo, policy: policy)
-        let encryptor = StandardTDFEncryptor()
+        let config = TDFEncryptionConfiguration(kas: kasInfo, policy: policy)
+        let encryptor = TDFEncryptor()
 
         measure {
             _ = try? encryptor.encrypt(plaintext: plaintext, configuration: config)
@@ -594,12 +594,12 @@ final class StandardTDFTests: XCTestCase {
     func testPerformanceEncryption100KB() throws {
         let plaintext = Data(repeating: 0x41, count: 100 * 1024)
         let keyPair = try generateTestRSAKeyPair()
-        let kasInfo = StandardTDFKasInfo(url: URL(string: "http://localhost:8080/kas")!, publicKeyPEM: keyPair.publicKeyPEM, kid: "perf-test")
-        let policy = try StandardTDFPolicy(json: """
+        let kasInfo = TDFKasInfo(url: URL(string: "http://localhost:8080/kas")!, publicKeyPEM: keyPair.publicKeyPEM, kid: "perf-test")
+        let policy = try TDFPolicy(json: """
         {"uuid":"perf-test","body":{"dataAttributes":[],"dissem":[]}}
         """.data(using: .utf8)!)
-        let config = StandardTDFEncryptionConfiguration(kas: kasInfo, policy: policy)
-        let encryptor = StandardTDFEncryptor()
+        let config = TDFEncryptionConfiguration(kas: kasInfo, policy: policy)
+        let encryptor = TDFEncryptor()
 
         measure {
             _ = try? encryptor.encrypt(plaintext: plaintext, configuration: config)
@@ -609,14 +609,14 @@ final class StandardTDFTests: XCTestCase {
     func testPerformanceDecryption1KB() throws {
         let plaintext = Data(repeating: 0x41, count: 1024)
         let keyPair = try generateTestRSAKeyPair()
-        let kasInfo = StandardTDFKasInfo(url: URL(string: "http://localhost:8080/kas")!, publicKeyPEM: keyPair.publicKeyPEM, kid: "perf-test")
-        let policy = try StandardTDFPolicy(json: """
+        let kasInfo = TDFKasInfo(url: URL(string: "http://localhost:8080/kas")!, publicKeyPEM: keyPair.publicKeyPEM, kid: "perf-test")
+        let policy = try TDFPolicy(json: """
         {"uuid":"perf-test","body":{"dataAttributes":[],"dissem":[]}}
         """.data(using: .utf8)!)
-        let config = StandardTDFEncryptionConfiguration(kas: kasInfo, policy: policy)
-        let encryptor = StandardTDFEncryptor()
+        let config = TDFEncryptionConfiguration(kas: kasInfo, policy: policy)
+        let encryptor = TDFEncryptor()
         let result = try encryptor.encrypt(plaintext: plaintext, configuration: config)
-        let decryptor = StandardTDFDecryptor()
+        let decryptor = TDFDecryptor()
 
         measure {
             _ = try? decryptor.decrypt(container: result.container, symmetricKey: result.symmetricKey)
@@ -626,14 +626,14 @@ final class StandardTDFTests: XCTestCase {
     func testPerformanceDecryption100KB() throws {
         let plaintext = Data(repeating: 0x41, count: 100 * 1024)
         let keyPair = try generateTestRSAKeyPair()
-        let kasInfo = StandardTDFKasInfo(url: URL(string: "http://localhost:8080/kas")!, publicKeyPEM: keyPair.publicKeyPEM, kid: "perf-test")
-        let policy = try StandardTDFPolicy(json: """
+        let kasInfo = TDFKasInfo(url: URL(string: "http://localhost:8080/kas")!, publicKeyPEM: keyPair.publicKeyPEM, kid: "perf-test")
+        let policy = try TDFPolicy(json: """
         {"uuid":"perf-test","body":{"dataAttributes":[],"dissem":[]}}
         """.data(using: .utf8)!)
-        let config = StandardTDFEncryptionConfiguration(kas: kasInfo, policy: policy)
-        let encryptor = StandardTDFEncryptor()
+        let config = TDFEncryptionConfiguration(kas: kasInfo, policy: policy)
+        let encryptor = TDFEncryptor()
         let result = try encryptor.encrypt(plaintext: plaintext, configuration: config)
-        let decryptor = StandardTDFDecryptor()
+        let decryptor = TDFDecryptor()
 
         measure {
             _ = try? decryptor.decrypt(container: result.container, symmetricKey: result.symmetricKey)

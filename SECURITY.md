@@ -4,7 +4,7 @@
 
 OpenTDFKit implements the OpenTDF specification with the following cryptographic algorithms:
 
-### Standard TDF (ZIP-based)
+### TDF (Archive Envelope) (ZIP-based)
 - **Symmetric Encryption**: AES-256-GCM with 128-bit authentication tags
 - **Key Wrapping**: RSA-OAEP-SHA256 (minimum 2048-bit keys)
 - **Policy Binding**: HMAC-SHA256
@@ -76,20 +76,20 @@ OpenTDFKit implements secure memory handling practices:
    - Never log sensitive data (keys, plaintext)
 
 4. **File Size Considerations**
-   - Standard TDF loads entire payload into memory
+   - TDF (Archive Envelope) loads entire payload into memory
    - Recommended maximum: 100MB on iOS, 1GB on macOS
    - For larger files, implement external chunking before encryption
 
 ### For Security Auditors
 
 1. **Code Review Focus Areas**
-   - Cryptographic operations in `StandardTDFCrypto.swift` and `CryptoHelper.swift`
-   - Memory handling in `StandardTDFProcessor.swift` and `NanoTDF.swift`
+   - Cryptographic operations in `TDFCrypto.swift` and `CryptoHelper.swift`
+   - Memory handling in `TDFProcessor.swift` and `NanoTDF.swift`
    - Input validation in `TDFArchive.swift` and `Commands.swift`
    - Network operations in `KASRewrapClient.swift`
 
 2. **Test Coverage**
-   - 18 Standard TDF unit tests covering edge cases
+   - 18 TDF (Archive Envelope) unit tests covering edge cases
    - Integration tests for KAS rewrap flows
    - Weak key rejection tests
    - Malformed data handling tests
@@ -111,8 +111,8 @@ OpenTDFKit implements secure memory handling practices:
    - Entire payload loaded into memory during encryption/decryption
    - No streaming encryption/decryption API yet
 
-3. **RSA-Only Key Wrapping for Standard TDF**
-   - EC key wrapping not implemented for Standard TDF
+3. **RSA-Only Key Wrapping for TDF (Archive Envelope)**
+   - EC key wrapping not implemented for TDF (Archive Envelope)
    - NanoTDF supports EC key wrapping
 
 ### Roadmap Items
@@ -154,7 +154,7 @@ If you discover a security vulnerability in OpenTDFKit, please report it respons
 
 | Date | Auditor | Scope | Findings | Status |
 |------|---------|-------|----------|--------|
-| 2025-09-28 | Internal Review | Standard TDF Implementation | 4 recommendations | Addressed |
+| 2025-09-28 | Internal Review | TDF (Archive Envelope) Implementation | 4 recommendations | Addressed |
 
 ## Compliance
 
@@ -167,7 +167,7 @@ If you discover a security vulnerability in OpenTDFKit, please report it respons
 
 ### OpenTDF Specification
 - Compliant with OpenTDF Specification v4.3.0
-- Implements both NanoTDF and Standard TDF formats
+- Implements both NanoTDF and TDF (Archive Envelope) formats
 - Compatible with reference implementation (otdfctl)
 
 ## Security Testing
@@ -175,7 +175,7 @@ If you discover a security vulnerability in OpenTDFKit, please report it respons
 ### Automated Testing
 ```bash
 # Run all security-focused tests
-swift test --filter StandardTDFTests
+swift test --filter TDFTests
 swift test --filter KASRewrapClientTests
 swift test --filter IntegrationTests
 

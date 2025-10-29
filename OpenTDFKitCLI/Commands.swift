@@ -55,7 +55,7 @@ enum CLIConfigError: Error, CustomStringConvertible {
 
 enum Commands {
     /// Quick signature check to route files to the appropriate parser.
-    static func isLikelyStandardTDF(data: Data) -> Bool {
+    static func isLikelyArchiveTDF(data: Data) -> Bool {
         data.starts(with: [0x50, 0x4B])
     }
 
@@ -80,13 +80,13 @@ enum Commands {
     }
 
     /// Parse and report details about a ZIP-based TDF container.
-    static func verifyStandardTDF(data: Data, filename: String) throws {
+    static func verifyTDF(data: Data, filename: String) throws {
         print("Standard TDF Verification Report")
         print("================================")
         print("File: \(filename)")
         print("Size: \(data.count) bytes\n")
 
-        let loader = StandardTDFLoader()
+        let loader = TDFLoader()
         let container = try loader.load(from: data)
         let manifest = container.manifest
 
@@ -119,7 +119,7 @@ enum Commands {
     }
 
     /// Load a ZIP-based TDF container without decrypting payload contents.
-    static func decryptStandardTDF(
+    static func decryptTDF(
         data: Data,
         filename: String,
         symmetricKey: SymmetricKey?,
@@ -132,14 +132,14 @@ enum Commands {
         print("File: \(filename)")
         print("Size: \(data.count) bytes\n")
 
-        let loader = StandardTDFLoader()
+        let loader = TDFLoader()
         let container = try loader.load(from: data)
 
         print("✓ Manifest loaded")
         print("  Spec Version: \(container.manifest.schemaVersion)")
         print("  Key Access Entries: \(container.manifest.encryptionInformation.keyAccess.count)")
 
-        let decryptor = StandardTDFDecryptor()
+        let decryptor = TDFDecryptor()
 
         if let symmetricKey {
             print("  Using provided symmetric key for decryption")
@@ -169,7 +169,7 @@ enum Commands {
             }
 
             let client = KASRewrapClient(kasURL: kasURL, oauthToken: oauthToken)
-            let result = try await client.rewrapStandardTDF(
+            let result = try await client.rewrapTDF(
                 manifest: container.manifest,
                 clientPublicKeyPEM: clientPublicKeyPEM,
             )
@@ -188,11 +188,11 @@ enum Commands {
 
         for (_, wrappedKeyData) in sortedEntries {
             let base64 = wrappedKeyData.base64EncodedString()
-            let symmetricKeyPart = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
+            let symmetricKeyPart = try TDFCrypto.unwrapSymmetricKeyWithRSA(
                 privateKeyPEM: privateKeyPEM,
                 wrappedKey: base64,
             )
-            let keyData = StandardTDFCrypto.data(from: symmetricKeyPart)
+            let keyData = TDFCrypto.data(from: symmetricKeyPart)
 
             if let existing = combinedKeyData {
                 guard existing.count == keyData.count else {
@@ -337,16 +337,16 @@ enum Commands {
     }
 
     /// Encrypt plaintext to Standard TDF using local configuration.
-    static func encryptStandardTDF(
+    static func encryptTDF(
         plaintext: Data,
-        configuration: StandardTDFEncryptionConfiguration,
-    ) throws -> (result: StandardTDFEncryptionResult, archiveData: Data) {
+        configuration: TDFEncryptionConfiguration,
+    ) throws -> (result: TDFEncryptionResult, archiveData: Data) {
         print("Standard TDF Encryption")
         print("=======================")
         print("Plaintext size: \(plaintext.count) bytes")
         print("KAS URL: \(configuration.kas.url.absoluteString)")
 
-        let encryptor = StandardTDFEncryptor()
+        let encryptor = TDFEncryptor()
         let result = try encryptor.encrypt(plaintext: plaintext, configuration: configuration)
         let archiveData = try result.container.serializedData()
 
