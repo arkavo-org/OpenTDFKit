@@ -341,15 +341,15 @@ public class KASRewrapClient: KASRewrapClientProtocol {
     ///   - manifest: The parsed TDF manifest containing key access entries.
     ///   - clientPublicKeyPEM: PEM-encoded client public key for the returned wrapped key.
     /// - Returns: Mapping of KeyAccessObjectId to wrapped key data and optional session public key when EC wrapping is used.
-    public func rewrapStandardTDF(
+    public func rewrapTDF(
         manifest: TDFManifest,
         clientPublicKeyPEM: String,
-    ) async throws -> StandardTDFKASRewrapResult {
+    ) async throws -> TDFKASRewrapResult {
         let policyBody = manifest.encryptionInformation.policy
         let keyAccessEntries = manifest.encryptionInformation.keyAccess.filter { matchesKasURL($0.url) }
 
         guard !keyAccessEntries.isEmpty else {
-            throw KASRewrapError.invalidStandardTDFRequest("No key access entries for KAS \(kasURL.absoluteString)")
+            throw KASRewrapError.invalidTDFRequest("No key access entries for KAS \(kasURL.absoluteString)")
         }
 
         var wrappers: [StandardKeyAccessObjectWrapper] = []
@@ -440,7 +440,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
                 throw KASRewrapError.emptyResponse
             }
 
-            return StandardTDFKASRewrapResult(
+            return TDFKASRewrapResult(
                 wrappedKeys: wrappedKeys,
                 sessionPublicKeyPEM: rewrapResponse.sessionPublicKey,
             )
@@ -635,7 +635,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
     }
 }
 
-public struct StandardTDFKASRewrapResult {
+public struct TDFKASRewrapResult {
     public let wrappedKeys: [String: Data]
     public let sessionPublicKeyPEM: String?
 }
@@ -652,7 +652,7 @@ public enum KASRewrapError: Error, CustomStringConvertible {
     case pemParsingFailed(String)
     case jwtSigningFailed(Error)
     case httpError(Int, String?)
-    case invalidStandardTDFRequest(String)
+    case invalidTDFRequest(String)
 
     public var description: String {
         switch self {
@@ -676,7 +676,7 @@ public enum KASRewrapError: Error, CustomStringConvertible {
             "JWT signing failed: \(error.localizedDescription)"
         case let .httpError(code, message):
             "HTTP error \(code)" + (message.map { ": \($0)" } ?? "")
-        case let .invalidStandardTDFRequest(reason):
+        case let .invalidTDFRequest(reason):
             "Invalid standard TDF rewrap request: \(reason)"
         }
     }

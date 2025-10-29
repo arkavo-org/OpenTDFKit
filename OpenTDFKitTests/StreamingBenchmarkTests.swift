@@ -48,7 +48,7 @@ final class StreamingBenchmarkTests: XCTestCase {
         }
 
         let configuration = try createTestConfiguration()
-        let encryptor = StandardTDFEncryptor()
+        let encryptor = TDFEncryptor()
 
         let startTime = Date()
         let result = try encryptor.encryptFileMultiSegment(
@@ -65,7 +65,7 @@ final class StreamingBenchmarkTests: XCTestCase {
         let decryptedURL = temporaryFileURL(extension: "dat")
         defer { try? FileManager.default.removeItem(at: decryptedURL) }
 
-        let decryptor = StandardTDFDecryptor()
+        let decryptor = TDFDecryptor()
         let decryptStart = Date()
         try decryptor.decryptFileMultiSegment(
             inputURL: outputURL,
@@ -99,7 +99,7 @@ final class StreamingBenchmarkTests: XCTestCase {
         }
 
         let configuration = try createTestConfiguration()
-        let encryptor = StandardTDFEncryptor()
+        let encryptor = TDFEncryptor()
 
         let result = try encryptor.encryptFileMultiSegment(
             inputURL: inputURL,
@@ -113,7 +113,7 @@ final class StreamingBenchmarkTests: XCTestCase {
         let decryptedURL = temporaryFileURL(extension: "dat")
         defer { try? FileManager.default.removeItem(at: decryptedURL) }
 
-        let decryptor = StandardTDFDecryptor()
+        let decryptor = TDFDecryptor()
         try decryptor.decryptFileMultiSegment(
             inputURL: outputURL,
             outputURL: decryptedURL,
@@ -141,7 +141,7 @@ final class StreamingBenchmarkTests: XCTestCase {
         let peakMemory = try measurePeakMemory {
             try autoreleasepool {
                 let configuration = try createTestConfiguration()
-                let encryptor = StandardTDFEncryptor()
+                let encryptor = TDFEncryptor()
 
                 _ = try encryptor.encryptFile(
                     inputURL: inputURL,
@@ -172,7 +172,7 @@ final class StreamingBenchmarkTests: XCTestCase {
         let peakMemory = try measurePeakMemory {
             try autoreleasepool {
                 let configuration = try createTestConfiguration()
-                let encryptor = StandardTDFEncryptor()
+                let encryptor = TDFEncryptor()
 
                 _ = try encryptor.encryptFile(
                     inputURL: inputURL,
@@ -198,7 +198,7 @@ final class StreamingBenchmarkTests: XCTestCase {
         }
 
         let configuration = try createTestConfiguration()
-        let encryptor = StandardTDFEncryptor()
+        let encryptor = TDFEncryptor()
 
         let startTime = Date()
         let result = try encryptor.encryptFile(
@@ -216,7 +216,7 @@ final class StreamingBenchmarkTests: XCTestCase {
         let decryptedURL = temporaryFileURL(extension: "dat")
         defer { try? FileManager.default.removeItem(at: decryptedURL) }
 
-        let decryptor = StandardTDFDecryptor()
+        let decryptor = TDFDecryptor()
         let decryptStart = Date()
         try decryptor.decryptFile(
             inputURL: outputURL,
@@ -256,11 +256,11 @@ final class StreamingBenchmarkTests: XCTestCase {
             .appendingPathExtension(ext)
     }
 
-    private func createTestConfiguration() throws -> StandardTDFEncryptionConfiguration {
+    private func createTestConfiguration() throws -> TDFEncryptionConfiguration {
         let kasURL = URL(string: "http://localhost:8080/kas")!
         let publicKeyPEM = TestFixtures.testRSAPublicKeyPEM
 
-        let kasInfo = StandardTDFKasInfo(
+        let kasInfo = TDFKasInfo(
             url: kasURL,
             publicKeyPEM: publicKeyPEM,
         )
@@ -274,9 +274,9 @@ final class StreamingBenchmarkTests: XCTestCase {
             }
         }
         """
-        let policy = try StandardTDFPolicy(json: policyJSON.data(using: .utf8)!)
+        let policy = try TDFPolicy(json: policyJSON.data(using: .utf8)!)
 
-        return StandardTDFEncryptionConfiguration(
+        return TDFEncryptionConfiguration(
             kas: kasInfo,
             policy: policy,
             mimeType: "application/octet-stream",

@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-public enum StreamingStandardTDFCrypto {
+public enum StreamingTDFCrypto {
     public static let defaultChunkSize = 2 * 1024 * 1024
     public static let chunkSize5MB = 5 * 1024 * 1024
     public static let chunkSize25MB = 25 * 1024 * 1024
@@ -16,7 +16,7 @@ public enum StreamingStandardTDFCrypto {
         let totalSize = Int64(endOffset - startOffset)
         try inputHandle.seek(toOffset: startOffset)
 
-        let nonceData = try StandardTDFCrypto.randomBytes(count: 12)
+        let nonceData = try TDFCrypto.randomBytes(count: 12)
         let nonce = try AES.GCM.Nonce(data: nonceData)
 
         var encryptedPayload = Data()
@@ -49,7 +49,7 @@ public enum StreamingStandardTDFCrypto {
 
         let totalEncrypted = Int64(encryptedPayload.count)
 
-        let segmentHash = try StandardTDFCrypto.segmentSignatureGMAC(
+        let segmentHash = try TDFCrypto.segmentSignatureGMAC(
             segmentCiphertext: encryptedPayload,
             symmetricKey: symmetricKey,
         )
@@ -113,7 +113,7 @@ public enum StreamingStandardTDFCrypto {
                 break
             }
 
-            let nonceData = try StandardTDFCrypto.randomBytes(count: 12)
+            let nonceData = try TDFCrypto.randomBytes(count: 12)
             let nonce = try AES.GCM.Nonce(data: nonceData)
             let sealed = try AES.GCM.seal(plaintextAccumulator, using: symmetricKey, nonce: nonce)
 
@@ -131,7 +131,7 @@ public enum StreamingStandardTDFCrypto {
             let segmentEncryptedSize = Int64(segmentEnd - segmentStart)
 
             let segmentData = encryptedPayload.subdata(in: segmentStart ..< segmentEnd)
-            let segmentHash = try StandardTDFCrypto.segmentSignatureGMAC(
+            let segmentHash = try TDFCrypto.segmentSignatureGMAC(
                 segmentCiphertext: segmentData,
                 symmetricKey: symmetricKey,
             )
@@ -209,7 +209,7 @@ public enum StreamingStandardTDFCrypto {
         let totalSize = Int64(endOffset - startOffset)
         try inputHandle.seek(toOffset: startOffset)
 
-        let nonceData = try StandardTDFCrypto.randomBytes(count: 12)
+        let nonceData = try TDFCrypto.randomBytes(count: 12)
         let nonce = try AES.GCM.Nonce(data: nonceData)
 
         try outputHandle.write(contentsOf: Data(nonce))
@@ -241,7 +241,7 @@ public enum StreamingStandardTDFCrypto {
 
         let totalEncrypted = Int64(nonceData.count + sealed.ciphertext.count + sealed.tag.count)
 
-        let segmentHash = try StandardTDFCrypto.segmentSignatureGMAC(
+        let segmentHash = try TDFCrypto.segmentSignatureGMAC(
             segmentCiphertext: Data(nonce) + sealed.ciphertext + Data(sealed.tag),
             symmetricKey: symmetricKey,
         )
@@ -300,7 +300,7 @@ public enum StreamingStandardTDFCrypto {
                 break
             }
 
-            let nonceData = try StandardTDFCrypto.randomBytes(count: 12)
+            let nonceData = try TDFCrypto.randomBytes(count: 12)
             let nonce = try AES.GCM.Nonce(data: nonceData)
             let sealed = try AES.GCM.seal(plaintextAccumulator, using: symmetricKey, nonce: nonce)
 
@@ -317,7 +317,7 @@ public enum StreamingStandardTDFCrypto {
 
             let segmentEncryptedSize = Int64(segmentEndOffset - segmentStartOffset)
 
-            let segmentHash = try StandardTDFCrypto.segmentSignatureGMAC(
+            let segmentHash = try TDFCrypto.segmentSignatureGMAC(
                 segmentCiphertext: Data(nonce) + sealed.ciphertext + Data(sealed.tag),
                 symmetricKey: symmetricKey,
             )

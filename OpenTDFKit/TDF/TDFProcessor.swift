@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-public struct StandardTDFKasInfo: Sendable {
+public struct TDFKasInfo: Sendable {
     public let url: URL
     public let publicKeyPEM: String
     public let kid: String?
@@ -15,7 +15,7 @@ public struct StandardTDFKasInfo: Sendable {
     }
 }
 
-public struct StandardTDFPolicy: Sendable {
+public struct TDFPolicy: Sendable {
     public let json: Data
 
     public init(json: Data) throws {
@@ -29,24 +29,24 @@ public struct StandardTDFPolicy: Sendable {
 
     private static func validate(_ policyJSON: Data) throws {
         guard let policyObject = try? JSONSerialization.jsonObject(with: policyJSON) as? [String: Any] else {
-            throw StandardTDFPolicyError.invalidJSON
+            throw TDFPolicyError.invalidJSON
         }
 
         guard policyObject["uuid"] != nil else {
-            throw StandardTDFPolicyError.missingUUID
+            throw TDFPolicyError.missingUUID
         }
 
         guard let body = policyObject["body"] as? [String: Any] else {
-            throw StandardTDFPolicyError.missingBody
+            throw TDFPolicyError.missingBody
         }
 
         if body["dataAttributes"] == nil, body["dissem"] == nil {
-            throw StandardTDFPolicyError.emptyPolicy
+            throw TDFPolicyError.emptyPolicy
         }
     }
 }
 
-public enum StandardTDFPolicyError: Error, CustomStringConvertible {
+public enum TDFPolicyError: Error, CustomStringConvertible {
     case invalidJSON
     case missingUUID
     case missingBody
@@ -66,13 +66,13 @@ public enum StandardTDFPolicyError: Error, CustomStringConvertible {
     }
 }
 
-public struct StandardTDFEncryptionConfiguration: Sendable {
-    public let kas: StandardTDFKasInfo
-    public let policy: StandardTDFPolicy
+public struct TDFEncryptionConfiguration: Sendable {
+    public let kas: TDFKasInfo
+    public let policy: TDFPolicy
     public let mimeType: String?
     public let tdfSpecVersion: String
 
-    public init(kas: StandardTDFKasInfo, policy: StandardTDFPolicy, mimeType: String? = nil, tdfSpecVersion: String = "4.3.0") {
+    public init(kas: TDFKasInfo, policy: TDFPolicy, mimeType: String? = nil, tdfSpecVersion: String = "4.3.0") {
         self.kas = kas
         self.policy = policy
         self.mimeType = mimeType
@@ -80,32 +80,32 @@ public struct StandardTDFEncryptionConfiguration: Sendable {
     }
 }
 
-public struct StandardTDFEncryptor {
+public struct TDFEncryptor {
     public init() {}
 
     public func encryptFile(
         inputURL: URL,
         outputURL: URL,
-        configuration: StandardTDFEncryptionConfiguration,
-        chunkSize: Int = StreamingStandardTDFCrypto.defaultChunkSize,
-    ) throws -> StandardTDFEncryptionResult {
-        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
+        configuration: TDFEncryptionConfiguration,
+        chunkSize: Int = StreamingTDFCrypto.defaultChunkSize,
+    ) throws -> TDFEncryptionResult {
+        let symmetricKey = try TDFCrypto.generateSymmetricKey()
         let payloadData: Data
-        let streamingResult: StreamingStandardTDFCrypto.StreamingEncryptionResult
+        let streamingResult: StreamingTDFCrypto.StreamingEncryptionResult
 
         do {
             let inputHandle = try FileHandle(forReadingFrom: inputURL)
             defer { try? inputHandle.close() }
 
-            (payloadData, streamingResult) = try StreamingStandardTDFCrypto.encryptPayloadStreamingToMemory(
+            (payloadData, streamingResult) = try StreamingTDFCrypto.encryptPayloadStreamingToMemory(
                 inputHandle: inputHandle,
                 symmetricKey: symmetricKey,
                 chunkSize: chunkSize,
             )
         }
 
-        let policyBinding = StandardTDFCrypto.policyBinding(policy: configuration.policy.json, symmetricKey: symmetricKey)
-        let wrappedKey = try StandardTDFCrypto.wrapSymmetricKeyWithRSA(
+        let policyBinding = TDFCrypto.policyBinding(policy: configuration.policy.json, symmetricKey: symmetricKey)
+        let wrappedKey = try TDFCrypto.wrapSymmetricKeyWithRSA(
             publicKeyPEM: configuration.kas.publicKeyPEM,
             symmetricKey: symmetricKey,
         )
@@ -125,7 +125,7 @@ public struct StandardTDFEncryptor {
         }
 
         let segmentSignatureBase64 = segments.first!.hash
-        let rootSignature = StandardTDFCrypto.segmentSignature(
+        let rootSignature = TDFCrypto.segmentSignature(
             segmentCiphertext: Data(base64Encoded: segmentSignatureBase64)!,
             symmetricKey: symmetricKey,
         ).base64EncodedString()
@@ -174,7 +174,7 @@ public struct StandardTDFEncryptor {
             assertions: nil,
         )
 
-        let container = StandardTDFContainer(
+        let container = TDFContainer(
             manifest: manifest,
             payload: payloadData,
         )
@@ -182,7 +182,7 @@ public struct StandardTDFEncryptor {
         let archiveData = try container.serializedData()
         try archiveData.write(to: outputURL)
 
-        return StandardTDFEncryptionResult(
+        return TDFEncryptionResult(
             container: container,
             symmetricKey: symmetricKey,
             iv: streamingResult.iv,
@@ -193,30 +193,30 @@ public struct StandardTDFEncryptor {
     public func encryptFileMultiSegment(
         inputURL: URL,
         outputURL: URL,
-        configuration: StandardTDFEncryptionConfiguration,
+        configuration: TDFEncryptionConfiguration,
         segmentSizes: [Int],
-    ) throws -> StandardTDFEncryptionResult {
+    ) throws -> TDFEncryptionResult {
         guard !segmentSizes.isEmpty else {
             throw StreamingCryptoError.invalidSegmentSize
         }
 
-        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
+        let symmetricKey = try TDFCrypto.generateSymmetricKey()
         let payloadData: Data
-        let streamingResult: StreamingStandardTDFCrypto.StreamingEncryptionResult
+        let streamingResult: StreamingTDFCrypto.StreamingEncryptionResult
 
         do {
             let inputHandle = try FileHandle(forReadingFrom: inputURL)
             defer { try? inputHandle.close() }
 
-            (payloadData, streamingResult) = try StreamingStandardTDFCrypto.encryptPayloadStreamingMultiSegmentToMemory(
+            (payloadData, streamingResult) = try StreamingTDFCrypto.encryptPayloadStreamingMultiSegmentToMemory(
                 inputHandle: inputHandle,
                 symmetricKey: symmetricKey,
                 segmentSizes: segmentSizes,
             )
         }
 
-        let policyBinding = StandardTDFCrypto.policyBinding(policy: configuration.policy.json, symmetricKey: symmetricKey)
-        let wrappedKey = try StandardTDFCrypto.wrapSymmetricKeyWithRSA(
+        let policyBinding = TDFCrypto.policyBinding(policy: configuration.policy.json, symmetricKey: symmetricKey)
+        let wrappedKey = try TDFCrypto.wrapSymmetricKeyWithRSA(
             publicKeyPEM: configuration.kas.publicKeyPEM,
             symmetricKey: symmetricKey,
         )
@@ -237,12 +237,12 @@ public struct StandardTDFEncryptor {
 
         let segmentHashes = segments.map { Data(base64Encoded: $0.hash)! }
         let concatenatedHashes = segmentHashes.reduce(Data(), +)
-        let rootSignature = StandardTDFCrypto.segmentSignature(
+        let rootSignature = TDFCrypto.segmentSignature(
             segmentCiphertext: concatenatedHashes,
             symmetricKey: symmetricKey,
         ).base64EncodedString()
 
-        let defaultSegmentSize = segmentSizes.first ?? StreamingStandardTDFCrypto.defaultChunkSize
+        let defaultSegmentSize = segmentSizes.first ?? StreamingTDFCrypto.defaultChunkSize
         let integrity = TDFIntegrityInformation(
             rootSignature: TDFRootSignature(alg: "HS256", sig: rootSignature),
             segmentHashAlg: "GMAC",
@@ -287,7 +287,7 @@ public struct StandardTDFEncryptor {
             assertions: nil,
         )
 
-        let container = StandardTDFContainer(
+        let container = TDFContainer(
             manifest: manifest,
             payload: payloadData,
         )
@@ -295,7 +295,7 @@ public struct StandardTDFEncryptor {
         let archiveData = try container.serializedData()
         try archiveData.write(to: outputURL)
 
-        return StandardTDFEncryptionResult(
+        return TDFEncryptionResult(
             container: container,
             symmetricKey: symmetricKey,
             iv: streamingResult.iv,
@@ -303,19 +303,19 @@ public struct StandardTDFEncryptor {
         )
     }
 
-    public func encrypt(plaintext: Data, configuration: StandardTDFEncryptionConfiguration) throws -> StandardTDFEncryptionResult {
-        let symmetricKey = try StandardTDFCrypto.generateSymmetricKey()
-        let (iv, ciphertext, tag) = try StandardTDFCrypto.encryptPayload(plaintext: plaintext, symmetricKey: symmetricKey)
+    public func encrypt(plaintext: Data, configuration: TDFEncryptionConfiguration) throws -> TDFEncryptionResult {
+        let symmetricKey = try TDFCrypto.generateSymmetricKey()
+        let (iv, ciphertext, tag) = try TDFCrypto.encryptPayload(plaintext: plaintext, symmetricKey: symmetricKey)
 
         let payloadData = iv + ciphertext + tag
 
-        let policyBinding = StandardTDFCrypto.policyBinding(policy: configuration.policy.json, symmetricKey: symmetricKey)
-        let wrappedKey = try StandardTDFCrypto.wrapSymmetricKeyWithRSA(publicKeyPEM: configuration.kas.publicKeyPEM, symmetricKey: symmetricKey)
+        let policyBinding = TDFCrypto.policyBinding(policy: configuration.policy.json, symmetricKey: symmetricKey)
+        let wrappedKey = try TDFCrypto.wrapSymmetricKeyWithRSA(publicKeyPEM: configuration.kas.publicKeyPEM, symmetricKey: symmetricKey)
 
-        let segmentSignature = try StandardTDFCrypto.segmentSignatureGMAC(segmentCiphertext: payloadData, symmetricKey: symmetricKey)
+        let segmentSignature = try TDFCrypto.segmentSignatureGMAC(segmentCiphertext: payloadData, symmetricKey: symmetricKey)
         let segmentSignatureBase64 = segmentSignature.base64EncodedString()
 
-        let rootSignature = StandardTDFCrypto.segmentSignature(segmentCiphertext: segmentSignature, symmetricKey: symmetricKey).base64EncodedString()
+        let rootSignature = TDFCrypto.segmentSignature(segmentCiphertext: segmentSignature, symmetricKey: symmetricKey).base64EncodedString()
 
         let method = TDFMethodDescriptor(
             algorithm: "AES-256-GCM",
@@ -373,22 +373,22 @@ public struct StandardTDFEncryptor {
             assertions: nil,
         )
 
-        let container = StandardTDFContainer(
+        let container = TDFContainer(
             manifest: manifest,
             payload: payloadData,
         )
 
-        return StandardTDFEncryptionResult(container: container, symmetricKey: symmetricKey, iv: iv, tag: tag)
+        return TDFEncryptionResult(container: container, symmetricKey: symmetricKey, iv: iv, tag: tag)
     }
 }
 
-public struct StandardTDFEncryptionResult: Sendable {
-    public let container: StandardTDFContainer
+public struct TDFEncryptionResult: Sendable {
+    public let container: TDFContainer
     public let symmetricKey: SymmetricKey
     public let iv: Data
     public let tag: Data
 
-    public init(container: StandardTDFContainer, symmetricKey: SymmetricKey, iv: Data, tag: Data) {
+    public init(container: TDFContainer, symmetricKey: SymmetricKey, iv: Data, tag: Data) {
         self.container = container
         self.symmetricKey = symmetricKey
         self.iv = iv
@@ -396,16 +396,16 @@ public struct StandardTDFEncryptionResult: Sendable {
     }
 }
 
-public struct StandardTDFDecryptor {
+public struct TDFDecryptor {
     public init() {}
 
     public func decryptFile(
         inputURL: URL,
         outputURL: URL,
         symmetricKey: SymmetricKey,
-        chunkSize _: Int = StreamingStandardTDFCrypto.defaultChunkSize,
+        chunkSize _: Int = StreamingTDFCrypto.defaultChunkSize,
     ) throws {
-        let loader = StandardTDFLoader()
+        let loader = TDFLoader()
         let container = try loader.load(from: inputURL)
 
         let payloadData = container.payload
@@ -413,14 +413,14 @@ public struct StandardTDFDecryptor {
         let tagSize = 16
         let minSize = ivSize + tagSize
         guard payloadData.count >= minSize else {
-            throw StandardTDFDecryptError.malformedPayload
+            throw TDFDecryptError.malformedPayload
         }
 
         let iv = payloadData.prefix(ivSize)
         let ciphertext = payloadData.dropFirst(ivSize).dropLast(tagSize)
         let tag = payloadData.suffix(tagSize)
 
-        let plaintext = try StandardTDFCrypto.decryptPayload(
+        let plaintext = try TDFCrypto.decryptPayload(
             ciphertext: Data(ciphertext),
             iv: Data(iv),
             tag: Data(tag),
@@ -434,34 +434,34 @@ public struct StandardTDFDecryptor {
         inputURL: URL,
         outputURL: URL,
         privateKeyPEM: String,
-        chunkSize: Int = StreamingStandardTDFCrypto.defaultChunkSize,
+        chunkSize: Int = StreamingTDFCrypto.defaultChunkSize,
     ) throws {
-        let loader = StandardTDFLoader()
+        let loader = TDFLoader()
         let container = try loader.load(from: inputURL)
 
         let keyAccess = container.manifest.encryptionInformation.keyAccess
         guard !keyAccess.isEmpty else {
-            throw StandardTDFDecryptError.missingKeyAccess
+            throw TDFDecryptError.missingKeyAccess
         }
 
         let symmetricKey: SymmetricKey
         if keyAccess.count == 1 {
-            symmetricKey = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
+            symmetricKey = try TDFCrypto.unwrapSymmetricKeyWithRSA(
                 privateKeyPEM: privateKeyPEM,
                 wrappedKey: keyAccess[0].wrappedKey,
             )
         } else {
             var combinedKeyData: Data?
             for kasObject in keyAccess.sorted(by: { ($0.kid ?? "") < ($1.kid ?? "") }) {
-                let symmetricKeyPart = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
+                let symmetricKeyPart = try TDFCrypto.unwrapSymmetricKeyWithRSA(
                     privateKeyPEM: privateKeyPEM,
                     wrappedKey: kasObject.wrappedKey,
                 )
-                let keyData = StandardTDFCrypto.data(from: symmetricKeyPart)
+                let keyData = TDFCrypto.data(from: symmetricKeyPart)
 
                 if let existing = combinedKeyData {
                     guard existing.count == keyData.count else {
-                        throw StandardTDFDecryptError.keyShareSizeMismatch
+                        throw TDFDecryptError.keyShareSizeMismatch
                     }
                     combinedKeyData = xorKeyData(existing, keyData)
                 } else {
@@ -470,7 +470,7 @@ public struct StandardTDFDecryptor {
             }
 
             guard let finalKeyData = combinedKeyData else {
-                throw StandardTDFDecryptError.missingKeyAccess
+                throw TDFDecryptError.missingKeyAccess
             }
             symmetricKey = SymmetricKey(data: finalKeyData)
         }
@@ -482,17 +482,17 @@ public struct StandardTDFDecryptor {
         inputURL: URL,
         outputURL: URL,
         symmetricKey: SymmetricKey,
-        chunkSize _: Int = StreamingStandardTDFCrypto.defaultChunkSize,
+        chunkSize _: Int = StreamingTDFCrypto.defaultChunkSize,
     ) throws {
-        let loader = StandardTDFLoader()
+        let loader = TDFLoader()
         let container = try loader.load(from: inputURL)
 
         guard let integrityInfo = container.manifest.encryptionInformation.integrityInformation else {
-            throw StandardTDFDecryptError.missingIntegrityInformation
+            throw TDFDecryptError.missingIntegrityInformation
         }
 
         let segments = integrityInfo.segments.enumerated().map { index, seg in
-            StreamingStandardTDFCrypto.EncryptedSegment(
+            StreamingTDFCrypto.EncryptedSegment(
                 segmentIndex: index,
                 plaintextSize: seg.segmentSize,
                 encryptedSize: seg.encryptedSegmentSize ?? (seg.segmentSize + 28),
@@ -500,7 +500,7 @@ public struct StandardTDFDecryptor {
             )
         }
 
-        let plaintext = try StreamingStandardTDFCrypto.decryptPayloadMultiSegmentFromMemory(
+        let plaintext = try StreamingTDFCrypto.decryptPayloadMultiSegmentFromMemory(
             encryptedPayload: container.payload,
             segments: segments,
             symmetricKey: symmetricKey,
@@ -509,14 +509,14 @@ public struct StandardTDFDecryptor {
         try plaintext.write(to: outputURL)
     }
 
-    public func decrypt(container: StandardTDFContainer, privateKeyPEM: String) throws -> Data {
+    public func decrypt(container: TDFContainer, privateKeyPEM: String) throws -> Data {
         let keyAccess = container.manifest.encryptionInformation.keyAccess
         guard !keyAccess.isEmpty else {
-            throw StandardTDFDecryptError.missingKeyAccess
+            throw TDFDecryptError.missingKeyAccess
         }
 
         if keyAccess.count == 1 {
-            let symmetricKey = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
+            let symmetricKey = try TDFCrypto.unwrapSymmetricKeyWithRSA(
                 privateKeyPEM: privateKeyPEM,
                 wrappedKey: keyAccess[0].wrappedKey,
             )
@@ -525,15 +525,15 @@ public struct StandardTDFDecryptor {
 
         var combinedKeyData: Data?
         for kasObject in keyAccess.sorted(by: { ($0.kid ?? "") < ($1.kid ?? "") }) {
-            let symmetricKeyPart = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
+            let symmetricKeyPart = try TDFCrypto.unwrapSymmetricKeyWithRSA(
                 privateKeyPEM: privateKeyPEM,
                 wrappedKey: kasObject.wrappedKey,
             )
-            let keyData = StandardTDFCrypto.data(from: symmetricKeyPart)
+            let keyData = TDFCrypto.data(from: symmetricKeyPart)
 
             if let existing = combinedKeyData {
                 guard existing.count == keyData.count else {
-                    throw StandardTDFDecryptError.keyShareSizeMismatch
+                    throw TDFDecryptError.keyShareSizeMismatch
                 }
                 combinedKeyData = xorKeyData(existing, keyData)
             } else {
@@ -542,7 +542,7 @@ public struct StandardTDFDecryptor {
         }
 
         guard let finalKeyData = combinedKeyData else {
-            throw StandardTDFDecryptError.missingKeyAccess
+            throw TDFDecryptError.missingKeyAccess
         }
 
         let finalSymmetricKey = SymmetricKey(data: finalKeyData)
@@ -553,24 +553,24 @@ public struct StandardTDFDecryptor {
         Data(zip(lhs, rhs).map { $0 ^ $1 })
     }
 
-    public func decrypt(container: StandardTDFContainer, symmetricKey: SymmetricKey) throws -> Data {
+    public func decrypt(container: TDFContainer, symmetricKey: SymmetricKey) throws -> Data {
         let payloadData = container.payload
         let ivSize = 12
         let tagSize = 16
         let minSize = ivSize + tagSize
         guard payloadData.count >= minSize else {
-            throw StandardTDFDecryptError.malformedPayload
+            throw TDFDecryptError.malformedPayload
         }
 
         let iv = payloadData.prefix(ivSize)
         let ciphertext = payloadData.dropFirst(ivSize).dropLast(tagSize)
         let tag = payloadData.suffix(tagSize)
 
-        return try StandardTDFCrypto.decryptPayload(ciphertext: Data(ciphertext), iv: Data(iv), tag: Data(tag), symmetricKey: symmetricKey)
+        return try TDFCrypto.decryptPayload(ciphertext: Data(ciphertext), iv: Data(iv), tag: Data(tag), symmetricKey: symmetricKey)
     }
 }
 
-public enum StandardTDFDecryptError: Error, CustomStringConvertible, Equatable {
+public enum TDFDecryptError: Error, CustomStringConvertible, Equatable {
     case missingKeyAccess
     case malformedPayload
     case keyShareSizeMismatch

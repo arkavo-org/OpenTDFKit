@@ -325,22 +325,22 @@ final class IntegrationTests: XCTestCase {
         }
         """.data(using: .utf8)!
 
-        let kasInfo = StandardTDFKasInfo(
+        let kasInfo = TDFKasInfo(
             url: platformURL.appendingPathComponent("/kas"),
             publicKeyPEM: kasPublicKeyPEM,
             kid: "kas-integration-test",
             schemaVersion: "1.0",
         )
 
-        let policy = try StandardTDFPolicy(json: policyJSON)
-        let configuration = StandardTDFEncryptionConfiguration(
+        let policy = try TDFPolicy(json: policyJSON)
+        let configuration = TDFEncryptionConfiguration(
             kas: kasInfo,
             policy: policy,
             mimeType: "text/plain",
             tdfSpecVersion: "4.3.0",
         )
 
-        let encryptor = StandardTDFEncryptor()
+        let encryptor = TDFEncryptor()
         let encryptionResult = try encryptor.encrypt(plaintext: testPlaintext, configuration: configuration)
 
         let tdfData = try encryptionResult.container.serializedData()
@@ -349,7 +349,7 @@ final class IntegrationTests: XCTestCase {
 
         let clientPrivateKey = try generateTestRSAKeyPair()
 
-        let loader = StandardTDFLoader()
+        let loader = TDFLoader()
         let container = try loader.load(from: tdfData)
 
         guard let kasURL = URL(string: container.manifest.encryptionInformation.keyAccess[0].url) else {
@@ -358,7 +358,7 @@ final class IntegrationTests: XCTestCase {
         }
 
         let kasClient = KASRewrapClient(kasURL: kasURL, oauthToken: token)
-        let rewrapResult = try await kasClient.rewrapStandardTDF(
+        let rewrapResult = try await kasClient.rewrapTDF(
             manifest: container.manifest,
             clientPublicKeyPEM: clientPrivateKey.publicKeyPEM,
         )
@@ -367,11 +367,11 @@ final class IntegrationTests: XCTestCase {
 
         var reconstructedKeyData: Data?
         for (_, wrappedKey) in rewrapResult.wrappedKeys.sorted(by: { $0.key < $1.key }) {
-            let unwrappedKey = try StandardTDFCrypto.unwrapSymmetricKeyWithRSA(
+            let unwrappedKey = try TDFCrypto.unwrapSymmetricKeyWithRSA(
                 privateKeyPEM: clientPrivateKey.privateKeyPEM,
                 wrappedKey: wrappedKey.base64EncodedString(),
             )
-            let keyData = StandardTDFCrypto.data(from: unwrappedKey)
+            let keyData = TDFCrypto.data(from: unwrappedKey)
 
             if let existing = reconstructedKeyData {
                 reconstructedKeyData = Data(zip(existing, keyData).map { $0 ^ $1 })
@@ -387,7 +387,7 @@ final class IntegrationTests: XCTestCase {
 
         let reconstructedKey = SymmetricKey(data: finalKeyData)
 
-        let decryptor = StandardTDFDecryptor()
+        let decryptor = TDFDecryptor()
         let decryptedPlaintext = try decryptor.decrypt(container: container, symmetricKey: reconstructedKey)
 
         XCTAssertEqual(decryptedPlaintext, testPlaintext, "Decrypted plaintext should match original")
