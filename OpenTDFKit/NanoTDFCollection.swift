@@ -119,14 +119,20 @@ public struct CollectionItem: Sendable {
     /// Access the ciphertext portion (zero-copy where possible)
     public var ciphertext: Data {
         storage.withUnsafeBufferPointer { buffer in
-            Data(bytes: buffer.baseAddress!, count: tagOffset)
+            guard let baseAddress = buffer.baseAddress else {
+                return Data()
+            }
+            return Data(bytes: baseAddress, count: tagOffset)
         }
     }
 
     /// Access the authentication tag portion (zero-copy where possible)
     public var tag: Data {
         storage.withUnsafeBufferPointer { buffer in
-            let tagStart = buffer.baseAddress!.advanced(by: tagOffset)
+            guard let baseAddress = buffer.baseAddress else {
+                return Data()
+            }
+            let tagStart = baseAddress.advanced(by: tagOffset)
             return Data(bytes: tagStart, count: buffer.count - tagOffset)
         }
     }
@@ -134,7 +140,10 @@ public struct CollectionItem: Sendable {
     /// Combined ciphertext and tag as contiguous data
     public var ciphertextWithTag: Data {
         storage.withUnsafeBufferPointer { buffer in
-            Data(bytes: buffer.baseAddress!, count: buffer.count)
+            guard let baseAddress = buffer.baseAddress else {
+                return Data()
+            }
+            return Data(bytes: baseAddress, count: buffer.count)
         }
     }
 
@@ -175,7 +184,12 @@ public struct CollectionItem: Sendable {
     ///   - ivCounter: The 3-byte IV counter value
     ///   - ciphertextWithTag: Combined ciphertext and tag data
     ///   - tagSize: Size of the authentication tag in bytes
+    /// - Precondition: tagSize must be positive and not exceed ciphertextWithTag length
     public init(ivCounter: UInt32, ciphertextWithTag: Data, tagSize: Int) {
+        precondition(tagSize > 0, "tagSize must be positive")
+        precondition(tagSize <= ciphertextWithTag.count,
+                     "tagSize must not exceed ciphertextWithTag length")
+
         self.ivCounter = ivCounter
         tagOffset = ciphertextWithTag.count - tagSize
 
@@ -274,9 +288,14 @@ public actor NanoTDFCollection {
         ivCounter >= configuration.rotationThreshold
     }
 
-    /// Whether the collection has reached maximum capacity
+    /// Whether the collection has reached maximum capacity (no more items can be encrypted)
     public var isExhausted: Bool {
         ivCounter > Self.maxItems
+    }
+
+    /// Whether more items can be encrypted (inverse of isExhausted, clearer semantics)
+    public var canEncryptMore: Bool {
+        ivCounter <= Self.maxItems
     }
 
     // MARK: - Initialization
@@ -350,9 +369,14 @@ public actor NanoTDFCollection {
     /// - Returns: Array of CollectionItems in the same order as input
     /// - Throws: `NanoTDFCollectionError.ivExhausted` if maximum items would be exceeded
     public func encryptBatch(plaintexts: [Data]) throws -> [CollectionItem] {
-        // Check if we have enough IVs for the batch
+        // First check if collection is already exhausted to prevent underflow
+        guard ivCounter <= Self.maxItems else {
+            throw NanoTDFCollectionError.ivExhausted
+        }
+
+        // Now safe to calculate remaining capacity without underflow
         let remaining = Self.maxItems - ivCounter + 1
-        guard plaintexts.count <= remaining else {
+        guard UInt32(plaintexts.count) <= remaining else {
             throw NanoTDFCollectionError.ivExhausted
         }
 
