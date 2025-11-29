@@ -393,6 +393,222 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(decryptedPlaintext, testPlaintext, "Decrypted plaintext should match original")
     }
 
+    // MARK: - NanoTDF Collection Integration Tests
+
+    func testEndToEndNanoTDFCollectionWithKASRewrap() async throws {
+        try skipIfEnvironmentNotConfigured()
+
+        guard let kasURL,
+              let platformURL
+        else {
+            XCTFail("Environment not configured")
+            return
+        }
+
+        // Test with multiple items
+        let testItems = [
+            "Collection item 1: Hello".data(using: .utf8)!,
+            "Collection item 2: World".data(using: .utf8)!,
+            "Collection item 3: NanoTDF Collection Test".data(using: .utf8)!,
+        ]
+
+        let keyStore = KeyStore(curve: .secp256r1)
+        let kasService = KASService(keyStore: keyStore, baseURL: platformURL)
+
+        let kasMetadata = try await kasService.generateKasMetadata()
+
+        // Create policy locator
+        let policyLocator = ResourceLocator(
+            protocolEnum: .https,
+            body: "\(platformURL.host ?? "localhost")/policy/collection-test",
+        )!
+
+        // Build the collection
+        let collection = try await NanoTDFCollectionBuilder()
+            .kasMetadata(kasMetadata)
+            .policy(.remote(policyLocator))
+            .build()
+
+        // Encrypt all items
+        var encryptedItems = [CollectionItem]()
+        for plaintext in testItems {
+            let item = try await collection.encryptItem(plaintext: plaintext)
+            encryptedItems.append(item)
+        }
+
+        XCTAssertEqual(encryptedItems.count, 3)
+
+        // Verify IV progression
+        XCTAssertEqual(encryptedItems[0].ivCounter, 1)
+        XCTAssertEqual(encryptedItems[1].ivCounter, 2)
+        XCTAssertEqual(encryptedItems[2].ivCounter, 3)
+
+        // Get token for KAS rewrap
+        let token = try await getOAuthToken()
+
+        // Get header for rewrap request
+        let header = await collection.header
+        let headerBytes = await collection.getHeaderBytes()
+
+        let kasRewrapClient = KASRewrapClient(
+            kasURL: kasURL,
+            oauthToken: token,
+        )
+
+        let clientPrivateKey = P256.KeyAgreement.PrivateKey()
+        let clientKeyPair = EphemeralKeyPair(
+            privateKey: clientPrivateKey.rawRepresentation,
+            publicKey: clientPrivateKey.publicKey.compressedRepresentation,
+            curve: .secp256r1,
+        )
+
+        // Single rewrap call for entire collection
+        let (wrappedKey, sessionPublicKey) = try await kasRewrapClient.rewrapNanoTDF(
+            header: headerBytes,
+            parsedHeader: header,
+            clientKeyPair: clientKeyPair,
+        )
+
+        XCTAssertFalse(wrappedKey.isEmpty, "Wrapped key should not be empty")
+
+        // Unwrap the symmetric key
+        let symmetricKey = try KASRewrapClient.unwrapKey(
+            wrappedKey: wrappedKey,
+            sessionPublicKey: sessionPublicKey,
+            clientPrivateKey: clientKeyPair.privateKey,
+        )
+
+        // Create decryptor with the unwrapped key
+        let decryptor = NanoTDFCollectionDecryptor.withUnwrappedKey(symmetricKey: symmetricKey)
+
+        // Decrypt all items
+        for (index, item) in encryptedItems.enumerated() {
+            let decrypted = try await decryptor.decryptItem(item)
+            XCTAssertEqual(decrypted, testItems[index], "Item \(index) should decrypt correctly")
+        }
+    }
+
+    func testNanoTDFCollectionSerializationRoundtrip() async throws {
+        try skipIfEnvironmentNotConfigured()
+
+        guard let platformURL else {
+            XCTFail("Environment not configured")
+            return
+        }
+
+        let testItems = [
+            "Serialization test 1".data(using: .utf8)!,
+            "Serialization test 2".data(using: .utf8)!,
+        ]
+
+        let keyStore = KeyStore(curve: .secp256r1)
+        let kasService = KASService(keyStore: keyStore, baseURL: platformURL)
+
+        let kasMetadata = try await kasService.generateKasMetadata()
+
+        let policyLocator = ResourceLocator(
+            protocolEnum: .https,
+            body: "\(platformURL.host ?? "localhost")/policy/serial-test",
+        )!
+
+        let collection = try await NanoTDFCollectionBuilder()
+            .kasMetadata(kasMetadata)
+            .policy(.remote(policyLocator))
+            .wireFormat(.containerFraming)
+            .build()
+
+        // Encrypt and serialize
+        var serializedItems = Data()
+        for plaintext in testItems {
+            let item = try await collection.encryptItem(plaintext: plaintext)
+            let serialized = await collection.serialize(item: item)
+            serializedItems.append(serialized)
+        }
+
+        // Create collection file
+        let headerBytes = await collection.getHeaderBytes()
+        let itemCount = await collection.itemCount
+        let fileData = NanoTDFCollectionFile.serialize(
+            header: headerBytes,
+            items: serializedItems,
+            itemCount: itemCount,
+        )
+
+        // Parse the file
+        let (parsedHeader, parsedItems, parsedCount) = try NanoTDFCollectionFile.parse(from: fileData)
+
+        XCTAssertEqual(parsedHeader, headerBytes)
+        XCTAssertEqual(parsedItems, serializedItems)
+        XCTAssertEqual(parsedCount, UInt32(testItems.count))
+
+        // Parse individual items
+        let items = try NanoTDFCollectionParser.parseStream(
+            from: parsedItems,
+            format: .containerFraming,
+            tagSize: 16,
+        )
+
+        XCTAssertEqual(items.count, testItems.count)
+
+        // Decrypt using the collection's symmetric key (KAS-side)
+        let symmetricKey = await collection.getSymmetricKey()
+        let decryptor = NanoTDFCollectionDecryptor.withUnwrappedKey(symmetricKey: symmetricKey)
+
+        for (index, item) in items.enumerated() {
+            let decrypted = try await decryptor.decryptItem(item)
+            XCTAssertEqual(decrypted, testItems[index])
+        }
+    }
+
+    func testNanoTDFCollectionBatchEncryption() async throws {
+        try skipIfEnvironmentNotConfigured()
+
+        guard let platformURL else {
+            XCTFail("Environment not configured")
+            return
+        }
+
+        // Test batch encryption of many items
+        let itemCount = 100
+        let testItems = (0 ..< itemCount).map { "Item \($0)".data(using: .utf8)! }
+
+        let keyStore = KeyStore(curve: .secp256r1)
+        let kasService = KASService(keyStore: keyStore, baseURL: platformURL)
+
+        let kasMetadata = try await kasService.generateKasMetadata()
+
+        let policyLocator = ResourceLocator(
+            protocolEnum: .https,
+            body: "\(platformURL.host ?? "localhost")/policy/batch-test",
+        )!
+
+        let collection = try await NanoTDFCollectionBuilder()
+            .kasMetadata(kasMetadata)
+            .policy(.remote(policyLocator))
+            .build()
+
+        // Batch encrypt
+        let encryptedItems = try await collection.encryptBatch(plaintexts: testItems)
+
+        XCTAssertEqual(encryptedItems.count, itemCount)
+
+        // Verify IV progression
+        for (index, item) in encryptedItems.enumerated() {
+            XCTAssertEqual(item.ivCounter, UInt32(index + 1))
+        }
+
+        // Batch decrypt
+        let symmetricKey = await collection.getSymmetricKey()
+        let decryptor = NanoTDFCollectionDecryptor.withUnwrappedKey(symmetricKey: symmetricKey)
+
+        let decryptedItems = try await decryptor.decryptBatch(encryptedItems)
+
+        XCTAssertEqual(decryptedItems.count, itemCount)
+        for (index, decrypted) in decryptedItems.enumerated() {
+            XCTAssertEqual(decrypted, testItems[index])
+        }
+    }
+
     private func generateTestRSAKeyPair() throws -> (privateKeyPEM: String, publicKeyPEM: String) {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")

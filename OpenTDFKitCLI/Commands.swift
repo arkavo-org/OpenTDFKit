@@ -769,3 +769,263 @@ extension String {
         }
     }
 }
+
+// MARK: - NanoTDF Collection Commands
+
+extension Commands {
+    /// Encrypt multiple plaintexts to a NanoTDF Collection file
+    static func encryptNanoTDFCollection(
+        plaintexts: [Data],
+        outputURL: URL,
+    ) async throws {
+        print("NanoTDF Collection Encryption")
+        print("==============================")
+        print("Items to encrypt: \(plaintexts.count)")
+
+        // Get configuration from environment
+        let config = try CLIConfig.fromEnvironment()
+
+        // Parse KAS URL
+        guard let kasURL = URL(string: config.kasURL),
+              let kasHost = kasURL.host
+        else {
+            throw EncryptError.invalidKASURL
+        }
+
+        let kasPort = kasURL.port ?? 8080
+        let kasBody = "\(kasHost):\(kasPort)"
+
+        // Get OAuth token
+        let tokenURL = URL(fileURLWithPath: "fresh_token.txt")
+        let tokenData = try Data(contentsOf: tokenURL)
+        let oauthToken = String(data: tokenData, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        // Fetch KAS public key
+        let kasFullURL = URL(string: "http://\(kasBody)/kas")!
+        let kasPublicKeyData = try await fetchKASPublicKey(
+            kasURL: kasFullURL,
+            token: oauthToken,
+        )
+        print("✓ Retrieved KAS public key")
+
+        // Create resource locator for KAS
+        guard let kasLocator = ResourceLocator(
+            protocolEnum: ProtocolEnum(rawValue: 0x00)!,
+            body: kasBody,
+            identifier: Data([0x65, 0x31]),
+        ) else {
+            throw EncryptError.invalidKASURL
+        }
+
+        // Convert compressed key data to CryptoKit public key
+        let kasPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: kasPublicKeyData)
+
+        // Create KAS metadata
+        let kasMetadata = try KasMetadata(
+            resourceLocator: kasLocator,
+            publicKey: kasPublicKey,
+            curve: .secp256r1,
+        )
+
+        // Create policy locator
+        guard let policyLocator = ResourceLocator(
+            protocolEnum: .https,
+            body: "\(kasBody)/policy",
+        ) else {
+            throw EncryptError.invalidKASURL
+        }
+
+        // Build collection
+        let collection = try await NanoTDFCollectionBuilder()
+            .kasMetadata(kasMetadata)
+            .policy(.remote(policyLocator))
+            .build()
+
+        print("✓ Collection initialized (single key derivation)")
+
+        // Encrypt all items
+        var serializedData = Data()
+        for (index, plaintext) in plaintexts.enumerated() {
+            let item = try await collection.encryptItem(plaintext: plaintext)
+            let serialized = await collection.serialize(item: item)
+            serializedData.append(serialized)
+
+            if (index + 1) % 100 == 0 || index == plaintexts.count - 1 {
+                print("  Encrypted \(index + 1)/\(plaintexts.count) items")
+            }
+        }
+
+        // Create collection file
+        let headerBytes = await collection.getHeaderBytes()
+        let itemCount = await collection.itemCount
+        let fileData = NanoTDFCollectionFile.serialize(
+            header: headerBytes,
+            items: serializedData,
+            itemCount: itemCount,
+        )
+
+        // Write to output
+        try fileData.write(to: outputURL)
+
+        print("✓ Created NanoTDF Collection")
+        print("  Total size: \(fileData.count) bytes")
+        print("  Items: \(itemCount)")
+        print("  Header: \(headerBytes.count) bytes")
+    }
+
+    /// Decrypt a NanoTDF Collection file
+    static func decryptNanoTDFCollection(
+        data: Data,
+        filename: String,
+        token: String? = nil,
+        tokenPath: String = "fresh_token.txt",
+    ) async throws -> [Data] {
+        print("NanoTDF Collection Decryption")
+        print("==============================")
+        print("File: \(filename)")
+        print("Size: \(data.count) bytes\n")
+
+        // Parse collection file
+        let (headerBytes, itemsData, itemCount) = try NanoTDFCollectionFile.parse(from: data)
+        print("✓ Parsed collection file")
+        print("  Header: \(headerBytes.count) bytes")
+        print("  Items: \(itemCount)")
+
+        // Parse header
+        let parser = BinaryParser(data: headerBytes)
+        let header = try parser.parseHeader()
+        print("✓ Parsed NanoTDF header")
+
+        // Get KAS URL
+        let kasURLString = header.payloadKeyAccess.kasLocator.body
+        let kasURLWithPath = if kasURLString.contains("/kas") {
+            "http://\(kasURLString)"
+        } else {
+            "http://\(kasURLString)/kas"
+        }
+        guard let kasURL = URL(string: kasURLWithPath) else {
+            throw DecryptError.invalidKASURL
+        }
+        print("  KAS URL: \(kasURL)")
+
+        // Get OAuth token
+        let oauthToken = try resolveOAuthToken(providedToken: token, tokenPath: tokenPath)
+        print("✓ OAuth token loaded")
+
+        // Generate client ephemeral key pair
+        let privateKey = P256.KeyAgreement.PrivateKey()
+        let clientKeyPair = EphemeralKeyPair(
+            privateKey: privateKey.rawRepresentation,
+            publicKey: privateKey.publicKey.compressedRepresentation,
+            curve: .secp256r1,
+        )
+
+        let publicKeyPEM = try convertToSPKIPEM(compressedKey: clientKeyPair.publicKey)
+        let pemKeyPair = EphemeralKeyPair(
+            privateKey: clientKeyPair.privateKey,
+            publicKey: publicKeyPEM.data(using: .utf8)!,
+            curve: .secp256r1,
+        )
+        print("✓ Generated client ephemeral key pair")
+
+        // Call KAS rewrap endpoint (single rewrap for entire collection)
+        print("\nCalling KAS rewrap endpoint...")
+        let kasClient = KASRewrapClient(kasURL: kasURL, oauthToken: oauthToken)
+
+        let (wrappedKey, sessionPublicKey) = try await kasClient.rewrapNanoTDF(
+            header: headerBytes,
+            parsedHeader: header,
+            clientKeyPair: pemKeyPair,
+        )
+        print("✓ KAS rewrap successful (single key for all items)")
+
+        // Unwrap the key
+        let payloadKey = try KASRewrapClient.unwrapKey(
+            wrappedKey: wrappedKey,
+            sessionPublicKey: sessionPublicKey,
+            clientPrivateKey: clientKeyPair.privateKey,
+        )
+        print("✓ Key unwrapped successfully")
+
+        // Create decryptor with the unwrapped key
+        let cipher = header.payloadSignatureConfig.payloadCipher ?? .aes256GCM128
+        let decryptor = NanoTDFCollectionDecryptor.withUnwrappedKey(
+            symmetricKey: payloadKey,
+            cipher: cipher,
+        )
+
+        // Parse and decrypt all items
+        let items = try NanoTDFCollectionParser.parseStream(
+            from: itemsData,
+            format: .containerFraming,
+            tagSize: cipher.tagSize,
+        )
+        print("\n✓ Parsed \(items.count) items from stream")
+
+        var decryptedItems = [Data]()
+        decryptedItems.reserveCapacity(items.count)
+
+        for (index, item) in items.enumerated() {
+            let plaintext = try await decryptor.decryptItem(item)
+            decryptedItems.append(plaintext)
+
+            if (index + 1) % 100 == 0 || index == items.count - 1 {
+                print("  Decrypted \(index + 1)/\(items.count) items")
+            }
+        }
+
+        print("\n✓ Decryption complete!")
+        return decryptedItems
+    }
+
+    /// Encrypt a single file to NanoTDF Collection format (for CLI convenience)
+    static func encryptFileToCollection(inputURL: URL, outputURL: URL) async throws {
+        let inputData = try Data(contentsOf: inputURL)
+        // For single file, we just encrypt it as a single-item collection
+        try await encryptNanoTDFCollection(plaintexts: [inputData], outputURL: outputURL)
+    }
+
+    /// Decrypt a NanoTDF Collection file and return the first item (for CLI single-file mode)
+    static func decryptCollectionToFile(
+        inputURL: URL,
+        outputURL: URL,
+        token: String? = nil,
+        tokenPath: String = "fresh_token.txt",
+    ) async throws {
+        let data = try Data(contentsOf: inputURL)
+        let decryptedItems = try await decryptNanoTDFCollection(
+            data: data,
+            filename: inputURL.lastPathComponent,
+            token: token,
+            tokenPath: tokenPath,
+        )
+
+        guard let firstItem = decryptedItems.first else {
+            throw CollectionCLIError.emptyCollection
+        }
+
+        // For single output file, concatenate all items or just use first
+        if decryptedItems.count == 1 {
+            try firstItem.write(to: outputURL)
+        } else {
+            // For multiple items, concatenate them with newlines if they're text
+            var combined = Data()
+            for item in decryptedItems {
+                combined.append(item)
+            }
+            try combined.write(to: outputURL)
+        }
+    }
+}
+
+enum CollectionCLIError: Error, CustomStringConvertible {
+    case emptyCollection
+
+    var description: String {
+        switch self {
+        case .emptyCollection:
+            "Collection contains no items"
+        }
+    }
+}

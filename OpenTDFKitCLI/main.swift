@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 enum CLIDataFormat: String {
     case nano
     case nanoWithECDSA = "nano-with-ecdsa"
+    case nanoCollection = "nano-collection"
     case tdf
     case ztdf
 
@@ -14,6 +15,9 @@ enum CLIDataFormat: String {
         let normalized = rawValue.lowercased()
         if normalized == "nano_with_ecdsa" {
             return .nanoWithECDSA
+        }
+        if normalized == "nano_collection" || normalized == "nano-collection" {
+            return .nanoCollection
         }
         guard let format = CLIDataFormat(rawValue: normalized) else {
             throw CLIError.unsupportedFormat(rawValue)
@@ -118,6 +122,7 @@ struct OpenTDFKitCLI {
         Formats:
           nano               Standard NanoTDF
           nano-with-ecdsa    NanoTDF with ECDSA binding
+          nano-collection    NanoTDF Collection (single key, multiple payloads)
           tdf                Standard ZIP-based TDF (supports streaming)
           ztdf               ZTDF alias for standard TDF
 
@@ -126,7 +131,7 @@ struct OpenTDFKitCLI {
           --segments <sizes>     Comma-separated segment sizes (e.g., 2m,5m,2m)
 
         Features (for supports command):
-          nano, nano_ecdsa, ztdf, assertions, etc.
+          nano, nano_ecdsa, nano_collection, ztdf, etc.
 
         Environment Variables:
           CLIENTID           OAuth client ID
@@ -136,11 +141,13 @@ struct OpenTDFKitCLI {
 
         Examples:
           OpenTDFKitCLI encrypt input.txt output.ntdf nano
+          OpenTDFKitCLI encrypt input.txt output.ntdf nano-collection
           OpenTDFKitCLI encrypt large.dat output.tdf tdf --chunk-size 5m
           OpenTDFKitCLI encrypt large.dat output.tdf tdf --segments 2m,5m,25m
+          OpenTDFKitCLI decrypt output.ntdf recovered.txt nano-collection
           OpenTDFKitCLI decrypt output.tdf recovered.dat tdf --chunk-size 5m
           OpenTDFKitCLI benchmark test.dat tdf
-          OpenTDFKitCLI supports nano
+          OpenTDFKitCLI supports nano_collection
           OpenTDFKitCLI verify test.ntdf
         """)
     }
@@ -241,6 +248,9 @@ struct OpenTDFKitCLI {
                 plaintext: inputData,
                 useECDSA: true,
             )
+        case .nanoCollection:
+            try await Commands.encryptFileToCollection(inputURL: inputURL, outputURL: outputURL)
+            return
         case .tdf, .ztdf:
             let configuration = try buildTDFConfiguration(for: inputURL)
 
@@ -314,6 +324,9 @@ struct OpenTDFKitCLI {
                 data: data,
                 filename: inputURL.lastPathComponent,
             )
+        case .nanoCollection:
+            try await Commands.decryptCollectionToFile(inputURL: inputURL, outputURL: outputURL)
+            return
         case .tdf, .ztdf:
             let symmetricKey = try loadSymmetricKeyFromEnvironment()
             let privateKey = try loadPrivateKeyPEMFromEnvironment()
@@ -604,7 +617,7 @@ struct OpenTDFKitCLI {
 
         // Return 0 for supported features, 1 for unsupported
         switch feature {
-        case "nano", "nano_ecdsa":
+        case "nano", "nano_ecdsa", "nano_collection":
             return 0
         case "tdf", "ztdf":
             return 0
