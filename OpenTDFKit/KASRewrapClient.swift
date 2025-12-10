@@ -577,18 +577,27 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         }
 
         // Decode base64
-        guard let derData = Data(base64Encoded: base64Content) else {
+        guard let keyData = Data(base64Encoded: base64Content) else {
             throw KASRewrapError.pemParsingFailed("Invalid base64 encoding")
         }
 
-        // Validate minimum SPKI size for P-256 (typically 91 bytes)
-        guard derData.count >= 70 else { // Allow some flexibility
-            throw KASRewrapError.pemParsingFailed("DER data too small: \(derData.count) bytes")
-        }
-
-        // Parse using CryptoKit
+        // Parse public key - support multiple formats
         do {
-            let publicKey = try P256.KeyAgreement.PublicKey(derRepresentation: derData)
+            let publicKey: P256.KeyAgreement.PublicKey
+
+            if keyData.count == 65 && keyData[0] == 0x04 {
+                // Raw uncompressed SEC1 point (0x04 || x || y)
+                publicKey = try P256.KeyAgreement.PublicKey(x963Representation: keyData)
+            } else if keyData.count == 33 && (keyData[0] == 0x02 || keyData[0] == 0x03) {
+                // Compressed SEC1 point (0x02/0x03 || x)
+                publicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: keyData)
+            } else if keyData.count >= 70 {
+                // SPKI DER format (91 bytes typical for P-256)
+                publicKey = try P256.KeyAgreement.PublicKey(derRepresentation: keyData)
+            } else {
+                throw KASRewrapError.pemParsingFailed("Unrecognized key format: \(keyData.count) bytes")
+            }
+
             let compressedKey = publicKey.compressedRepresentation
 
             // Validate compressed key size
@@ -597,10 +606,10 @@ public class KASRewrapClient: KASRewrapClientProtocol {
             }
 
             return compressedKey
-        } catch let error as CryptoKitError {
-            throw KASRewrapError.pemParsingFailed("CryptoKit error: \(error.localizedDescription)")
+        } catch let error as KASRewrapError {
+            throw error
         } catch {
-            throw KASRewrapError.pemParsingFailed("Failed to parse DER: \(error.localizedDescription)")
+            throw KASRewrapError.pemParsingFailed("Failed to parse key: \(error.localizedDescription)")
         }
     }
 
