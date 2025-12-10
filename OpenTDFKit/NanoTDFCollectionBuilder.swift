@@ -137,7 +137,8 @@ public struct NanoTDFCollectionBuilder: Sendable {
         }
 
         // Step 3: Derive symmetric key via HKDF (moderate - ~10us)
-        let salt = CryptoHelper.computeHKDFSalt(version: Header.version)
+        // Use v12 salt for KAS compatibility (L1L format)
+        let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
         let symmetricKey = await cryptoHelper.deriveSymmetricKey(
             sharedSecret: sharedSecret,
             salt: salt,
@@ -167,10 +168,10 @@ public struct NanoTDFCollectionBuilder: Sendable {
         )
         policy.binding = binding
 
-        // Step 5: Build header
+        // Step 5: Build header (v12 format - empty kasPublicKey triggers L1L serialization)
         let payloadKeyAccess = PayloadKeyAccess(
             kasEndpointLocator: kas.resourceLocator,
-            kasPublicKey: kasPublicKey,
+            kasPublicKey: Data(),  // Empty = v12 (L1L) format
         )
 
         let header = Header(
