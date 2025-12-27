@@ -71,12 +71,14 @@ public struct TDFEncryptionConfiguration: Sendable {
     public let policy: TDFPolicy
     public let mimeType: String?
     public let tdfSpecVersion: String
+    public let keySize: TDFKeySize
 
-    public init(kas: TDFKasInfo, policy: TDFPolicy, mimeType: String? = nil, tdfSpecVersion: String = "4.3.0") {
+    public init(kas: TDFKasInfo, policy: TDFPolicy, mimeType: String? = nil, tdfSpecVersion: String = "4.3.0", keySize: TDFKeySize = .bits256) {
         self.kas = kas
         self.policy = policy
         self.mimeType = mimeType
         self.tdfSpecVersion = tdfSpecVersion
+        self.keySize = keySize
     }
 }
 
@@ -89,7 +91,7 @@ public struct TDFEncryptor {
         configuration: TDFEncryptionConfiguration,
         chunkSize: Int = StreamingTDFCrypto.defaultChunkSize,
     ) throws -> TDFEncryptionResult {
-        let symmetricKey = try TDFCrypto.generateSymmetricKey()
+        let symmetricKey = try TDFCrypto.generateSymmetricKey(size: configuration.keySize)
         let payloadData: Data
         let streamingResult: StreamingTDFCrypto.StreamingEncryptionResult
 
@@ -111,7 +113,7 @@ public struct TDFEncryptor {
         )
 
         let method = TDFMethodDescriptor(
-            algorithm: "AES-256-GCM",
+            algorithm: configuration.keySize.algorithm,
             iv: "",
             isStreamable: true,
         )
@@ -200,7 +202,7 @@ public struct TDFEncryptor {
             throw StreamingCryptoError.invalidSegmentSize
         }
 
-        let symmetricKey = try TDFCrypto.generateSymmetricKey()
+        let symmetricKey = try TDFCrypto.generateSymmetricKey(size: configuration.keySize)
         let payloadData: Data
         let streamingResult: StreamingTDFCrypto.StreamingEncryptionResult
 
@@ -222,7 +224,7 @@ public struct TDFEncryptor {
         )
 
         let method = TDFMethodDescriptor(
-            algorithm: "AES-256-GCM",
+            algorithm: configuration.keySize.algorithm,
             iv: "",
             isStreamable: true,
         )
@@ -304,7 +306,7 @@ public struct TDFEncryptor {
     }
 
     public func encrypt(plaintext: Data, configuration: TDFEncryptionConfiguration) throws -> TDFEncryptionResult {
-        let symmetricKey = try TDFCrypto.generateSymmetricKey()
+        let symmetricKey = try TDFCrypto.generateSymmetricKey(size: configuration.keySize)
         let (iv, ciphertext, tag) = try TDFCrypto.encryptPayload(plaintext: plaintext, symmetricKey: symmetricKey)
 
         let payloadData = iv + ciphertext + tag
@@ -318,7 +320,7 @@ public struct TDFEncryptor {
         let rootSignature = TDFCrypto.segmentSignature(segmentCiphertext: segmentSignature, symmetricKey: symmetricKey).base64EncodedString()
 
         let method = TDFMethodDescriptor(
-            algorithm: "AES-256-GCM",
+            algorithm: configuration.keySize.algorithm,
             iv: "",
             isStreamable: true,
         )

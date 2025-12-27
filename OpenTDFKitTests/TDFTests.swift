@@ -639,4 +639,235 @@ final class StandardTDFTests: XCTestCase {
             _ = try? decryptor.decrypt(container: result.container, symmetricKey: result.symmetricKey)
         }
     }
+
+    // MARK: - AES-128 Tests (FairPlay Streaming Support)
+
+    func testTDFKeySizeEnum() {
+        // Test bits128
+        XCTAssertEqual(TDFKeySize.bits128.byteCount, 16)
+        XCTAssertEqual(TDFKeySize.bits128.algorithm, "AES-128-GCM")
+
+        // Test bits256
+        XCTAssertEqual(TDFKeySize.bits256.byteCount, 32)
+        XCTAssertEqual(TDFKeySize.bits256.algorithm, "AES-256-GCM")
+    }
+
+    func testAES128KeyGeneration() throws {
+        let key128 = try TDFCrypto.generateSymmetricKey(size: .bits128)
+        let keyData = key128.withUnsafeBytes { Data($0) }
+        XCTAssertEqual(keyData.count, 16, "AES-128 key should be 16 bytes")
+
+        let key256 = try TDFCrypto.generateSymmetricKey(size: .bits256)
+        let keyData256 = key256.withUnsafeBytes { Data($0) }
+        XCTAssertEqual(keyData256.count, 32, "AES-256 key should be 32 bytes")
+    }
+
+    func testAES128DefaultKeyGeneration() throws {
+        // Default should be AES-256
+        let keyDefault = try TDFCrypto.generateSymmetricKey()
+        let keyData = keyDefault.withUnsafeBytes { Data($0) }
+        XCTAssertEqual(keyData.count, 32, "Default key should be 32 bytes (AES-256)")
+    }
+
+    func testAES128EncryptionDecryption() throws {
+        let symmetricKey = try TDFCrypto.generateSymmetricKey(size: .bits128)
+        let (iv, ciphertext, tag) = try TDFCrypto.encryptPayload(
+            plaintext: testPlaintext,
+            symmetricKey: symmetricKey,
+        )
+
+        XCTAssertEqual(iv.count, 12, "IV should be 12 bytes")
+        XCTAssertEqual(tag.count, 16, "Tag should be 16 bytes")
+        XCTAssertGreaterThan(ciphertext.count, 0, "Ciphertext should not be empty")
+
+        let decrypted = try TDFCrypto.decryptPayload(
+            ciphertext: ciphertext,
+            iv: iv,
+            tag: tag,
+            symmetricKey: symmetricKey,
+        )
+
+        XCTAssertEqual(decrypted, testPlaintext, "Decrypted data should match original")
+    }
+
+    func testAES128EndToEndEncryption() throws {
+        let keyPair = try generateTestRSAKeyPair()
+
+        let kasInfo = TDFKasInfo(
+            url: URL(string: "http://localhost:8080/kas")!,
+            publicKeyPEM: keyPair.publicKeyPEM,
+            kid: "test-key-128",
+        )
+
+        let policy = try TDFPolicy(json: """
+        {
+            "uuid": "test-policy-128",
+            "body": {
+                "dataAttributes": [],
+                "dissem": []
+            }
+        }
+        """.data(using: .utf8)!)
+
+        // Create configuration with AES-128
+        let config = TDFEncryptionConfiguration(
+            kas: kasInfo,
+            policy: policy,
+            mimeType: "text/plain",
+            keySize: .bits128,
+        )
+
+        let encryptor = TDFEncryptor()
+        let result = try encryptor.encrypt(plaintext: testPlaintext, configuration: config)
+
+        // Verify key is 128-bit
+        let keyData = result.symmetricKey.withUnsafeBytes { Data($0) }
+        XCTAssertEqual(keyData.count, 16, "Symmetric key should be 16 bytes for AES-128")
+
+        // Verify manifest contains correct algorithm
+        XCTAssertEqual(
+            result.container.manifest.encryptionInformation.method.algorithm,
+            "AES-128-GCM",
+            "Manifest should specify AES-128-GCM algorithm",
+        )
+
+        // Verify decryption works
+        let decryptor = TDFDecryptor()
+        let decrypted = try decryptor.decrypt(
+            container: result.container,
+            symmetricKey: result.symmetricKey,
+        )
+
+        XCTAssertEqual(decrypted, testPlaintext, "Decrypted data should match original")
+    }
+
+    func testAES256EndToEndEncryption() throws {
+        // Verify AES-256 still works with explicit configuration
+        let keyPair = try generateTestRSAKeyPair()
+
+        let kasInfo = TDFKasInfo(
+            url: URL(string: "http://localhost:8080/kas")!,
+            publicKeyPEM: keyPair.publicKeyPEM,
+            kid: "test-key-256",
+        )
+
+        let policy = try TDFPolicy(json: """
+        {
+            "uuid": "test-policy-256",
+            "body": {
+                "dataAttributes": [],
+                "dissem": []
+            }
+        }
+        """.data(using: .utf8)!)
+
+        // Create configuration with explicit AES-256
+        let config = TDFEncryptionConfiguration(
+            kas: kasInfo,
+            policy: policy,
+            mimeType: "text/plain",
+            keySize: .bits256,
+        )
+
+        let encryptor = TDFEncryptor()
+        let result = try encryptor.encrypt(plaintext: testPlaintext, configuration: config)
+
+        // Verify key is 256-bit
+        let keyData = result.symmetricKey.withUnsafeBytes { Data($0) }
+        XCTAssertEqual(keyData.count, 32, "Symmetric key should be 32 bytes for AES-256")
+
+        // Verify manifest contains correct algorithm
+        XCTAssertEqual(
+            result.container.manifest.encryptionInformation.method.algorithm,
+            "AES-256-GCM",
+            "Manifest should specify AES-256-GCM algorithm",
+        )
+
+        // Verify decryption works
+        let decryptor = TDFDecryptor()
+        let decrypted = try decryptor.decrypt(
+            container: result.container,
+            symmetricKey: result.symmetricKey,
+        )
+
+        XCTAssertEqual(decrypted, testPlaintext, "Decrypted data should match original")
+    }
+
+    func testAES128RSAKeyWrapping() throws {
+        let keyPair = try generateTestRSAKeyPair()
+        let symmetricKey = try TDFCrypto.generateSymmetricKey(size: .bits128)
+
+        let wrappedKey = try TDFCrypto.wrapSymmetricKeyWithRSA(
+            publicKeyPEM: keyPair.publicKeyPEM,
+            symmetricKey: symmetricKey,
+        )
+
+        XCTAssertFalse(wrappedKey.isEmpty, "Wrapped key should not be empty")
+
+        let unwrappedKey = try TDFCrypto.unwrapSymmetricKeyWithRSA(
+            privateKeyPEM: keyPair.privateKeyPEM,
+            wrappedKey: wrappedKey,
+        )
+
+        let originalKeyData = symmetricKey.withUnsafeBytes { Data($0) }
+        let unwrappedKeyData = unwrappedKey.withUnsafeBytes { Data($0) }
+
+        XCTAssertEqual(originalKeyData.count, 16, "Original key should be 16 bytes")
+        XCTAssertEqual(unwrappedKeyData.count, 16, "Unwrapped key should be 16 bytes")
+        XCTAssertEqual(originalKeyData, unwrappedKeyData, "Unwrapped key should match original")
+    }
+
+    func testAES128ConfigurationDefault() throws {
+        let keyPair = try generateTestRSAKeyPair()
+
+        let kasInfo = TDFKasInfo(
+            url: URL(string: "http://localhost:8080/kas")!,
+            publicKeyPEM: keyPair.publicKeyPEM,
+        )
+
+        let policy = try TDFPolicy(json: """
+        {"uuid":"test","body":{"dataAttributes":[],"dissem":[]}}
+        """.data(using: .utf8)!)
+
+        // Default configuration (no keySize specified) should use AES-256
+        let config = TDFEncryptionConfiguration(kas: kasInfo, policy: policy)
+
+        XCTAssertEqual(config.keySize, .bits256, "Default key size should be .bits256")
+        XCTAssertEqual(config.keySize.algorithm, "AES-256-GCM")
+    }
+
+    func testManifestBuilderWithAES128() {
+        let builder = TDFManifestBuilder()
+        let manifest = builder.buildStandardManifest(
+            wrappedKey: "test-key",
+            kasURL: URL(string: "http://localhost:8080/kas")!,
+            policy: "test-policy",
+            iv: Data(count: 12).base64EncodedString(),
+            policyBinding: TDFPolicyBinding(alg: "HS256", hash: "test"),
+            algorithm: "AES-128-GCM",
+        )
+
+        XCTAssertEqual(
+            manifest.encryptionInformation.method.algorithm,
+            "AES-128-GCM",
+            "Manifest should have AES-128-GCM algorithm",
+        )
+    }
+
+    func testManifestBuilderDefaultAlgorithm() {
+        let builder = TDFManifestBuilder()
+        let manifest = builder.buildStandardManifest(
+            wrappedKey: "test-key",
+            kasURL: URL(string: "http://localhost:8080/kas")!,
+            policy: "test-policy",
+            iv: Data(count: 12).base64EncodedString(),
+            policyBinding: TDFPolicyBinding(alg: "HS256", hash: "test"),
+        )
+
+        XCTAssertEqual(
+            manifest.encryptionInformation.method.algorithm,
+            "AES-256-GCM",
+            "Default algorithm should be AES-256-GCM",
+        )
+    }
 }

@@ -1,6 +1,31 @@
 import CryptoKit
 import Foundation
 
+/// Symmetric key size for TDF Archive encryption.
+/// AES-128 is required for FairPlay Streaming compatibility.
+public enum TDFKeySize: Sendable {
+    /// 128-bit key (16 bytes) - FairPlay Streaming compatible
+    case bits128
+    /// 256-bit key (32 bytes) - default, higher security
+    case bits256
+
+    /// Number of bytes for this key size
+    public var byteCount: Int {
+        switch self {
+        case .bits128: 16
+        case .bits256: 32
+        }
+    }
+
+    /// Algorithm string for TDF manifest
+    public var algorithm: String {
+        switch self {
+        case .bits128: "AES-128-GCM"
+        case .bits256: "AES-256-GCM"
+        }
+    }
+}
+
 extension Data {
     mutating func secureZero() {
         withUnsafeMutableBytes { buffer in
@@ -11,8 +36,11 @@ extension Data {
 }
 
 public enum TDFCrypto {
-    public static func generateSymmetricKey() throws -> SymmetricKey {
-        let keyData = try randomBytes(count: 32)
+    /// Generate a symmetric key for TDF encryption.
+    /// - Parameter size: Key size (default: .bits256 for AES-256-GCM)
+    /// - Returns: A new symmetric key of the specified size
+    public static func generateSymmetricKey(size: TDFKeySize = .bits256) throws -> SymmetricKey {
+        let keyData = try randomBytes(count: size.byteCount)
         return SymmetricKey(data: keyData)
     }
 
