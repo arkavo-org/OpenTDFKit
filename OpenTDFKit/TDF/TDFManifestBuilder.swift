@@ -14,6 +14,7 @@ public struct TDFManifestBuilder {
         tdfSpecVersion: String = "4.3.0",
         policyBinding: TDFPolicyBinding,
         integrityInformation: TDFIntegrityInformation? = nil,
+        algorithm: String = "AES-256-GCM",
     ) -> TDFManifest {
         let keyAccessObject = TDFKeyAccessObject(
             type: .wrapped,
@@ -29,7 +30,7 @@ public struct TDFManifestBuilder {
         )
 
         let method = TDFMethodDescriptor(
-            algorithm: "AES-256-GCM",
+            algorithm: algorithm,
             iv: iv,
             isStreamable: true,
         )
@@ -66,9 +67,10 @@ public struct TDFManifestBuilder {
         mimeType: String = "application/octet-stream",
         tdfSpecVersion: String = "4.3.0",
         integrityInformation: TDFIntegrityInformation? = nil,
+        algorithm: String = "AES-256-GCM",
     ) -> TDFManifest {
         let method = TDFMethodDescriptor(
-            algorithm: "AES-256-GCM",
+            algorithm: algorithm,
             iv: iv,
             isStreamable: true,
         )

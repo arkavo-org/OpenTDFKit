@@ -136,7 +136,7 @@ final class KeyStoreTests: XCTestCase {
         let sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
         let expectedSymKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: CryptoConstants.hkdfSaltV13,
+            salt: CryptoConstants.hkdfSaltV12,
             sharedInfo: CryptoConstants.hkdfInfoEncryption,
             outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )
@@ -172,7 +172,7 @@ final class KeyStoreTests: XCTestCase {
         let sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
         let expectedSymKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: CryptoConstants.hkdfSaltV13,
+            salt: CryptoConstants.hkdfSaltV12,
             sharedInfo: CryptoConstants.hkdfInfoEncryption,
             outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )
@@ -208,7 +208,7 @@ final class KeyStoreTests: XCTestCase {
         let sharedSecret = try kasPrivKey.sharedSecretFromKeyAgreement(with: clientPubKey)
         let expectedSymKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: CryptoConstants.hkdfSaltV13,
+            salt: CryptoConstants.hkdfSaltV12,
             sharedInfo: CryptoConstants.hkdfInfoEncryption,
             outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )

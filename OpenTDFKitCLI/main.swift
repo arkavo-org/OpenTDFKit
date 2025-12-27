@@ -477,11 +477,20 @@ struct OpenTDFKitCLI {
         let policy = try TDFPolicy(json: policyData)
         let specVersion = env["TDF_SPEC_VERSION"] ?? "4.3.0"
 
+        // Parse key size from environment (default: 256-bit)
+        let keySize: TDFKeySize = {
+            if let keySizeEnv = env["TDF_KEY_SIZE"] {
+                return keySizeEnv == "128" ? .bits128 : .bits256
+            }
+            return .bits256
+        }()
+
         return TDFEncryptionConfiguration(
             kas: kasInfo,
             policy: policy,
             mimeType: mimeType,
             tdfSpecVersion: specVersion,
+            keySize: keySize,
         )
     }
 

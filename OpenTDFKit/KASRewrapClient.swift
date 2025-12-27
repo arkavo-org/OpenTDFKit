@@ -585,10 +585,10 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         do {
             let publicKey: P256.KeyAgreement.PublicKey
 
-            if keyData.count == 65 && keyData[0] == 0x04 {
+            if keyData.count == 65, keyData[0] == 0x04 {
                 // Raw uncompressed SEC1 point (0x04 || x || y)
                 publicKey = try P256.KeyAgreement.PublicKey(x963Representation: keyData)
-            } else if keyData.count == 33 && (keyData[0] == 0x02 || keyData[0] == 0x03) {
+            } else if keyData.count == 33, keyData[0] == 0x02 || keyData[0] == 0x03 {
                 // Compressed SEC1 point (0x02/0x03 || x)
                 publicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: keyData)
             } else if keyData.count >= 70 {
