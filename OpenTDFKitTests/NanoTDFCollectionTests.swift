@@ -416,4 +416,85 @@ final class NanoTDFCollectionTests: XCTestCase {
         XCTAssertEqual(parsedItems, serializedItems)
         XCTAssertEqual(parsedCount, 2)
     }
+
+    // MARK: - Streaming Sanity Check Tests
+
+    /// Simulates the streaming scenario: encrypt many items, then decrypt one from the middle
+    /// This mimics a late-joining subscriber receiving frames with high IV counters
+    func testStreamingLateJoinDecryption() async throws {
+        let policyLocator = ResourceLocator(protocolEnum: .https, body: "kas.example.com/policy")!
+        let collection = try await NanoTDFCollectionBuilder()
+            .kasMetadata(kasMetadata)
+            .policy(.remote(policyLocator))
+            .wireFormat(.containerFraming)
+            .build()
+
+        // Simulate publisher encrypting 1750 frames (mimics streaming scenario)
+        var serializedFrames: [Data] = []
+        let testPlaintexts: [Data] = (0 ..< 1750).map { i in
+            "Frame \(i) data payload".data(using: .utf8)!
+        }
+
+        for plaintext in testPlaintexts {
+            let item = try await collection.encryptItem(plaintext: plaintext)
+            let serialized = await collection.serialize(item: item)
+            serializedFrames.append(serialized)
+        }
+
+        // Create a separate decryptor (simulating subscriber with same key)
+        let symmetricKey = await collection.getSymmetricKey()
+        let decryptor = NanoTDFCollectionDecryptor.withUnwrappedKey(symmetricKey: symmetricKey)
+
+        // Try to decrypt frame 1748 (late join scenario - 0-indexed so IV=1749)
+        let lateFrame = serializedFrames[1748]
+        let parsed = NanoTDFCollectionParser.parseContainerFramed(from: lateFrame, tagSize: 16)
+        XCTAssertNotNil(parsed, "Failed to parse late frame")
+
+        let (parsedItem, _) = parsed!
+        XCTAssertEqual(parsedItem.ivCounter, 1749, "IV counter should be 1749 (1-indexed)")
+
+        // Decrypt the late frame
+        let decrypted = try await decryptor.decryptItem(parsedItem)
+        XCTAssertEqual(decrypted, testPlaintexts[1748], "Decrypted data should match original")
+
+        // Also try decrypting the very first frame to ensure both work
+        let firstFrame = serializedFrames[0]
+        let parsedFirst = NanoTDFCollectionParser.parseContainerFramed(from: firstFrame, tagSize: 16)!
+        XCTAssertEqual(parsedFirst.item.ivCounter, 1)
+        let decryptedFirst = try await decryptor.decryptItem(parsedFirst.item)
+        XCTAssertEqual(decryptedFirst, testPlaintexts[0])
+    }
+
+    /// Test that manually constructing a CollectionItem with arbitrary IV works
+    func testManualCollectionItemDecryption() async throws {
+        let policyLocator = ResourceLocator(protocolEnum: .https, body: "kas.example.com/policy")!
+        let collection = try await NanoTDFCollectionBuilder()
+            .kasMetadata(kasMetadata)
+            .policy(.remote(policyLocator))
+            .wireFormat(.containerFraming)
+            .build()
+
+        // Encrypt one item
+        let plaintext = "Test data for manual item".data(using: .utf8)!
+        let item = try await collection.encryptItem(plaintext: plaintext)
+
+        // Serialize to wire format
+        let serialized = await collection.serialize(item: item)
+
+        // Manually parse the wire format (simulating subscriber parsing)
+        // Format: [3-byte IV][3-byte length][ciphertext+tag]
+        let ivCounter = UInt32(serialized[0]) << 16 | UInt32(serialized[1]) << 8 | UInt32(serialized[2])
+        let payloadLength = Int(serialized[3]) << 16 | Int(serialized[4]) << 8 | Int(serialized[5])
+        let ciphertextWithTag = serialized.subdata(in: 6 ..< (6 + payloadLength))
+
+        // Create CollectionItem manually
+        let manualItem = CollectionItem(ivCounter: ivCounter, ciphertextWithTag: ciphertextWithTag, tagSize: 16)
+
+        // Decrypt
+        let symmetricKey = await collection.getSymmetricKey()
+        let decryptor = NanoTDFCollectionDecryptor.withUnwrappedKey(symmetricKey: symmetricKey)
+        let decrypted = try await decryptor.decryptItem(manualItem)
+
+        XCTAssertEqual(decrypted, plaintext)
+    }
 }

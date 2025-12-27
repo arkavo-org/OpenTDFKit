@@ -171,7 +171,7 @@ public struct NanoTDFCollectionBuilder: Sendable {
         // Step 5: Build header (v12 format - empty kasPublicKey triggers L1L serialization)
         let payloadKeyAccess = PayloadKeyAccess(
             kasEndpointLocator: kas.resourceLocator,
-            kasPublicKey: Data(),  // Empty = v12 (L1L) format
+            kasPublicKey: Data(), // Empty = v12 (L1L) format
         )
 
         let header = Header(
