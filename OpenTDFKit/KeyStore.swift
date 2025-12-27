@@ -307,13 +307,13 @@ public actor KeyStore {
             throw KeyStoreError.keyAgreementFailed("ECDH key agreement failed: \(error.localizedDescription)")
         }
 
-        // 3. Derive the symmetric key using HKDF (v13 specific)
-        //    Salt: SHA256("L1" + VERSION)
+        // 3. Derive the symmetric key using HKDF
+        //    Salt: SHA256("L1" + VERSION) - use v12 for NanoTDF collection compatibility
         //    Info: empty per spec guidance
         //    Output Byte Count: 32 (for AES-256)
         let symmetricKeyCryptoKit = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: CryptoConstants.hkdfSaltV13,
+            salt: CryptoConstants.hkdfSaltV12,
             sharedInfo: CryptoConstants.hkdfInfoEncryption,
             outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )
