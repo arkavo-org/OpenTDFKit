@@ -1,5 +1,14 @@
 import CryptoKit
+import CryptoSwift
 import Foundation
+
+/// Encryption mode for TDF payloads
+public enum TDFEncryptionMode: String, Sendable {
+    /// AES-GCM (authenticated encryption, default)
+    case gcm = "GCM"
+    /// AES-CBC with PKCS7 padding (FairPlay Streaming compatible)
+    case cbc = "CBC"
+}
 
 /// Symmetric key size for TDF Archive encryption.
 /// AES-128 is required for FairPlay Streaming compatibility.
@@ -17,11 +26,18 @@ public enum TDFKeySize: Sendable {
         }
     }
 
-    /// Algorithm string for TDF manifest
+    /// Algorithm string for TDF manifest (GCM mode, for backward compatibility)
     public var algorithm: String {
-        switch self {
-        case .bits128: "AES-128-GCM"
-        case .bits256: "AES-256-GCM"
+        algorithm(mode: .gcm)
+    }
+
+    /// Algorithm string for TDF manifest with specified mode
+    public func algorithm(mode: TDFEncryptionMode) -> String {
+        switch (self, mode) {
+        case (.bits128, .gcm): "AES-128-GCM"
+        case (.bits128, .cbc): "AES-128-CBC"
+        case (.bits256, .gcm): "AES-256-GCM"
+        case (.bits256, .cbc): "AES-256-CBC"
         }
     }
 }
@@ -52,15 +68,60 @@ public enum TDFCrypto {
 
     public static func encryptPayload(plaintext: Data, symmetricKey: SymmetricKey) throws -> (iv: Data, cipherText: Data, authenticationTag: Data) {
         let nonceData = try randomBytes(count: 12)
-        let nonce = try AES.GCM.Nonce(data: nonceData)
-        let sealed = try AES.GCM.seal(plaintext, using: symmetricKey, nonce: nonce)
+        let nonce = try CryptoKit.AES.GCM.Nonce(data: nonceData)
+        let sealed = try CryptoKit.AES.GCM.seal(plaintext, using: symmetricKey, nonce: nonce)
         return (Data(nonce), sealed.ciphertext, Data(sealed.tag))
     }
 
     public static func decryptPayload(ciphertext: Data, iv: Data, tag: Data, symmetricKey: SymmetricKey) throws -> Data {
-        let nonce = try AES.GCM.Nonce(data: iv)
-        let sealed = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
-        return try AES.GCM.open(sealed, using: symmetricKey)
+        let nonce = try CryptoKit.AES.GCM.Nonce(data: iv)
+        let sealed = try CryptoKit.AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
+        return try CryptoKit.AES.GCM.open(sealed, using: symmetricKey)
+    }
+
+    // MARK: - AES-CBC Encryption (FairPlay Compatible)
+
+    /// Encrypt payload using AES-CBC with PKCS7 padding.
+    /// This mode is compatible with FairPlay Streaming.
+    /// - Parameters:
+    ///   - plaintext: Data to encrypt
+    ///   - symmetricKey: Symmetric key (16 or 32 bytes)
+    /// - Returns: Tuple of (iv, ciphertext)
+    public static func encryptPayloadCBC(plaintext: Data, symmetricKey: SymmetricKey) throws -> (iv: Data, cipherText: Data) {
+        let ivData = try randomBytes(count: 16) // CBC uses 16-byte IV
+        let keyData = symmetricKey.withUnsafeBytes { Data($0) }
+
+        let aes = try CryptoSwift.AES(
+            key: Array(keyData),
+            blockMode: CryptoSwift.CBC(iv: Array(ivData)),
+            padding: .pkcs7
+        )
+
+        let ciphertext = try aes.encrypt(Array(plaintext))
+        return (ivData, Data(ciphertext))
+    }
+
+    /// Decrypt payload using AES-CBC with PKCS7 padding.
+    /// - Parameters:
+    ///   - ciphertext: Encrypted data
+    ///   - iv: Initialization vector (16 bytes)
+    ///   - symmetricKey: Symmetric key
+    /// - Returns: Decrypted plaintext
+    public static func decryptPayloadCBC(ciphertext: Data, iv: Data, symmetricKey: SymmetricKey) throws -> Data {
+        guard iv.count == 16 else {
+            throw TDFCryptoError.invalidIVSize(expected: 16, actual: iv.count)
+        }
+
+        let keyData = symmetricKey.withUnsafeBytes { Data($0) }
+
+        let aes = try CryptoSwift.AES(
+            key: Array(keyData),
+            blockMode: CryptoSwift.CBC(iv: Array(iv)),
+            padding: .pkcs7
+        )
+
+        let plaintext = try aes.decrypt(Array(ciphertext))
+        return Data(plaintext)
     }
 
     public static func policyBinding(policy: Data, symmetricKey: SymmetricKey) -> TDFPolicyBinding {
@@ -198,6 +259,9 @@ public enum TDFCryptoError: Error, CustomStringConvertible {
     case invalidWrappedKey
     case weakKey(keySize: Int, minimum: Int)
     case cannotDetermineKeySize
+    case invalidIVSize(expected: Int, actual: Int)
+    case cbcEncryptionFailed(String)
+    case cbcDecryptionFailed(String)
 
     public var description: String {
         switch self {
@@ -228,6 +292,12 @@ public enum TDFCryptoError: Error, CustomStringConvertible {
             #endif
         case .cannotDetermineKeySize:
             return "Unable to validate key strength"
+        case let .invalidIVSize(expected, actual):
+            return "Invalid IV size: expected \(expected) bytes, got \(actual)"
+        case let .cbcEncryptionFailed(reason):
+            return "AES-CBC encryption failed: \(reason)"
+        case let .cbcDecryptionFailed(reason):
+            return "AES-CBC decryption failed: \(reason)"
         }
     }
 }
