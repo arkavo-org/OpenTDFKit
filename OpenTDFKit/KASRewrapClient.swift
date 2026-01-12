@@ -54,15 +54,20 @@ public class KASRewrapClient: KASRewrapClientProtocol {
 
     public struct StandardPolicyBinding: Codable {
         let hash: String
-        let algorithm: String?
+        let alg: String?
+
+        enum CodingKeys: String, CodingKey {
+            case hash
+            case alg
+        }
     }
 
     public struct StandardKeyAccessObject: Codable {
         let keyType: String?
         let kasUrl: String
         let `protocol`: String
-        let wrappedKey: Data
-        let policyBinding: StandardPolicyBinding
+        let wrappedKey: String  // Base64-encoded RSA-wrapped DEK for Standard TDF
+        let policyBinding: StandardPolicyBinding?
         let encryptedMetadata: String?
         let kid: String?
         let splitId: String?
@@ -339,12 +344,17 @@ public class KASRewrapClient: KASRewrapClientProtocol {
     /// Perform Standard TDF rewrap request to KAS.
     /// - Parameters:
     ///   - manifest: The parsed TDF manifest containing key access entries.
-    ///   - clientPublicKeyPEM: PEM-encoded client public key for the returned wrapped key.
+    ///   - clientPrivateKey: Client's P-256 private key for ECDH. Its public key is sent in the request
+    ///                       and the same key is used to sign the JWT (converted to signing key).
     /// - Returns: Mapping of KeyAccessObjectId to wrapped key data and optional session public key when EC wrapping is used.
     public func rewrapTDF(
         manifest: TDFManifest,
-        clientPublicKeyPEM: String,
+        clientPrivateKey: P256.KeyAgreement.PrivateKey,
     ) async throws -> TDFKASRewrapResult {
+        // Convert KeyAgreement key to Signing key (same underlying P-256 key)
+        let signingKey = try P256.Signing.PrivateKey(rawRepresentation: clientPrivateKey.rawRepresentation)
+        let clientPublicKeyPEM = clientPrivateKey.publicKey.pemRepresentation
+
         let policyBody = manifest.encryptionInformation.policy
         let keyAccessEntries = manifest.encryptionInformation.keyAccess.filter { matchesKasURL($0.url) }
 
@@ -356,20 +366,22 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         wrappers.reserveCapacity(keyAccessEntries.count)
 
         for (index, kao) in keyAccessEntries.enumerated() {
-            guard let wrappedKeyData = Data(base64Encoded: kao.wrappedKey) else {
+            // Validate the wrapped key is valid base64
+            guard Data(base64Encoded: kao.wrappedKey) != nil else {
                 throw KASRewrapError.invalidWrappedKeyFormat
             }
 
             let binding = StandardPolicyBinding(
                 hash: kao.policyBinding.hash,
-                algorithm: kao.policyBinding.alg,
+                alg: kao.policyBinding.alg,
             )
 
+            // Standard TDF uses wrappedKey field with base64-encoded RSA-wrapped DEK
             let accessObject = StandardKeyAccessObject(
                 keyType: kao.type.rawValue,
                 kasUrl: kao.url,
                 protocol: kao.protocolValue.rawValue,
-                wrappedKey: wrappedKeyData,
+                wrappedKey: kao.wrappedKey,  // Base64-encoded DEK encrypted with KAS public key
                 policyBinding: binding,
                 encryptedMetadata: kao.encryptedMetadata,
                 kid: kao.kid,
@@ -388,7 +400,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         let policyRequest = StandardPolicyRequest(
             keyAccessObjects: wrappers,
             policy: policy,
-            algorithm: nil,
+            algorithm: "rsa:2048",  // Specify RSA algorithm for KAS
         )
 
         let unsignedRequest = StandardUnsignedRewrapRequest(
@@ -516,12 +528,10 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
 
         // Derive symmetric key using HKDF
-        // Use the same salt as NanoTDF encryption (SHA256 of magic + version)
-        let salt = CryptoConstants.hkdfSalt // This is SHA256("L1L") for v12 compatibility
-
+        // For Standard TDF rewrap: empty salt, empty info (matches KAS implementation)
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: salt,
+            salt: Data(),
             sharedInfo: Data(),
             outputByteCount: 32,
         )
