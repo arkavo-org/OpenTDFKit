@@ -66,7 +66,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         let keyType: String?
         let kasUrl: String
         let `protocol`: String
-        let wrappedKey: String  // Base64-encoded RSA-wrapped DEK for Standard TDF
+        let wrappedKey: String // Base64-encoded RSA-wrapped DEK for Standard TDF
         let policyBinding: StandardPolicyBinding?
         let encryptedMetadata: String?
         let kid: String?
@@ -381,7 +381,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
                 keyType: kao.type.rawValue,
                 kasUrl: kao.url,
                 protocol: kao.protocolValue.rawValue,
-                wrappedKey: kao.wrappedKey,  // Base64-encoded DEK encrypted with KAS public key
+                wrappedKey: kao.wrappedKey, // Base64-encoded DEK encrypted with KAS public key
                 policyBinding: binding,
                 encryptedMetadata: kao.encryptedMetadata,
                 kid: kao.kid,
@@ -400,7 +400,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         let policyRequest = StandardPolicyRequest(
             keyAccessObjects: wrappers,
             policy: policy,
-            algorithm: "rsa:2048",  // Specify RSA algorithm for KAS
+            algorithm: "rsa:2048", // Specify RSA algorithm for KAS
         )
 
         let unsignedRequest = StandardUnsignedRewrapRequest(

@@ -124,7 +124,6 @@ enum Commands {
         filename: String,
         symmetricKey: SymmetricKey?,
         privateKeyPEM: String?,
-        clientPublicKeyPEM: String?,
         oauthToken: String?,
     ) async throws -> Data {
         print("Standard TDF Decryption")
@@ -150,15 +149,14 @@ enum Commands {
             throw DecryptError.missingSymmetricMaterial
         }
 
-        guard let clientPublicKeyPEM, !clientPublicKeyPEM.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw DecryptError.missingSymmetricMaterial
-        }
-
         guard let oauthToken, !oauthToken.isEmpty else {
             throw DecryptError.missingOAuthToken
         }
 
         print("  Requesting rewrap from KAS")
+
+        // Generate ephemeral P-256 key pair for JWT signing in rewrap request
+        let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
 
         var aggregatedWrappedKeys: [String: Data] = [:]
         let uniqueKasURLs = Set(container.manifest.encryptionInformation.keyAccess.map(\.url))
@@ -171,7 +169,7 @@ enum Commands {
             let client = KASRewrapClient(kasURL: kasURL, oauthToken: oauthToken)
             let result = try await client.rewrapTDF(
                 manifest: container.manifest,
-                clientPublicKeyPEM: clientPublicKeyPEM,
+                clientPrivateKey: ephemeralPrivateKey,
             )
 
             for (kaoIdentifier, wrappedKey) in result.wrappedKeys {

@@ -172,10 +172,10 @@ final class KASRewrapClientTests: XCTestCase {
 
         let sharedSecret = try sessionPrivateKey.sharedSecretFromKeyAgreement(with: clientPrivateKey.publicKey)
 
-        let salt = CryptoConstants.hkdfSalt
+        // Use empty salt/info to match KAS implementation
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: salt,
+            salt: Data(),
             sharedInfo: Data(),
             outputByteCount: 32,
         )
