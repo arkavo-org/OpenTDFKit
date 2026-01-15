@@ -330,11 +330,9 @@ struct OpenTDFKitCLI {
         case .tdf, .ztdf:
             let symmetricKey = try loadSymmetricKeyFromEnvironment()
             let privateKey = try loadPrivateKeyPEMFromEnvironment()
-            var clientPublicKey: String? = nil
             var oauthToken: String? = nil
 
             if symmetricKey == nil {
-                clientPublicKey = try loadClientPublicKeyPEMFromEnvironment()
                 let env = ProcessInfo.processInfo.environment
                 let tokenPath = env["TDF_OAUTH_TOKEN_PATH"] ?? env["OAUTH_TOKEN_PATH"] ?? "fresh_token.txt"
                 oauthToken = try? Commands.resolveOAuthToken(
@@ -352,7 +350,6 @@ struct OpenTDFKitCLI {
                 filename: inputURL.lastPathComponent,
                 symmetricKey: symmetricKey,
                 privateKeyPEM: privateKey,
-                clientPublicKeyPEM: clientPublicKey,
                 oauthToken: oauthToken,
             )
             usedStandardTDF = true

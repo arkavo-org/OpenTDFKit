@@ -357,10 +357,13 @@ final class IntegrationTests: XCTestCase {
             return
         }
 
+        // Generate ephemeral P-256 key for JWT signing in rewrap request
+        let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
+
         let kasClient = KASRewrapClient(kasURL: kasURL, oauthToken: token)
         let rewrapResult = try await kasClient.rewrapTDF(
             manifest: container.manifest,
-            clientPublicKeyPEM: clientPrivateKey.publicKeyPEM,
+            clientPrivateKey: ephemeralPrivateKey,
         )
 
         XCTAssertFalse(rewrapResult.wrappedKeys.isEmpty, "Should receive wrapped keys from KAS")

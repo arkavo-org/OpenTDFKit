@@ -94,7 +94,7 @@ public enum TDFCrypto {
         let aes = try CryptoSwift.AES(
             key: Array(keyData),
             blockMode: CryptoSwift.CBC(iv: Array(ivData)),
-            padding: .pkcs7
+            padding: .pkcs7,
         )
 
         let ciphertext = try aes.encrypt(Array(plaintext))
@@ -117,7 +117,7 @@ public enum TDFCrypto {
         let aes = try CryptoSwift.AES(
             key: Array(keyData),
             blockMode: CryptoSwift.CBC(iv: Array(iv)),
-            padding: .pkcs7
+            padding: .pkcs7,
         )
 
         let plaintext = try aes.decrypt(Array(ciphertext))
