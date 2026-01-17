@@ -249,6 +249,254 @@ public enum TDFCrypto {
             throw TDFCryptoError.weakKey(keySize: keySize, minimum: minimumBits)
         }
     }
+
+    // MARK: - EC Key Wrapping (ECIES)
+
+    /// Wrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM).
+    /// This generates an ephemeral key pair and uses ECDH with the recipient's public key.
+    /// - Parameters:
+    ///   - publicKeyPEM: The recipient's EC public key in PEM format
+    ///   - symmetricKey: The symmetric key to wrap
+    ///   - curve: The EC curve to use (default: P-256)
+    /// - Returns: ECWrappedKeyResult containing the wrapped key and ephemeral public key
+    public static func wrapSymmetricKeyWithEC(
+        publicKeyPEM: String,
+        symmetricKey: SymmetricKey,
+        curve: TDFECCurve = .p256,
+    ) throws -> ECWrappedKeyResult {
+        switch curve {
+        case .p256:
+            try wrapWithP256(publicKeyPEM: publicKeyPEM, symmetricKey: symmetricKey)
+        case .p384:
+            try wrapWithP384(publicKeyPEM: publicKeyPEM, symmetricKey: symmetricKey)
+        case .p521:
+            try wrapWithP521(publicKeyPEM: publicKeyPEM, symmetricKey: symmetricKey)
+        }
+    }
+
+    /// Unwrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM).
+    /// - Parameters:
+    ///   - privateKey: The recipient's private key for ECDH
+    ///   - wrappedKey: The wrapped key data (base64-encoded nonce + ciphertext + tag)
+    ///   - ephemeralPublicKeyPEM: The sender's ephemeral public key in PEM format
+    ///   - curve: The EC curve used
+    /// - Returns: The unwrapped symmetric key
+    public static func unwrapSymmetricKeyWithEC(
+        privateKey: P256.KeyAgreement.PrivateKey,
+        wrappedKey: String,
+        ephemeralPublicKeyPEM: String,
+    ) throws -> SymmetricKey {
+        guard let wrappedData = Data(base64Encoded: wrappedKey) else {
+            throw TDFCryptoError.invalidWrappedKey
+        }
+
+        // Extract ephemeral public key from PEM
+        let ephemeralPublicKey = try loadECPublicKeyP256(fromPEM: ephemeralPublicKeyPEM)
+
+        // Perform ECDH to get shared secret
+        let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: ephemeralPublicKey)
+
+        // Derive wrapping key using HKDF-SHA256 (empty salt and info for TDF compatibility)
+        let wrapKey = sharedSecret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data(),
+            sharedInfo: Data(),
+            outputByteCount: 32,
+        )
+
+        // Unwrap using AES-GCM (format: nonce[12] + ciphertext + tag[16])
+        guard wrappedData.count > 28 else {
+            throw TDFCryptoError.invalidWrappedKey
+        }
+
+        let sealedBox = try AES.GCM.SealedBox(combined: wrappedData)
+        var decryptedKey = try AES.GCM.open(sealedBox, using: wrapKey)
+
+        defer {
+            decryptedKey.secureZero()
+        }
+
+        return SymmetricKey(data: decryptedKey)
+    }
+
+    // MARK: - P-256 EC Wrapping
+
+    private static func wrapWithP256(publicKeyPEM: String, symmetricKey: SymmetricKey) throws -> ECWrappedKeyResult {
+        // Load recipient's public key
+        let recipientPublicKey = try loadECPublicKeyP256(fromPEM: publicKeyPEM)
+
+        // Generate ephemeral key pair
+        let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
+        let ephemeralPublicKey = ephemeralPrivateKey.publicKey
+
+        // Perform ECDH to get shared secret
+        let sharedSecret = try ephemeralPrivateKey.sharedSecretFromKeyAgreement(with: recipientPublicKey)
+
+        // Derive wrapping key using HKDF-SHA256 (empty salt and info for TDF compatibility)
+        let wrapKey = sharedSecret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data(),
+            sharedInfo: Data(),
+            outputByteCount: 32,
+        )
+
+        // Extract key data
+        let keyData = symmetricKey.withUnsafeBytes { Data($0) }
+
+        // Wrap using AES-GCM
+        let nonce = try AES.GCM.Nonce(data: randomBytes(count: 12))
+        let sealed = try AES.GCM.seal(keyData, using: wrapKey, nonce: nonce)
+
+        // Combined format: nonce + ciphertext + tag
+        let wrappedKey = sealed.combined!.base64EncodedString()
+
+        // Convert ephemeral public key to PEM
+        let ephemeralPEM = ephemeralPublicKey.pemRepresentation
+
+        return ECWrappedKeyResult(wrappedKey: wrappedKey, ephemeralPublicKey: ephemeralPEM)
+    }
+
+    // MARK: - P-384 EC Wrapping
+
+    private static func wrapWithP384(publicKeyPEM: String, symmetricKey: SymmetricKey) throws -> ECWrappedKeyResult {
+        let recipientPublicKey = try loadECPublicKeyP384(fromPEM: publicKeyPEM)
+
+        let ephemeralPrivateKey = P384.KeyAgreement.PrivateKey()
+        let ephemeralPublicKey = ephemeralPrivateKey.publicKey
+
+        let sharedSecret = try ephemeralPrivateKey.sharedSecretFromKeyAgreement(with: recipientPublicKey)
+
+        let wrapKey = sharedSecret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data(),
+            sharedInfo: Data(),
+            outputByteCount: 32,
+        )
+
+        let keyData = symmetricKey.withUnsafeBytes { Data($0) }
+
+        let nonce = try AES.GCM.Nonce(data: randomBytes(count: 12))
+        let sealed = try AES.GCM.seal(keyData, using: wrapKey, nonce: nonce)
+
+        let wrappedKey = sealed.combined!.base64EncodedString()
+        let ephemeralPEM = ephemeralPublicKey.pemRepresentation
+
+        return ECWrappedKeyResult(wrappedKey: wrappedKey, ephemeralPublicKey: ephemeralPEM)
+    }
+
+    // MARK: - P-521 EC Wrapping
+
+    private static func wrapWithP521(publicKeyPEM: String, symmetricKey: SymmetricKey) throws -> ECWrappedKeyResult {
+        let recipientPublicKey = try loadECPublicKeyP521(fromPEM: publicKeyPEM)
+
+        let ephemeralPrivateKey = P521.KeyAgreement.PrivateKey()
+        let ephemeralPublicKey = ephemeralPrivateKey.publicKey
+
+        let sharedSecret = try ephemeralPrivateKey.sharedSecretFromKeyAgreement(with: recipientPublicKey)
+
+        let wrapKey = sharedSecret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data(),
+            sharedInfo: Data(),
+            outputByteCount: 32,
+        )
+
+        let keyData = symmetricKey.withUnsafeBytes { Data($0) }
+
+        let nonce = try AES.GCM.Nonce(data: randomBytes(count: 12))
+        let sealed = try AES.GCM.seal(keyData, using: wrapKey, nonce: nonce)
+
+        let wrappedKey = sealed.combined!.base64EncodedString()
+        let ephemeralPEM = ephemeralPublicKey.pemRepresentation
+
+        return ECWrappedKeyResult(wrappedKey: wrappedKey, ephemeralPublicKey: ephemeralPEM)
+    }
+
+    // MARK: - EC Public Key Loading
+
+    /// Load a P-256 EC public key from PEM format
+    public static func loadECPublicKeyP256(fromPEM pem: String) throws -> P256.KeyAgreement.PublicKey {
+        let stripped = pem
+            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
+            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let data = Data(base64Encoded: stripped) else {
+            throw TDFCryptoError.invalidPEM
+        }
+
+        do {
+            return try P256.KeyAgreement.PublicKey(derRepresentation: data)
+        } catch {
+            throw TDFCryptoError.ecKeyAgreementFailed("Failed to parse P-256 public key: \(error.localizedDescription)")
+        }
+    }
+
+    /// Load a P-384 EC public key from PEM format
+    public static func loadECPublicKeyP384(fromPEM pem: String) throws -> P384.KeyAgreement.PublicKey {
+        let stripped = pem
+            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
+            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let data = Data(base64Encoded: stripped) else {
+            throw TDFCryptoError.invalidPEM
+        }
+
+        do {
+            return try P384.KeyAgreement.PublicKey(derRepresentation: data)
+        } catch {
+            throw TDFCryptoError.ecKeyAgreementFailed("Failed to parse P-384 public key: \(error.localizedDescription)")
+        }
+    }
+
+    /// Load a P-521 EC public key from PEM format
+    public static func loadECPublicKeyP521(fromPEM pem: String) throws -> P521.KeyAgreement.PublicKey {
+        let stripped = pem
+            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
+            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let data = Data(base64Encoded: stripped) else {
+            throw TDFCryptoError.invalidPEM
+        }
+
+        do {
+            return try P521.KeyAgreement.PublicKey(derRepresentation: data)
+        } catch {
+            throw TDFCryptoError.ecKeyAgreementFailed("Failed to parse P-521 public key: \(error.localizedDescription)")
+        }
+    }
+}
+
+/// Result of EC key wrapping containing wrapped key and ephemeral public key
+public struct ECWrappedKeyResult: Sendable {
+    /// The wrapped symmetric key (nonce + ciphertext + tag)
+    public let wrappedKey: String
+    /// The ephemeral public key in PEM format
+    public let ephemeralPublicKey: String
+}
+
+/// Supported EC curves for TDF3 EC key wrapping
+public enum TDFECCurve: String, Sendable {
+    case p256 = "ec:secp256r1"
+    case p384 = "ec:secp384r1"
+    case p521 = "ec:secp521r1"
+
+    /// The size of compressed public key in bytes
+    public var compressedKeySize: Int {
+        switch self {
+        case .p256: 33
+        case .p384: 49
+        case .p521: 67
+        }
+    }
 }
 
 public enum TDFCryptoError: Error, CustomStringConvertible {
@@ -262,6 +510,8 @@ public enum TDFCryptoError: Error, CustomStringConvertible {
     case invalidIVSize(expected: Int, actual: Int)
     case cbcEncryptionFailed(String)
     case cbcDecryptionFailed(String)
+    case ecKeyAgreementFailed(String)
+    case unsupportedCurve(String)
 
     public var description: String {
         switch self {
@@ -298,6 +548,10 @@ public enum TDFCryptoError: Error, CustomStringConvertible {
             return "AES-CBC encryption failed: \(reason)"
         case let .cbcDecryptionFailed(reason):
             return "AES-CBC decryption failed: \(reason)"
+        case let .ecKeyAgreementFailed(reason):
+            return "EC key agreement failed: \(reason)"
+        case let .unsupportedCurve(curve):
+            return "Unsupported EC curve: \(curve)"
         }
     }
 }

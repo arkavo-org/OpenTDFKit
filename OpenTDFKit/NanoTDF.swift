@@ -403,14 +403,11 @@ public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signi
     let message = nanoTDF.header.toData() + nanoTDF.payload.toData()
 
     // Generate the ECDSA signature using the provided private key.
-    // The helper function abstracts away DER encoding details if necessary.
-    guard let signatureData = try await NanoTDF.sharedCryptoHelper.generateECDSASignature(
+    // Returns the raw 64-byte R || S signature directly.
+    let signatureData = try await NanoTDF.sharedCryptoHelper.generateECDSASignature(
         privateKey: privateKey,
         message: message,
-    ) else {
-        // Throw an error if signature generation unexpectedly returns nil
-        throw SignatureError.invalidSigning
-    }
+    )
 
     // Get the compressed public key corresponding to the private signing key.
     let publicKeyData = privateKey.publicKey.compressedRepresentation
