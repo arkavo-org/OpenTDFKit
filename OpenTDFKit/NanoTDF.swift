@@ -4,6 +4,10 @@ import Security
 
 /// Represents a NanoTDF (Nano Trusted Data Format) object, containing a header, payload, and optional signature.
 /// Conforms to `Sendable` for safe use in concurrent contexts.
+///
+/// - Important: NanoTDF is deprecated. Use ``TDFCBORBuilder`` and ``TDFCBORContainer`` instead.
+///   See the migration guide at `docs/NANOTDF_MIGRATION.md` for details.
+@available(*, deprecated, message: "NanoTDF is deprecated. Use TDFCBORBuilder instead. See docs/NANOTDF_MIGRATION.md")
 public struct NanoTDF: Sendable {
     /// The header section of the NanoTDF, containing metadata like KAS info, policy, and ephemeral key.
     public var header: Header
@@ -75,12 +79,17 @@ public struct NanoTDF: Sendable {
 
 /// Creates a NanoTDF v1.2 (L1L) object for compatibility with otdfctl and other implementations.
 /// The v1.2 format does not include the KAS public key in the header.
+///
+/// - Important: NanoTDF is deprecated. Use ``TDFCBORBuilder`` instead.
+///   See the migration guide at `docs/NANOTDF_MIGRATION.md` for details.
+///
 /// - Parameters:
 ///   - kas: The `KasMetadata` containing the KAS URL and public key information.
 ///   - policy: An `inout` `Policy` struct. The function will calculate and set the `binding` property on this policy object.
 ///   - plaintext: The `Data` to be encrypted and included in the NanoTDF payload.
 /// - Returns: A newly created `NanoTDF` object in v1.2 format.
 /// - Throws: `CryptoHelperError` if key generation or derivation fails, or errors from `CryptoKit` during cryptographic operations.
+@available(*, deprecated, message: "NanoTDF is deprecated. Use TDFCBORBuilder instead. See docs/NANOTDF_MIGRATION.md")
 public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: Data) async throws -> NanoTDF {
     // Step 1: Generate an ephemeral key pair based on the KAS curve
     guard let keyPair = await NanoTDF.sharedCryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {

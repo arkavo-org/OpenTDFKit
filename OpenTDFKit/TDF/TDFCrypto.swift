@@ -79,6 +79,35 @@ public enum TDFCrypto {
         return try CryptoKit.AES.GCM.open(sealed, using: symmetricKey)
     }
 
+    /// Decrypt AES-GCM payload with combined IV + ciphertext + tag format
+    /// - Parameters:
+    ///   - combinedPayload: Data containing IV (12 bytes) + ciphertext + tag (16 bytes)
+    ///   - symmetricKey: The decryption key
+    /// - Returns: Decrypted plaintext
+    public static func decryptCombinedPayload(
+        _ combinedPayload: Data,
+        symmetricKey: SymmetricKey,
+    ) throws -> Data {
+        let ivSize = 12
+        let tagSize = 16
+        let minSize = ivSize + tagSize
+
+        guard combinedPayload.count >= minSize else {
+            throw TDFCryptoError.decryptionFailed("Malformed payload: insufficient data")
+        }
+
+        let iv = combinedPayload.prefix(ivSize)
+        let ciphertext = combinedPayload.dropFirst(ivSize).dropLast(tagSize)
+        let tag = combinedPayload.suffix(tagSize)
+
+        return try decryptPayload(
+            ciphertext: Data(ciphertext),
+            iv: Data(iv),
+            tag: Data(tag),
+            symmetricKey: symmetricKey,
+        )
+    }
+
     // MARK: - AES-CBC Encryption (FairPlay Compatible)
 
     /// Encrypt payload using AES-CBC with PKCS7 padding.
@@ -278,20 +307,35 @@ public enum TDFCrypto {
     /// - Parameters:
     ///   - privateKey: The recipient's private key for ECDH
     ///   - wrappedKey: The wrapped key data (base64-encoded nonce + ciphertext + tag)
-    ///   - ephemeralPublicKeyPEM: The sender's ephemeral public key in PEM format
+    ///   - ephemeralPublicKey: The sender's ephemeral public key (PEM or base64 SEC1 compressed)
     ///   - curve: The EC curve used
     /// - Returns: The unwrapped symmetric key
     public static func unwrapSymmetricKeyWithEC(
         privateKey: P256.KeyAgreement.PrivateKey,
         wrappedKey: String,
-        ephemeralPublicKeyPEM: String,
+        ephemeralPublicKey ephemeralKeyString: String,
     ) throws -> SymmetricKey {
         guard let wrappedData = Data(base64Encoded: wrappedKey) else {
             throw TDFCryptoError.invalidWrappedKey
         }
 
-        // Extract ephemeral public key from PEM
-        let ephemeralPublicKey = try loadECPublicKeyP256(fromPEM: ephemeralPublicKeyPEM)
+        // Parse ephemeral public key - supports both PEM and base64 SEC1 (compressed/uncompressed)
+        let ephemeralPublicKey: P256.KeyAgreement.PublicKey
+        if ephemeralKeyString.contains("-----BEGIN") {
+            // PEM format (legacy)
+            ephemeralPublicKey = try loadECPublicKeyP256(fromPEM: ephemeralKeyString)
+        } else {
+            // Base64 SEC1 format (compressed or uncompressed)
+            guard let keyData = Data(base64Encoded: ephemeralKeyString) else {
+                throw TDFCryptoError.ecKeyAgreementFailed("Invalid ephemeral key encoding")
+            }
+            // Try compressed first (33 bytes), then uncompressed (65 bytes)
+            if keyData.count == 33 {
+                ephemeralPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: keyData)
+            } else {
+                ephemeralPublicKey = try P256.KeyAgreement.PublicKey(x963Representation: keyData)
+            }
+        }
 
         // Perform ECDH to get shared secret
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: ephemeralPublicKey)
@@ -350,10 +394,11 @@ public enum TDFCrypto {
         // Combined format: nonce + ciphertext + tag
         let wrappedKey = sealed.combined!.base64EncodedString()
 
-        // Convert ephemeral public key to PEM
-        let ephemeralPEM = ephemeralPublicKey.pemRepresentation
+        // Convert ephemeral public key to compressed SEC1 format (33 bytes for P-256)
+        // Much smaller than PEM (~140 bytes) or uncompressed (65 bytes)
+        let ephemeralCompressed = ephemeralPublicKey.compressedRepresentation.base64EncodedString()
 
-        return ECWrappedKeyResult(wrappedKey: wrappedKey, ephemeralPublicKey: ephemeralPEM)
+        return ECWrappedKeyResult(wrappedKey: wrappedKey, ephemeralPublicKey: ephemeralCompressed)
     }
 
     // MARK: - P-384 EC Wrapping
@@ -379,9 +424,10 @@ public enum TDFCrypto {
         let sealed = try AES.GCM.seal(keyData, using: wrapKey, nonce: nonce)
 
         let wrappedKey = sealed.combined!.base64EncodedString()
-        let ephemeralPEM = ephemeralPublicKey.pemRepresentation
+        // Compressed SEC1 format (49 bytes for P-384)
+        let ephemeralCompressed = ephemeralPublicKey.compressedRepresentation.base64EncodedString()
 
-        return ECWrappedKeyResult(wrappedKey: wrappedKey, ephemeralPublicKey: ephemeralPEM)
+        return ECWrappedKeyResult(wrappedKey: wrappedKey, ephemeralPublicKey: ephemeralCompressed)
     }
 
     // MARK: - P-521 EC Wrapping
@@ -407,9 +453,10 @@ public enum TDFCrypto {
         let sealed = try AES.GCM.seal(keyData, using: wrapKey, nonce: nonce)
 
         let wrappedKey = sealed.combined!.base64EncodedString()
-        let ephemeralPEM = ephemeralPublicKey.pemRepresentation
+        // Compressed SEC1 format (67 bytes for P-521)
+        let ephemeralCompressed = ephemeralPublicKey.compressedRepresentation.base64EncodedString()
 
-        return ECWrappedKeyResult(wrappedKey: wrappedKey, ephemeralPublicKey: ephemeralPEM)
+        return ECWrappedKeyResult(wrappedKey: wrappedKey, ephemeralPublicKey: ephemeralCompressed)
     }
 
     // MARK: - EC Public Key Loading
@@ -512,6 +559,7 @@ public enum TDFCryptoError: Error, CustomStringConvertible {
     case cbcDecryptionFailed(String)
     case ecKeyAgreementFailed(String)
     case unsupportedCurve(String)
+    case decryptionFailed(String)
 
     public var description: String {
         switch self {
@@ -552,6 +600,8 @@ public enum TDFCryptoError: Error, CustomStringConvertible {
             return "EC key agreement failed: \(reason)"
         case let .unsupportedCurve(curve):
             return "Unsupported EC curve: \(curve)"
+        case let .decryptionFailed(reason):
+            return "Decryption failed: \(reason)"
         }
     }
 }
