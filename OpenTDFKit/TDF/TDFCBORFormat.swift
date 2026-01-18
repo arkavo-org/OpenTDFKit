@@ -28,6 +28,27 @@ public enum TDFCBORKey: Int, CodingKey {
     }
 }
 
+/// Payload integer key mappings per TDF-CBOR spec section 3.1
+public enum TDFCBORPayloadKey: Int {
+    case type = 1
+    case `protocol` = 2
+    case mimeType = 3
+    case isEncrypted = 4
+    case length = 5
+    case value = 6
+}
+
+/// Enumerated values per TDF-CBOR spec section 1.5
+public enum TDFCBOREnums {
+    // Payload type: 0=inline, 1=reference
+    public static let payloadTypeInline: UInt64 = 0
+    public static let payloadTypeReference: UInt64 = 1
+
+    // Payload protocol: 0=binary, 1=binary-chunked
+    public static let payloadProtocolBinary: UInt64 = 0
+    public static let payloadProtocolBinaryChunked: UInt64 = 1
+}
+
 // MARK: - TDF-CBOR Envelope
 
 /// TDF-CBOR envelope for binary payload transmission (spec-compliant)
@@ -213,15 +234,18 @@ extension TDFCBOREnvelope {
             throw TDFCBORError.cborEncodingFailed("Failed to encode manifest as JSON")
         }
 
-        // Build payload map
+        // Build payload map with integer keys and enum values per spec section 1.5
+        let payloadTypeEnum: UInt64 = payload.type == "inline" ? TDFCBOREnums.payloadTypeInline : TDFCBOREnums.payloadTypeReference
+        let protocolEnum: UInt64 = payload.protocol == "binary" ? TDFCBOREnums.payloadProtocolBinary : TDFCBOREnums.payloadProtocolBinaryChunked
+
         var payloadMap: [CBOR: CBOR] = [
-            "type": .utf8String(payload.type),
-            "protocol": .utf8String(payload.protocol),
-            "isEncrypted": .boolean(payload.isEncrypted),
-            "value": .byteString(Array(payload.value)),
+            CBOR.unsignedInt(UInt64(TDFCBORPayloadKey.type.rawValue)): .unsignedInt(payloadTypeEnum),
+            CBOR.unsignedInt(UInt64(TDFCBORPayloadKey.protocol.rawValue)): .unsignedInt(protocolEnum),
+            CBOR.unsignedInt(UInt64(TDFCBORPayloadKey.isEncrypted.rawValue)): .boolean(payload.isEncrypted),
+            CBOR.unsignedInt(UInt64(TDFCBORPayloadKey.value.rawValue)): .byteString(Array(payload.value)),
         ]
         if let mimeType = payload.mimeType {
-            payloadMap["mimeType"] = .utf8String(mimeType)
+            payloadMap[CBOR.unsignedInt(UInt64(TDFCBORPayloadKey.mimeType.rawValue))] = .utf8String(mimeType)
         }
 
         // Build main map with integer keys
@@ -308,29 +332,78 @@ extension TDFCBOREnvelope {
             throw TDFCBORError.missingField("payload")
         }
 
+        // Support both integer keys (new spec) and string keys (legacy)
         let payloadType: String = {
+            // Try integer key first (new spec)
+            if let v = payloadMap[CBOR.unsignedInt(UInt64(TDFCBORPayloadKey.type.rawValue))] {
+                // Support both integer enum (new) and string (legacy)
+                switch v {
+                case let .unsignedInt(i):
+                    return i == TDFCBOREnums.payloadTypeInline ? "inline" : "reference"
+                case let .utf8String(s):
+                    return s
+                default:
+                    break
+                }
+            }
+            // Fall back to string key (legacy)
             if let v = payloadMap["type"], case let .utf8String(s) = v { return s }
             return "inline"
         }()
 
         let payloadProtocol: String = {
+            // Try integer key first (new spec)
+            if let v = payloadMap[CBOR.unsignedInt(UInt64(TDFCBORPayloadKey.protocol.rawValue))] {
+                // Support both integer enum (new) and string (legacy)
+                switch v {
+                case let .unsignedInt(i):
+                    return i == TDFCBOREnums.payloadProtocolBinary ? "binary" : "binary-chunked"
+                case let .utf8String(s):
+                    return s
+                default:
+                    break
+                }
+            }
+            // Fall back to string key (legacy)
             if let v = payloadMap["protocol"], case let .utf8String(s) = v { return s }
             return "binary"
         }()
 
         let payloadMimeType: String? = {
+            // Try integer key first (new spec)
+            if let v = payloadMap[CBOR.unsignedInt(UInt64(TDFCBORPayloadKey.mimeType.rawValue))],
+               case let .utf8String(s) = v
+            {
+                return s
+            }
+            // Fall back to string key (legacy)
             if let v = payloadMap["mimeType"], case let .utf8String(s) = v { return s }
             return nil
         }()
 
         let payloadIsEncrypted: Bool = {
+            // Try integer key first (new spec)
+            if let v = payloadMap[CBOR.unsignedInt(UInt64(TDFCBORPayloadKey.isEncrypted.rawValue))],
+               case let .boolean(b) = v
+            {
+                return b
+            }
+            // Fall back to string key (legacy)
             if let v = payloadMap["isEncrypted"], case let .boolean(b) = v { return b }
             return true
         }()
 
-        guard let valueField = payloadMap["value"],
-              case let .byteString(bytes) = valueField
-        else {
+        // Try integer key first (new spec), then string key (legacy)
+        let bytes: [UInt8]
+        if let valueField = payloadMap[CBOR.unsignedInt(UInt64(TDFCBORPayloadKey.value.rawValue))],
+           case let .byteString(b) = valueField
+        {
+            bytes = b
+        } else if let valueField = payloadMap["value"],
+                  case let .byteString(b) = valueField
+        {
+            bytes = b
+        } else {
             throw TDFCBORError.binaryPayloadExpected
         }
 
