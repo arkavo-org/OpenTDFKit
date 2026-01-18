@@ -26,6 +26,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/krzyzanowskim/CryptoSwift", from: "1.8.0"),
         .package(url: "https://github.com/weichsel/ZIPFoundation", from: "0.9.0"),
+        .package(url: "https://github.com/valpackett/SwiftCBOR", from: "0.4.0"),
     ],
     targets: [
         .target(
@@ -33,6 +34,7 @@ let package = Package(
             dependencies: [
                 "CryptoSwift",
                 .product(name: "ZIPFoundation", package: "ZIPFoundation"),
+                .product(name: "SwiftCBOR", package: "SwiftCBOR"),
             ],
             path: "OpenTDFKit",
         ),

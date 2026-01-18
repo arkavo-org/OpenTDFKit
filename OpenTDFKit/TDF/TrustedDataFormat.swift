@@ -5,6 +5,8 @@ import Foundation
 public enum TrustedDataFormatKind: Sendable {
     case nano
     case archive
+    case json    // TDF-JSON format (spec draft-00)
+    case cbor    // TDF-CBOR format (spec draft-00)
 }
 
 /// Format-agnostic container interface allowing shared tooling.

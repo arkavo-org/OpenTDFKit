@@ -1027,3 +1027,313 @@ enum CollectionCLIError: Error, CustomStringConvertible {
         }
     }
 }
+
+// MARK: - TDF-JSON and TDF-CBOR Commands
+
+/// Result type for TDF-JSON/CBOR encryption
+struct TDFInlineEncryptionResult {
+    let data: Data
+    let symmetricKey: SymmetricKey
+}
+
+extension Commands {
+    /// Encrypt plaintext to TDF-JSON format
+    static func encryptTDFJSON(
+        plaintext: Data,
+        inputURL: URL,
+    ) throws -> TDFInlineEncryptionResult {
+        print("TDF-JSON Encryption")
+        print("===================")
+        print("Plaintext size: \(plaintext.count) bytes")
+
+        let env = ProcessInfo.processInfo.environment
+        guard let kasURLString = env["TDF_KAS_URL"] ?? env["KASURL"],
+              let kasURL = URL(string: kasURLString)
+        else {
+            throw EncryptError.missingConfiguration("TDF_KAS_URL or KASURL environment variable required")
+        }
+
+        let publicKeyPEM = try loadKASPublicKeyPEM()
+        let policy = try loadPolicy()
+
+        let builder = TDFJSONBuilder()
+            .kasURL(kasURL)
+            .kasPublicKey(publicKeyPEM)
+
+        let builderWithKid: TDFJSONBuilder
+        if let kid = env["TDF_KAS_KID"] {
+            builderWithKid = builder.kasKid(kid)
+        } else {
+            builderWithKid = builder
+        }
+
+        let builderWithMime: TDFJSONBuilder
+        if let mimeType = env["TDF_MIME_TYPE"] {
+            builderWithMime = builderWithKid.mimeType(mimeType)
+        } else {
+            builderWithMime = builderWithKid
+        }
+
+        let result = try builderWithMime
+            .policy(policy)
+            .encrypt(plaintext: plaintext)
+
+        let jsonData = try result.container.serializedData()
+
+        print("✓ Created TDF-JSON (\(jsonData.count) bytes)")
+
+        return TDFInlineEncryptionResult(
+            data: jsonData,
+            symmetricKey: result.symmetricKey
+        )
+    }
+
+    /// Encrypt plaintext to TDF-CBOR format
+    static func encryptTDFCBOR(
+        plaintext: Data,
+        inputURL: URL,
+    ) throws -> TDFInlineEncryptionResult {
+        print("TDF-CBOR Encryption")
+        print("===================")
+        print("Plaintext size: \(plaintext.count) bytes")
+
+        let env = ProcessInfo.processInfo.environment
+        guard let kasURLString = env["TDF_KAS_URL"] ?? env["KASURL"],
+              let kasURL = URL(string: kasURLString)
+        else {
+            throw EncryptError.missingConfiguration("TDF_KAS_URL or KASURL environment variable required")
+        }
+
+        let publicKeyPEM = try loadKASPublicKeyPEM()
+        let policy = try loadPolicy()
+
+        let builder = TDFCBORBuilder()
+            .kasURL(kasURL)
+            .kasPublicKey(publicKeyPEM)
+
+        let builderWithKid: TDFCBORBuilder
+        if let kid = env["TDF_KAS_KID"] {
+            builderWithKid = builder.kasKid(kid)
+        } else {
+            builderWithKid = builder
+        }
+
+        let builderWithMime: TDFCBORBuilder
+        if let mimeType = env["TDF_MIME_TYPE"] {
+            builderWithMime = builderWithKid.mimeType(mimeType)
+        } else {
+            builderWithMime = builderWithKid
+        }
+
+        let result = try builderWithMime
+            .policy(policy)
+            .encrypt(plaintext: plaintext)
+
+        let cborData = try result.container.serializedData()
+
+        print("✓ Created TDF-CBOR (\(cborData.count) bytes)")
+
+        return TDFInlineEncryptionResult(
+            data: cborData,
+            symmetricKey: result.symmetricKey
+        )
+    }
+
+    /// Decrypt TDF-JSON format
+    static func decryptTDFJSON(
+        data: Data,
+        filename: String,
+        symmetricKey: SymmetricKey?,
+        privateKeyPEM: String?,
+    ) throws -> Data {
+        print("TDF-JSON Decryption")
+        print("===================")
+        print("File: \(filename)")
+        print("Size: \(data.count) bytes\n")
+
+        let loader = TDFJSONLoader()
+        let container = try loader.load(from: data)
+
+        print("✓ TDF-JSON loaded")
+        print("  Version: \(container.envelope.version)")
+
+        let decryptor = TDFJSONDecryptor()
+
+        if let symmetricKey {
+            print("  Using provided symmetric key for decryption")
+            return try decryptor.decrypt(container: container, symmetricKey: symmetricKey)
+        }
+
+        guard let privateKeyPEM else {
+            throw DecryptError.missingSymmetricMaterial
+        }
+
+        print("  Using private key for decryption")
+        return try decryptor.decrypt(container: container, privateKeyPEM: privateKeyPEM)
+    }
+
+    /// Decrypt TDF-CBOR format
+    static func decryptTDFCBOR(
+        data: Data,
+        filename: String,
+        symmetricKey: SymmetricKey?,
+        privateKeyPEM: String?,
+    ) throws -> Data {
+        print("TDF-CBOR Decryption")
+        print("===================")
+        print("File: \(filename)")
+        print("Size: \(data.count) bytes\n")
+
+        let loader = TDFCBORLoader()
+        let container = try loader.load(from: data)
+
+        print("✓ TDF-CBOR loaded")
+        print("  Version: \(container.envelope.version.map { String($0) }.joined(separator: "."))")
+
+        let decryptor = TDFCBORDecryptor()
+
+        if let symmetricKey {
+            print("  Using provided symmetric key for decryption")
+            return try decryptor.decrypt(container: container, symmetricKey: symmetricKey)
+        }
+
+        guard let privateKeyPEM else {
+            throw DecryptError.missingSymmetricMaterial
+        }
+
+        print("  Using private key for decryption")
+        return try decryptor.decrypt(container: container, privateKeyPEM: privateKeyPEM)
+    }
+
+    /// Verify TDF-JSON structure
+    static func verifyTDFJSON(data: Data, filename: String) throws {
+        print("TDF-JSON Verification Report")
+        print("============================")
+        print("File: \(filename)")
+        print("Size: \(data.count) bytes\n")
+
+        let loader = TDFJSONLoader()
+        let container = try loader.load(from: data)
+
+        print("✓ TDF-JSON parsed successfully")
+        print("  TDF Type: \(container.envelope.tdf)")
+        print("  Version: \(container.envelope.version)")
+        if let created = container.envelope.created {
+            print("  Created: \(created)")
+        }
+
+        let enc = container.encryptionInformation
+        print("\nEncryption Information:")
+        print("  Type: \(enc.type.rawValue)")
+        print("  Key Access Objects: \(enc.keyAccess.count)")
+        print("  Algorithm: \(enc.method.algorithm)")
+
+        print("\nPayload:")
+        print("  Type: \(container.envelope.payload.type)")
+        print("  Protocol: \(container.envelope.payload.protocol)")
+        print("  Encrypted: \(container.envelope.payload.isEncrypted)")
+        if let mimeType = container.envelope.payload.mimeType {
+            print("  MIME Type: \(mimeType)")
+        }
+
+        print("\n✓ TDF-JSON structure validated")
+    }
+
+    /// Verify TDF-CBOR structure
+    static func verifyTDFCBOR(data: Data, filename: String) throws {
+        print("TDF-CBOR Verification Report")
+        print("============================")
+        print("File: \(filename)")
+        print("Size: \(data.count) bytes\n")
+
+        // Check magic bytes
+        guard TDFCBOREnvelope.hasMagicBytes(data) else {
+            throw TDFCBORError.invalidMagicBytes
+        }
+        print("✓ CBOR magic bytes verified")
+
+        let loader = TDFCBORLoader()
+        let container = try loader.load(from: data)
+
+        print("✓ TDF-CBOR parsed successfully")
+        print("  TDF Type: \(container.envelope.tdf)")
+        print("  Version: \(container.envelope.version.map { String($0) }.joined(separator: "."))")
+        if let created = container.envelope.created {
+            print("  Created: \(created)")
+        }
+
+        let enc = container.encryptionInformation
+        print("\nEncryption Information:")
+        print("  Type: \(enc.type.rawValue)")
+        print("  Key Access Objects: \(enc.keyAccess.count)")
+        print("  Algorithm: \(enc.method.algorithm)")
+
+        print("\nPayload:")
+        print("  Type: \(container.envelope.payload.type)")
+        print("  Protocol: \(container.envelope.payload.protocol)")
+        print("  Encrypted: \(container.envelope.payload.isEncrypted)")
+        print("  Size: \(container.envelope.payload.value.count) bytes")
+        if let mimeType = container.envelope.payload.mimeType {
+            print("  MIME Type: \(mimeType)")
+        }
+
+        print("\n✓ TDF-CBOR structure validated")
+    }
+
+    // MARK: - Private Helpers
+
+    private static func loadKASPublicKeyPEM() throws -> String {
+        let env = ProcessInfo.processInfo.environment
+        if let inline = env["TDF_KAS_PUBLIC_KEY"],
+           !inline.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return inline
+        }
+
+        if let path = env["TDF_KAS_PUBLIC_KEY_PATH"] {
+            let url = URL(fileURLWithPath: path)
+            return try String(contentsOf: url, encoding: .utf8)
+        }
+
+        throw EncryptError.missingConfiguration("TDF_KAS_PUBLIC_KEY or TDF_KAS_PUBLIC_KEY_PATH required")
+    }
+
+    private static func loadPolicy() throws -> TDFPolicy {
+        let env = ProcessInfo.processInfo.environment
+
+        if let policyPath = env["TDF_POLICY_PATH"] {
+            let url = URL(fileURLWithPath: policyPath)
+            let data = try Data(contentsOf: url)
+            return try TDFPolicy(json: data)
+        }
+
+        if let policyBase64 = env["TDF_POLICY_BASE64"],
+           let data = Data(base64Encoded: policyBase64)
+        {
+            return try TDFPolicy(json: data)
+        }
+
+        if let inlineJSON = env["TDF_POLICY_JSON"],
+           let data = inlineJSON.data(using: .utf8)
+        {
+            return try TDFPolicy(json: data)
+        }
+
+        // Create default policy
+        let policy: [String: Any] = [
+            "uuid": UUID().uuidString.lowercased(),
+            "body": [
+                "dataAttributes": [] as [Any],
+                "dissem": [] as [Any],
+            ],
+        ]
+
+        guard JSONSerialization.isValidJSONObject(policy),
+              let data = try? JSONSerialization.data(withJSONObject: policy, options: [.sortedKeys])
+        else {
+            throw EncryptError.missingConfiguration("Unable to create default policy")
+        }
+
+        return try TDFPolicy(json: data)
+    }
+}

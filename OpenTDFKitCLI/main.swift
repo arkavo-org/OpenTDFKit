@@ -10,6 +10,8 @@ enum CLIDataFormat: String {
     case nanoCollection = "nano-collection"
     case tdf
     case ztdf
+    case json = "json"
+    case cbor = "cbor"
 
     static func parse(_ rawValue: String) throws -> CLIDataFormat {
         let normalized = rawValue.lowercased()
@@ -18,6 +20,12 @@ enum CLIDataFormat: String {
         }
         if normalized == "nano_collection" || normalized == "nano-collection" {
             return .nanoCollection
+        }
+        if normalized == "tdf-json" || normalized == "tdfjson" {
+            return .json
+        }
+        if normalized == "tdf-cbor" || normalized == "tdfcbor" {
+            return .cbor
         }
         guard let format = CLIDataFormat(rawValue: normalized) else {
             throw CLIError.unsupportedFormat(rawValue)
@@ -125,13 +133,15 @@ struct OpenTDFKitCLI {
           nano-collection    NanoTDF Collection (single key, multiple payloads)
           tdf                Standard ZIP-based TDF (supports streaming)
           ztdf               ZTDF alias for standard TDF
+          json               TDF-JSON format (inline base64 payload)
+          cbor               TDF-CBOR format (binary payload)
 
         Options:
           --chunk-size <size>    Chunk size for streaming (2m, 5m, 25m, or bytes)
           --segments <sizes>     Comma-separated segment sizes (e.g., 2m,5m,2m)
 
         Features (for supports command):
-          nano, nano_ecdsa, nano_collection, ztdf, etc.
+          nano, nano_ecdsa, nano_collection, ztdf, json, cbor, etc.
 
         Environment Variables:
           CLIENTID           OAuth client ID
@@ -144,10 +154,14 @@ struct OpenTDFKitCLI {
           OpenTDFKitCLI encrypt input.txt output.ntdf nano-collection
           OpenTDFKitCLI encrypt large.dat output.tdf tdf --chunk-size 5m
           OpenTDFKitCLI encrypt large.dat output.tdf tdf --segments 2m,5m,25m
+          OpenTDFKitCLI encrypt input.txt output.json json
+          OpenTDFKitCLI encrypt input.txt output.cbor cbor
           OpenTDFKitCLI decrypt output.ntdf recovered.txt nano-collection
           OpenTDFKitCLI decrypt output.tdf recovered.dat tdf --chunk-size 5m
+          OpenTDFKitCLI decrypt output.json recovered.txt json
+          OpenTDFKitCLI decrypt output.cbor recovered.txt cbor
           OpenTDFKitCLI benchmark test.dat tdf
-          OpenTDFKitCLI supports nano_collection
+          OpenTDFKitCLI supports json
           OpenTDFKitCLI verify test.ntdf
         """)
     }
@@ -198,10 +212,21 @@ struct OpenTDFKitCLI {
         }
 
         let data = try Data(contentsOf: fileURL)
-        if Commands.isLikelyArchiveTDF(data: data) {
+
+        // Use TDFFormatDetector for automatic format detection
+        guard let format = TDFFormatDetector.detect(from: data) else {
+            throw CLIError.unsupportedFormat("Unable to detect TDF format from file contents")
+        }
+
+        switch format {
+        case .archive:
             try Commands.verifyTDF(data: data, filename: fileURL.lastPathComponent)
-        } else {
+        case .nano:
             try Commands.verifyNanoTDF(data: data, filename: fileURL.lastPathComponent)
+        case .json:
+            try Commands.verifyTDFJSON(data: data, filename: fileURL.lastPathComponent)
+        case .cbor:
+            try Commands.verifyTDFCBOR(data: data, filename: fileURL.lastPathComponent)
         }
     }
 
@@ -287,6 +312,26 @@ struct OpenTDFKitCLI {
                 outputData = result.archiveData
                 try outputData.write(to: outputURL)
             }
+        case .json:
+            let inputData = try Data(contentsOf: inputURL)
+            let result = try Commands.encryptTDFJSON(
+                plaintext: inputData,
+                inputURL: inputURL,
+            )
+            outputData = result.data
+            try outputData.write(to: outputURL)
+            try persistSymmetricKeyIfRequested(result.symmetricKey)
+            return
+        case .cbor:
+            let inputData = try Data(contentsOf: inputURL)
+            let result = try Commands.encryptTDFCBOR(
+                plaintext: inputData,
+                inputURL: inputURL,
+            )
+            outputData = result.data
+            try outputData.write(to: outputURL)
+            try persistSymmetricKeyIfRequested(result.symmetricKey)
+            return
         }
 
         if let result = standardTDFResult {
@@ -351,6 +396,28 @@ struct OpenTDFKitCLI {
                 symmetricKey: symmetricKey,
                 privateKeyPEM: privateKey,
                 oauthToken: oauthToken,
+            )
+            usedStandardTDF = true
+        case .json:
+            let symmetricKey = try loadSymmetricKeyFromEnvironment()
+            let privateKey = try loadPrivateKeyPEMFromEnvironment()
+
+            plaintext = try Commands.decryptTDFJSON(
+                data: data,
+                filename: inputURL.lastPathComponent,
+                symmetricKey: symmetricKey,
+                privateKeyPEM: privateKey,
+            )
+            usedStandardTDF = true
+        case .cbor:
+            let symmetricKey = try loadSymmetricKeyFromEnvironment()
+            let privateKey = try loadPrivateKeyPEMFromEnvironment()
+
+            plaintext = try Commands.decryptTDFCBOR(
+                data: data,
+                filename: inputURL.lastPathComponent,
+                symmetricKey: symmetricKey,
+                privateKeyPEM: privateKey,
             )
             usedStandardTDF = true
         }
@@ -626,6 +693,10 @@ struct OpenTDFKitCLI {
         case "nano", "nano_ecdsa", "nano_collection":
             return 0
         case "tdf", "ztdf":
+            return 0
+        case "json", "tdf-json", "tdfjson":
+            return 0
+        case "cbor", "tdf-cbor", "tdfcbor":
             return 0
         case "ztdf-ecwrap", "assertions", "assertion_verification",
              "autoconfigure", "better-messages-2024", "bulk_rewrap",
