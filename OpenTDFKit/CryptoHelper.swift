@@ -315,79 +315,17 @@ public actor CryptoHelper {
     }
 
     /// Generates an ECDSA signature (specifically P256) for a given message.
-    /// Extracts the raw R and S components from the DER-encoded signature provided by CryptoKit.
+    /// Returns the raw R || S signature (64 bytes for P256).
     /// - Parameters:
     ///   - privateKey: The `P256.Signing.PrivateKey` to use for signing.
     ///   - message: The `Data` to sign.
-    /// - Returns: The raw signature as `Data` (concatenated R and S values, each 32 bytes), or `nil` if extraction fails.
-    /// - Throws: `CryptoKitError` if the signing operation itself fails.
-    func generateECDSASignature(privateKey: P256.Signing.PrivateKey, message: Data) throws -> Data? {
-        // Generate the signature in DER format using CryptoKit
-        let derSignature = try privateKey.signature(for: message).derRepresentation
-        // Extract the raw R || S components from the DER structure
-        return extractRawECDSASignature(from: derSignature)
-    }
-
-    /// Extracts the raw R and S components (each expected to be 32 bytes for P256) from a DER-encoded ECDSA signature.
-    /// This function manually parses the ASN.1 structure of the DER signature.
-    /// **Note:** This assumes a standard P256 ECDSA signature format. It might be fragile if the DER encoding varies.
-    /// Consider using `rawRepresentation` on the `P256.Signing.ECDSASignature` object directly if available and suitable.
-    /// - Parameter derSignature: The DER-encoded signature `Data`.
-    /// - Returns: The concatenated 64-byte raw signature (R || S), or `nil` if parsing fails or lengths are incorrect.
-    private func extractRawECDSASignature(from derSignature: Data) -> Data? {
-        var r: Data?
-        var s: Data?
-
-        // Basic validation of DER structure (SEQUENCE tag, etc.)
-        guard derSignature.count > 8 else { return nil } // Minimal length check
-
-        var index = 0
-        // Expect SEQUENCE tag (0x30)
-        guard derSignature[index] == 0x30 else { return nil }
-        index += 1
-
-        // Skip length byte (we don't strictly need it here)
-        // let sequenceLength = derSignature[index]
-        index += 1
-
-        // Expect INTEGER tag (0x02) for R
-        guard derSignature[index] == 0x02 else { return nil }
-        index += 1
-
-        // Get length of R
-        let rLength = Int(derSignature[index])
-        index += 1
-
-        // Extract R value bytes
-        guard index + rLength <= derSignature.count else { return nil } // Bounds check
-        r = derSignature[index ..< (index + rLength)]
-        index += rLength
-
-        // Expect INTEGER tag (0x02) for S
-        guard derSignature[index] == 0x02 else { return nil }
-        index += 1
-
-        // Get length of S
-        let sLength = Int(derSignature[index])
-        index += 1
-
-        // Extract S value bytes
-        guard index + sLength <= derSignature.count else { return nil } // Bounds check
-        s = derSignature[index ..< (index + sLength)]
-
-        // Ensure R and S were extracted
-        guard let rData = r, let sData = s else { return nil }
-
-        // Handle potential leading zero byte in R or S if the value is positive
-        // but the high bit is set. Trim to expected 32 bytes for P256.
-        let rTrimmed = rData.count == 33 && rData.first == 0x00 ? rData.dropFirst() : rData
-        let sTrimmed = sData.count == 33 && sData.first == 0x00 ? sData.dropFirst() : sData
-
-        // Validate final lengths are exactly 32 bytes each for P256 raw signature
-        guard rTrimmed.count == 32, sTrimmed.count == 32 else { return nil }
-
-        // Concatenate R and S for the raw signature format
-        return rTrimmed + sTrimmed
+    /// - Returns: The raw signature as `Data` (concatenated R and S values, each 32 bytes).
+    /// - Throws: `CryptoKitError` if the signing operation fails.
+    func generateECDSASignature(privateKey: P256.Signing.PrivateKey, message: Data) throws -> Data {
+        // Generate the signature using CryptoKit and get raw representation directly
+        // rawRepresentation returns the 64-byte R || S format
+        let signature = try privateKey.signature(for: message)
+        return signature.rawRepresentation
     }
 
     /// Performs HKDF (HMAC-based Key Derivation Function) using SHA256.

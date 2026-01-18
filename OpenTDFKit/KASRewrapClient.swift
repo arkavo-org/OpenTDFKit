@@ -91,6 +91,24 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         let keyAccessObject: StandardKeyAccessObject
     }
 
+    /// Algorithm type for KAS rewrap requests
+    public enum RewrapAlgorithm: String, Sendable {
+        case rsa2048 = "rsa:2048"
+        case ecP256 = "ec:secp256r1"
+        case ecP384 = "ec:secp384r1"
+        case ecP521 = "ec:secp521r1"
+
+        /// Detect algorithm from key access type
+        public static func from(accessType: TDFKeyAccessObject.AccessType) -> RewrapAlgorithm {
+            switch accessType {
+            case .ecWrapped:
+                .ecP256 // Default to P-256 for EC
+            case .wrapped, .remote, .remoteWrapped:
+                .rsa2048
+            }
+        }
+    }
+
     public struct StandardPolicyRequest: Codable {
         let keyAccessObjects: [StandardKeyAccessObjectWrapper]
         let policy: Policy
@@ -396,11 +414,15 @@ public class KASRewrapClient: KASRewrapClientProtocol {
             wrappers.append(wrapper)
         }
 
+        // Detect algorithm from first key access entry (all should use same algorithm)
+        let algorithm: RewrapAlgorithm = keyAccessEntries.first
+            .map { RewrapAlgorithm.from(accessType: $0.type) } ?? .rsa2048
+
         let policy = Policy(body: policyBody)
         let policyRequest = StandardPolicyRequest(
             keyAccessObjects: wrappers,
             policy: policy,
-            algorithm: "rsa:2048", // Specify RSA algorithm for KAS
+            algorithm: algorithm.rawValue,
         )
 
         let unsignedRequest = StandardUnsignedRewrapRequest(

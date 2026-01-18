@@ -94,6 +94,7 @@ public struct TDFKeyAccessObject: Codable, Sendable {
         case wrapped
         case remote
         case remoteWrapped
+        case ecWrapped = "ec-wrapped"
     }
 
     public enum AccessProtocol: String, Codable, Sendable {
