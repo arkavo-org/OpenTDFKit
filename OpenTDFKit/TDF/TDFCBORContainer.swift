@@ -51,7 +51,10 @@ public struct TDFCBORBuilder: Sendable {
     private var includeCreated: Bool = true
     private var policy: TDFPolicy?
 
-    public init() {}
+    /// Creates a new TDF-CBOR builder with default settings
+    public init() {
+        // Intentionally empty - configuration is done via builder methods
+    }
 
     /// Set the KAS URL
     public func kasURL(_ url: URL) -> TDFCBORBuilder {
@@ -254,7 +257,10 @@ public struct TDFCBOREncryptionResult: Sendable {
 
 /// Loader for parsing TDF-CBOR from data or files
 public struct TDFCBORLoader: Sendable {
-    public init() {}
+    /// Creates a new TDF-CBOR loader
+    public init() {
+        // Intentionally empty - stateless loader
+    }
 
     /// Load a TDF-CBOR container from data
     public func load(from data: Data) throws -> TDFCBORContainer {
@@ -273,7 +279,10 @@ public struct TDFCBORLoader: Sendable {
 
 /// Decryptor for TDF-CBOR containers
 public struct TDFCBORDecryptor: Sendable {
-    public init() {}
+    /// Creates a new TDF-CBOR decryptor
+    public init() {
+        // Intentionally empty - stateless decryptor
+    }
 
     /// Decrypt a TDF-CBOR container with a symmetric key
     public func decrypt(container: TDFCBORContainer, symmetricKey: SymmetricKey) throws -> Data {

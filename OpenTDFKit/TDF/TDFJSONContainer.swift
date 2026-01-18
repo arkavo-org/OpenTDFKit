@@ -50,7 +50,10 @@ public struct TDFJSONBuilder: Sendable {
     private var includeCreated: Bool = true
     private var policy: TDFPolicy?
 
-    public init() {}
+    /// Creates a new TDF-JSON builder with default settings
+    public init() {
+        // Intentionally empty - configuration is done via builder methods
+    }
 
     /// Set the KAS URL
     public func kasURL(_ url: URL) -> TDFJSONBuilder {
@@ -252,7 +255,10 @@ public struct TDFJSONEncryptionResult: Sendable {
 
 /// Loader for parsing TDF-JSON from data or files
 public struct TDFJSONLoader: Sendable {
-    public init() {}
+    /// Creates a new TDF-JSON loader
+    public init() {
+        // Intentionally empty - stateless loader
+    }
 
     /// Load a TDF-JSON container from data
     public func load(from data: Data) throws -> TDFJSONContainer {
@@ -280,7 +286,10 @@ public struct TDFJSONLoader: Sendable {
 
 /// Decryptor for TDF-JSON containers
 public struct TDFJSONDecryptor: Sendable {
-    public init() {}
+    /// Creates a new TDF-JSON decryptor
+    public init() {
+        // Intentionally empty - stateless decryptor
+    }
 
     /// Decrypt a TDF-JSON container with a symmetric key
     public func decrypt(container: TDFJSONContainer, symmetricKey: SymmetricKey) throws -> Data {

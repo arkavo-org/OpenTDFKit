@@ -48,8 +48,9 @@ public enum TDFCBOREnums {
     public static let payloadProtocolBinary: UInt64 = 0
     public static let payloadProtocolBinaryChunked: UInt64 = 1
 
-    // Encryption type: 0=split
+    // Encryption type: 0=split, 1=remote
     public static let encryptionTypeSplit: UInt64 = 0
+    public static let encryptionTypeRemote: UInt64 = 1
 
     // Key access type: 0=wrapped, 1=remote
     public static let keyAccessTypeWrapped: UInt64 = 0
@@ -371,8 +372,8 @@ extension TDFCBOREnvelope {
         }
         let integrityCBOR = try encodeIntegrityToCBOR(integrityInfo)
 
-        // Encryption type enum: "split" -> 0
-        let encTypeEnum: UInt64 = encInfo.type == .split ? TDFCBOREnums.encryptionTypeSplit : TDFCBOREnums.encryptionTypeSplit
+        // Encryption type enum: "split" -> 0, "remote" -> 1
+        let encTypeEnum: UInt64 = encInfo.type == .split ? TDFCBOREnums.encryptionTypeSplit : TDFCBOREnums.encryptionTypeRemote
 
         // Build encryptionInformation map
         let encInfoMap: [CBOR: CBOR] = [
@@ -402,8 +403,8 @@ extension TDFCBOREnvelope {
         // Key access type enum
         let kaTypeEnum: UInt64 = ka.type == .wrapped ? TDFCBOREnums.keyAccessTypeWrapped : TDFCBOREnums.keyAccessTypeRemote
 
-        // Protocol enum: "kas" -> 0
-        let protocolEnum: UInt64 = ka.protocolValue.rawValue == "kas" ? TDFCBOREnums.keyProtocolKas : TDFCBOREnums.keyProtocolKas
+        // Protocol enum: "kas" -> 0 (currently only kas is supported)
+        let protocolEnum: UInt64 = TDFCBOREnums.keyProtocolKas
 
         // Decode wrapped key from base64 to raw bytes
         guard let wrappedKeyData = Data(base64Encoded: ka.wrappedKey) else {
@@ -447,8 +448,8 @@ extension TDFCBOREnvelope {
 
     /// Encode method to CBOR
     private func encodeMethodToCBOR(_ method: TDFMethodDescriptor) throws -> CBOR {
-        // Algorithm enum: "AES-256-GCM" -> 0
-        let algEnum: UInt64 = method.algorithm == "AES-256-GCM" ? TDFCBOREnums.symmetricAlgAes256Gcm : TDFCBOREnums.symmetricAlgAes256Gcm
+        // Algorithm enum: "AES-256-GCM" -> 0 (currently only AES-256-GCM is supported)
+        let algEnum: UInt64 = TDFCBOREnums.symmetricAlgAes256Gcm
 
         // Decode IV from base64 to raw bytes
         guard let ivData = Data(base64Encoded: method.iv) else {
@@ -806,13 +807,8 @@ extension TDFCBOREnvelope {
             url = urlStr
         }
 
-        // Protocol
-        var protocolStr = "kas"
-        if let protocolValue = kaMap[.unsignedInt(UInt64(TDFCBORKeyAccessKey.protocol.rawValue))],
-           case let .unsignedInt(protocolEnum) = protocolValue
-        {
-            protocolStr = protocolEnum == TDFCBOREnums.keyProtocolKas ? "kas" : "kas"
-        }
+        // Protocol (currently only "kas" is supported)
+        let protocolStr = "kas"
 
         // Wrapped key
         var wrappedKey = ""
@@ -887,12 +883,8 @@ extension TDFCBOREnvelope {
 
     /// Decode method from CBOR
     private static func decodeMethod(_ methodMap: [CBOR: CBOR]) throws -> TDFMethodDescriptor {
-        var algorithm = "AES-256-GCM"
-        if let algValue = methodMap[.unsignedInt(UInt64(TDFCBORMethodKey.algorithm.rawValue))],
-           case let .unsignedInt(algEnum) = algValue
-        {
-            algorithm = algEnum == TDFCBOREnums.symmetricAlgAes256Gcm ? "AES-256-GCM" : "AES-256-GCM"
-        }
+        // Currently only AES-256-GCM is supported
+        let algorithm = "AES-256-GCM"
 
         var iv = ""
         if let ivValue = methodMap[.unsignedInt(UInt64(TDFCBORMethodKey.iv.rawValue))],
