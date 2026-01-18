@@ -79,6 +79,35 @@ public enum TDFCrypto {
         return try CryptoKit.AES.GCM.open(sealed, using: symmetricKey)
     }
 
+    /// Decrypt AES-GCM payload with combined IV + ciphertext + tag format
+    /// - Parameters:
+    ///   - combinedPayload: Data containing IV (12 bytes) + ciphertext + tag (16 bytes)
+    ///   - symmetricKey: The decryption key
+    /// - Returns: Decrypted plaintext
+    public static func decryptCombinedPayload(
+        _ combinedPayload: Data,
+        symmetricKey: SymmetricKey,
+    ) throws -> Data {
+        let ivSize = 12
+        let tagSize = 16
+        let minSize = ivSize + tagSize
+
+        guard combinedPayload.count >= minSize else {
+            throw TDFCryptoError.decryptionFailed("Malformed payload: insufficient data")
+        }
+
+        let iv = combinedPayload.prefix(ivSize)
+        let ciphertext = combinedPayload.dropFirst(ivSize).dropLast(tagSize)
+        let tag = combinedPayload.suffix(tagSize)
+
+        return try decryptPayload(
+            ciphertext: Data(ciphertext),
+            iv: Data(iv),
+            tag: Data(tag),
+            symmetricKey: symmetricKey,
+        )
+    }
+
     // MARK: - AES-CBC Encryption (FairPlay Compatible)
 
     /// Encrypt payload using AES-CBC with PKCS7 padding.
@@ -530,6 +559,7 @@ public enum TDFCryptoError: Error, CustomStringConvertible {
     case cbcDecryptionFailed(String)
     case ecKeyAgreementFailed(String)
     case unsupportedCurve(String)
+    case decryptionFailed(String)
 
     public var description: String {
         switch self {
@@ -570,6 +600,8 @@ public enum TDFCryptoError: Error, CustomStringConvertible {
             return "EC key agreement failed: \(reason)"
         case let .unsupportedCurve(curve):
             return "Unsupported EC curve: \(curve)"
+        case let .decryptionFailed(reason):
+            return "Decryption failed: \(reason)"
         }
     }
 }

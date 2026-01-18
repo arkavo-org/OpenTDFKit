@@ -173,7 +173,7 @@ public struct TDFCBOREnvelope: Sendable {
         version: [UInt8] = [1, 0, 0],
         created: UInt64? = nil,
         manifest: TDFCBORManifest,
-        payload: TDFBinaryPayload
+        payload: TDFBinaryPayload,
     ) {
         self.tdf = tdf
         self.version = version
@@ -200,7 +200,7 @@ public struct TDFCBORManifest: Sendable {
 
     public init(
         encryptionInformation: TDFEncryptionInformation,
-        assertions: [TDFAssertion]? = nil
+        assertions: [TDFAssertion]? = nil,
     ) {
         self.encryptionInformation = encryptionInformation
         self.assertions = assertions
@@ -233,7 +233,7 @@ public struct TDFBinaryPayload: Sendable {
         protocol: String = "binary",
         mimeType: String? = nil,
         isEncrypted: Bool = true,
-        value: Data
+        value: Data,
     ) {
         self.type = type
         self.protocol = `protocol`
@@ -260,38 +260,38 @@ public enum TDFCBORError: Error, CustomStringConvertible, Sendable {
     public var description: String {
         switch self {
         case .invalidMagicBytes:
-            return "Invalid or missing CBOR magic bytes"
+            "Invalid or missing CBOR magic bytes"
         case let .invalidTdfIdentifier(id):
-            return "Invalid tdf identifier: expected 'cbor', got '\(id)'"
+            "Invalid tdf identifier: expected 'cbor', got '\(id)'"
         case let .unexpectedKey(expected, got):
-            return "Expected integer key \(expected), got \(got)"
+            "Expected integer key \(expected), got \(got)"
         case let .cborDecodingFailed(e):
-            return "CBOR decoding failed: \(e)"
+            "CBOR decoding failed: \(e)"
         case let .cborEncodingFailed(e):
-            return "CBOR encoding failed: \(e)"
+            "CBOR encoding failed: \(e)"
         case .binaryPayloadExpected:
-            return "Binary payload expected but got base64"
+            "Binary payload expected but got base64"
         case let .missingField(field):
-            return "Missing required field: \(field)"
+            "Missing required field: \(field)"
         case let .encryptionFailed(e):
-            return "Encryption failed: \(e)"
+            "Encryption failed: \(e)"
         case let .decryptionFailed(e):
-            return "Decryption failed: \(e)"
+            "Decryption failed: \(e)"
         }
     }
 }
 
 // MARK: - TDF-CBOR Extensions
 
-extension TDFCBOREnvelope {
+public extension TDFCBOREnvelope {
     /// Check if data starts with CBOR self-describe tag
-    public static func hasMagicBytes(_ data: Data) -> Bool {
+    static func hasMagicBytes(_ data: Data) -> Bool {
         guard data.count >= 3 else { return false }
         return data[0] == 0xD9 && data[1] == 0xD9 && data[2] == 0xF7
     }
 
     /// Convert to standard TDF manifest format (for KAS integration)
-    public func toStandardManifest() -> TDFManifest {
+    func toStandardManifest() -> TDFManifest {
         TDFManifest(
             schemaVersion: "1.0.0",
             payload: TDFPayloadDescriptor(
@@ -299,10 +299,10 @@ extension TDFCBOREnvelope {
                 url: "inline",
                 protocolValue: .zip,
                 isEncrypted: true,
-                mimeType: payload.mimeType
+                mimeType: payload.mimeType,
             ),
             encryptionInformation: manifest.encryptionInformation,
-            assertions: manifest.assertions
+            assertions: manifest.assertions,
         )
     }
 }
@@ -337,7 +337,7 @@ extension TDFCBOREnvelope {
             CBOR.unsignedInt(UInt64(TDFCBORKey.payload.rawValue)): .map(payloadMap),
         ]
 
-        if let created = created {
+        if let created {
             mainMap[CBOR.unsignedInt(UInt64(TDFCBORKey.created.rawValue))] = .unsignedInt(created)
         }
 
@@ -384,9 +384,15 @@ extension TDFCBOREnvelope {
         ]
 
         // Build manifest map
-        let manifestMap: [CBOR: CBOR] = [
+        var manifestMap: [CBOR: CBOR] = [
             .unsignedInt(UInt64(TDFCBORManifestKey.encryptionInformation.rawValue)): .map(encInfoMap),
         ]
+
+        // Add assertions if present
+        if let assertions = manifest.assertions, !assertions.isEmpty {
+            let assertionsArray = try encodeAssertionsToCBOR(assertions)
+            manifestMap[.unsignedInt(UInt64(TDFCBORManifestKey.assertions.rawValue))] = .array(assertionsArray)
+        }
 
         return .map(manifestMap)
     }
@@ -510,30 +516,30 @@ extension TDFCBOREnvelope {
     /// Convert hash algorithm string to enum value
     private func hashAlgToEnum(_ alg: String) -> UInt64 {
         switch alg {
-        case "HS256": return TDFCBOREnums.hashAlgHS256
-        case "HS384": return TDFCBOREnums.hashAlgHS384
-        case "HS512": return TDFCBOREnums.hashAlgHS512
-        case "GMAC": return TDFCBOREnums.hashAlgGMAC
-        case "SHA256": return TDFCBOREnums.hashAlgSHA256
-        case "ES256": return TDFCBOREnums.hashAlgES256
-        case "ES384": return TDFCBOREnums.hashAlgES384
-        case "ES512": return TDFCBOREnums.hashAlgES512
-        default: return TDFCBOREnums.hashAlgHS256
+        case "HS256": TDFCBOREnums.hashAlgHS256
+        case "HS384": TDFCBOREnums.hashAlgHS384
+        case "HS512": TDFCBOREnums.hashAlgHS512
+        case "GMAC": TDFCBOREnums.hashAlgGMAC
+        case "SHA256": TDFCBOREnums.hashAlgSHA256
+        case "ES256": TDFCBOREnums.hashAlgES256
+        case "ES384": TDFCBOREnums.hashAlgES384
+        case "ES512": TDFCBOREnums.hashAlgES512
+        default: TDFCBOREnums.hashAlgHS256
         }
     }
 
     /// Convert enum value to hash algorithm string
     private static func enumToHashAlg(_ val: UInt64) -> String {
         switch val {
-        case TDFCBOREnums.hashAlgHS256: return "HS256"
-        case TDFCBOREnums.hashAlgHS384: return "HS384"
-        case TDFCBOREnums.hashAlgHS512: return "HS512"
-        case TDFCBOREnums.hashAlgGMAC: return "GMAC"
-        case TDFCBOREnums.hashAlgSHA256: return "SHA256"
-        case TDFCBOREnums.hashAlgES256: return "ES256"
-        case TDFCBOREnums.hashAlgES384: return "ES384"
-        case TDFCBOREnums.hashAlgES512: return "ES512"
-        default: return "HS256"
+        case TDFCBOREnums.hashAlgHS256: "HS256"
+        case TDFCBOREnums.hashAlgHS384: "HS384"
+        case TDFCBOREnums.hashAlgHS512: "HS512"
+        case TDFCBOREnums.hashAlgGMAC: "GMAC"
+        case TDFCBOREnums.hashAlgSHA256: "SHA256"
+        case TDFCBOREnums.hashAlgES256: "ES256"
+        case TDFCBOREnums.hashAlgES384: "ES384"
+        case TDFCBOREnums.hashAlgES512: "ES512"
+        default: "HS256"
         }
     }
 
@@ -691,7 +697,7 @@ extension TDFCBOREnvelope {
             protocol: payloadProtocol,
             mimeType: payloadMimeType,
             isEncrypted: payloadIsEncrypted,
-            value: Data(bytes)
+            value: Data(bytes),
         )
 
         return TDFCBOREnvelope(
@@ -699,7 +705,7 @@ extension TDFCBOREnvelope {
             version: version,
             created: created,
             manifest: manifest,
-            payload: payload
+            payload: payload,
         )
     }
 
@@ -713,9 +719,17 @@ extension TDFCBOREnvelope {
 
         let encInfo = try decodeEncryptionInfo(encInfoMap)
 
+        // Decode assertions if present
+        var assertions: [TDFAssertion]?
+        if let assertionsValue = manifestMap[.unsignedInt(UInt64(TDFCBORManifestKey.assertions.rawValue))],
+           case let .array(assertionsArray) = assertionsValue
+        {
+            assertions = try decodeAssertionsFromCBOR(assertionsArray)
+        }
+
         return TDFCBORManifest(
             encryptionInformation: encInfo,
-            assertions: nil // TODO: decode assertions if present
+            assertions: assertions,
         )
     }
 
@@ -736,7 +750,7 @@ extension TDFCBOREnvelope {
         {
             for kaItem in kaArray {
                 if case let .map(kaMap) = kaItem {
-                    keyAccess.append(try decodeKeyAccess(kaMap))
+                    try keyAccess.append(decodeKeyAccess(kaMap))
                 }
             }
         }
@@ -770,7 +784,7 @@ extension TDFCBOREnvelope {
             keyAccess: keyAccess,
             method: method,
             integrityInformation: integrity,
-            policy: policy
+            policy: policy,
         )
     }
 
@@ -848,7 +862,7 @@ extension TDFCBOREnvelope {
             kid: kid,
             sid: nil,
             schemaVersion: schemaVersion,
-            ephemeralPublicKey: ephemeralPublicKey
+            ephemeralPublicKey: ephemeralPublicKey,
         )
     }
 
@@ -922,20 +936,20 @@ extension TDFCBOREnvelope {
         {
             for segItem in segsArray {
                 if case let .map(segMap) = segItem {
-                    segments.append(try decodeSegment(segMap))
+                    try segments.append(decodeSegment(segMap))
                 }
             }
         }
 
         // Segment size defaults
-        var segmentSizeDefault: Int = 0
+        var segmentSizeDefault = 0
         if let ssdValue = intMap[.unsignedInt(UInt64(TDFCBORIntegrityKey.segmentSizeDefault.rawValue))],
            case let .unsignedInt(ssd) = ssdValue
         {
             segmentSizeDefault = Int(ssd)
         }
 
-        var encryptedSegmentSizeDefault: Int = 0
+        var encryptedSegmentSizeDefault = 0
         if let essdValue = intMap[.unsignedInt(UInt64(TDFCBORIntegrityKey.encryptedSegmentSizeDefault.rawValue))],
            case let .unsignedInt(essd) = essdValue
         {
@@ -947,7 +961,7 @@ extension TDFCBOREnvelope {
             segmentHashAlg: segmentHashAlg,
             segmentSizeDefault: Int64(segmentSizeDefault),
             encryptedSegmentSizeDefault: Int64(encryptedSegmentSizeDefault),
-            segments: segments
+            segments: segments,
         )
     }
 
@@ -995,6 +1009,47 @@ extension TDFCBOREnvelope {
 
         return TDFSegment(hash: hash, segmentSize: segmentSize, encryptedSegmentSize: encryptedSegmentSize)
     }
+
+    // MARK: - Assertions Encoding/Decoding
+
+    /// Encode assertions to CBOR array using JSON as intermediate format
+    private func encodeAssertionsToCBOR(_ assertions: [TDFAssertion]) throws -> [CBOR] {
+        // Use JSON encoder to serialize assertions, then convert to CBOR byte strings
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+
+        var cborArray: [CBOR] = []
+        for assertion in assertions {
+            let jsonData = try encoder.encode(assertion)
+            cborArray.append(.byteString(Array(jsonData)))
+        }
+        return cborArray
+    }
+
+    /// Decode assertions from CBOR array using JSON as intermediate format
+    private static func decodeAssertionsFromCBOR(_ cborArray: [CBOR]) throws -> [TDFAssertion] {
+        let decoder = JSONDecoder()
+
+        var assertions: [TDFAssertion] = []
+        for item in cborArray {
+            switch item {
+            case let .byteString(bytes):
+                let jsonData = Data(bytes)
+                let assertion = try decoder.decode(TDFAssertion.self, from: jsonData)
+                assertions.append(assertion)
+            case let .utf8String(jsonString):
+                // Support legacy string format
+                guard let jsonData = jsonString.data(using: .utf8) else {
+                    throw TDFCBORError.cborDecodingFailed("Invalid assertion JSON encoding")
+                }
+                let assertion = try decoder.decode(TDFAssertion.self, from: jsonData)
+                assertions.append(assertion)
+            default:
+                throw TDFCBORError.cborDecodingFailed("Expected assertion as byte string or UTF-8 string")
+            }
+        }
+        return assertions
+    }
 }
 
 // MARK: - Helper Types
@@ -1005,14 +1060,14 @@ private struct ManifestWrapper: Codable {
     let assertions: [TDFAssertion]?
 
     init(manifest: TDFCBORManifest) {
-        self.encryptionInformation = manifest.encryptionInformation
-        self.assertions = manifest.assertions
+        encryptionInformation = manifest.encryptionInformation
+        assertions = manifest.assertions
     }
 
     func toManifest() -> TDFCBORManifest {
         TDFCBORManifest(
             encryptionInformation: encryptionInformation,
-            assertions: assertions
+            assertions: assertions,
         )
     }
 }

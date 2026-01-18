@@ -39,7 +39,7 @@ public struct TDFJSONEnvelope: Codable, Sendable {
         version: String = "1.0.0",
         created: String? = nil,
         manifest: TDFJSONManifest,
-        payload: TDFInlinePayload
+        payload: TDFInlinePayload,
     ) {
         self.tdf = tdf
         self.version = version
@@ -67,7 +67,7 @@ public struct TDFJSONManifest: Codable, Sendable {
 
     public init(
         encryptionInformation: TDFEncryptionInformation,
-        assertions: [TDFAssertion]? = nil
+        assertions: [TDFAssertion]? = nil,
     ) {
         self.encryptionInformation = encryptionInformation
         self.assertions = assertions
@@ -105,7 +105,7 @@ public struct TDFInlinePayload: Codable, Sendable {
         mimeType: String? = nil,
         isEncrypted: Bool = true,
         length: UInt64? = nil,
-        value: String
+        value: String,
     ) {
         self.type = type
         self.protocol = `protocol`
@@ -131,28 +131,28 @@ public enum TDFJSONError: Error, CustomStringConvertible, Sendable {
     public var description: String {
         switch self {
         case .missingTdfField:
-            return "Missing 'tdf' field in envelope"
+            "Missing 'tdf' field in envelope"
         case let .invalidTdfIdentifier(id):
-            return "Invalid tdf identifier: expected 'json', got '\(id)'"
+            "Invalid tdf identifier: expected 'json', got '\(id)'"
         case let .unsupportedVersion(v):
-            return "Unsupported version: \(v)"
+            "Unsupported version: \(v)"
         case let .payloadDecodeError(e):
-            return "Payload decode error: \(e)"
+            "Payload decode error: \(e)"
         case let .manifestParsingFailed(e):
-            return "Manifest parsing failed: \(e)"
+            "Manifest parsing failed: \(e)"
         case let .encryptionFailed(e):
-            return "Encryption failed: \(e)"
+            "Encryption failed: \(e)"
         case let .decryptionFailed(e):
-            return "Decryption failed: \(e)"
+            "Decryption failed: \(e)"
         }
     }
 }
 
 // MARK: - TDF-JSON Extensions
 
-extension TDFJSONEnvelope {
+public extension TDFJSONEnvelope {
     /// Parse a TDF-JSON envelope from JSON data
-    public static func parse(from data: Data) throws -> TDFJSONEnvelope {
+    static func parse(from data: Data) throws -> TDFJSONEnvelope {
         let decoder = JSONDecoder()
         let envelope = try decoder.decode(TDFJSONEnvelope.self, from: data)
 
@@ -165,7 +165,7 @@ extension TDFJSONEnvelope {
     }
 
     /// Parse a TDF-JSON envelope from a JSON string
-    public static func parse(from jsonString: String) throws -> TDFJSONEnvelope {
+    static func parse(from jsonString: String) throws -> TDFJSONEnvelope {
         guard let data = jsonString.data(using: .utf8) else {
             throw TDFJSONError.payloadDecodeError("Invalid UTF-8 string")
         }
@@ -173,7 +173,7 @@ extension TDFJSONEnvelope {
     }
 
     /// Serialize to JSON data
-    public func toJSONData(prettyPrinted: Bool = false) throws -> Data {
+    func toJSONData(prettyPrinted: Bool = false) throws -> Data {
         let encoder = JSONEncoder()
         if prettyPrinted {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -184,7 +184,7 @@ extension TDFJSONEnvelope {
     }
 
     /// Serialize to JSON string
-    public func toJSONString(prettyPrinted: Bool = false) throws -> String {
+    func toJSONString(prettyPrinted: Bool = false) throws -> String {
         let data = try toJSONData(prettyPrinted: prettyPrinted)
         guard let string = String(data: data, encoding: .utf8) else {
             throw TDFJSONError.payloadDecodeError("Failed to encode as UTF-8")
@@ -193,7 +193,7 @@ extension TDFJSONEnvelope {
     }
 
     /// Convert to standard TDF manifest format (for KAS integration)
-    public func toStandardManifest() -> TDFManifest {
+    func toStandardManifest() -> TDFManifest {
         TDFManifest(
             schemaVersion: "1.0.0",
             payload: TDFPayloadDescriptor(
@@ -201,15 +201,15 @@ extension TDFJSONEnvelope {
                 url: "inline",
                 protocolValue: .zip,
                 isEncrypted: true,
-                mimeType: payload.mimeType
+                mimeType: payload.mimeType,
             ),
             encryptionInformation: manifest.encryptionInformation,
-            assertions: manifest.assertions
+            assertions: manifest.assertions,
         )
     }
 
     /// Decode the base64 payload value to raw bytes
-    public func decodePayloadValue() throws -> Data {
+    func decodePayloadValue() throws -> Data {
         guard let data = Data(base64Encoded: payload.value) else {
             throw TDFJSONError.payloadDecodeError("Invalid base64 encoding")
         }
@@ -219,10 +219,10 @@ extension TDFJSONEnvelope {
 
 // MARK: - Conversion from Standard Manifest
 
-extension TDFJSONManifest {
+public extension TDFJSONManifest {
     /// Create a TDF-JSON manifest from a standard TDF manifest
-    public init(from manifest: TDFManifest) {
-        self.encryptionInformation = manifest.encryptionInformation
-        self.assertions = manifest.assertions
+    init(from manifest: TDFManifest) {
+        encryptionInformation = manifest.encryptionInformation
+        assertions = manifest.assertions
     }
 }

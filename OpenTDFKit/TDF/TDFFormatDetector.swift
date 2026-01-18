@@ -120,10 +120,10 @@ public struct TDFFormatDetectionResult: Sendable {
     public let method: DetectionMethod
 
     public enum DetectionConfidence: Sendable {
-        case definitive  // Magic bytes match exactly
-        case high        // Strong structural indicators
-        case medium      // File extension or partial match
-        case low         // Speculative parse
+        case definitive // Magic bytes match exactly
+        case high // Strong structural indicators
+        case medium // File extension or partial match
+        case low // Speculative parse
     }
 
     public enum DetectionMethod: Sendable {
@@ -133,9 +133,9 @@ public struct TDFFormatDetectionResult: Sendable {
     }
 }
 
-extension TDFFormatDetector {
+public extension TDFFormatDetector {
     /// Detect format with detailed result
-    public static func detectWithDetails(from data: Data) -> TDFFormatDetectionResult? {
+    static func detectWithDetails(from data: Data) -> TDFFormatDetectionResult? {
         guard !data.isEmpty else { return nil }
 
         // Check CBOR magic bytes first
@@ -145,7 +145,7 @@ extension TDFFormatDetector {
                 return TDFFormatDetectionResult(
                     format: .cbor,
                     confidence: .definitive,
-                    method: .magicBytes
+                    method: .magicBytes,
                 )
             }
         }
@@ -157,7 +157,7 @@ extension TDFFormatDetector {
                 return TDFFormatDetectionResult(
                     format: .archive,
                     confidence: .definitive,
-                    method: .magicBytes
+                    method: .magicBytes,
                 )
             }
         }
@@ -169,7 +169,7 @@ extension TDFFormatDetector {
                 return TDFFormatDetectionResult(
                     format: .nano,
                     confidence: .definitive,
-                    method: .magicBytes
+                    method: .magicBytes,
                 )
             }
         }
@@ -180,7 +180,7 @@ extension TDFFormatDetector {
                 return TDFFormatDetectionResult(
                     format: .json,
                     confidence: .high,
-                    method: .structuralParse
+                    method: .structuralParse,
                 )
             }
         }

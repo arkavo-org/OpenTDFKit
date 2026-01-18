@@ -96,13 +96,13 @@ public struct TDFJSONBuilder: Sendable {
 
     /// Build a TDF-JSON container by encrypting the provided plaintext
     public func encrypt(plaintext: Data) throws -> TDFJSONEncryptionResult {
-        guard let kasURL = kasURL else {
+        guard let kasURL else {
             throw TDFJSONError.encryptionFailed("KAS URL is required")
         }
-        guard let kasPublicKeyPEM = kasPublicKeyPEM else {
+        guard let kasPublicKeyPEM else {
             throw TDFJSONError.encryptionFailed("KAS public key is required")
         }
-        guard let policy = policy else {
+        guard let policy else {
             throw TDFJSONError.encryptionFailed("Policy is required")
         }
 
@@ -112,7 +112,7 @@ public struct TDFJSONBuilder: Sendable {
         // Encrypt the plaintext
         let (iv, ciphertext, tag) = try TDFCrypto.encryptPayload(
             plaintext: plaintext,
-            symmetricKey: symmetricKey
+            symmetricKey: symmetricKey,
         )
 
         // Combine IV + ciphertext + tag for the payload
@@ -121,25 +121,25 @@ public struct TDFJSONBuilder: Sendable {
         // Wrap the symmetric key using EC (ECDH + HKDF + AES-GCM)
         let ecWrapped = try TDFCrypto.wrapSymmetricKeyWithEC(
             publicKeyPEM: kasPublicKeyPEM,
-            symmetricKey: symmetricKey
+            symmetricKey: symmetricKey,
         )
 
         // Create policy binding
         let policyBinding = TDFCrypto.policyBinding(
             policy: policy.json,
-            symmetricKey: symmetricKey
+            symmetricKey: symmetricKey,
         )
 
         // Calculate segment signature (GMAC)
         let segmentSignature = try TDFCrypto.segmentSignatureGMAC(
             segmentCiphertext: payloadData,
-            symmetricKey: symmetricKey
+            symmetricKey: symmetricKey,
         )
 
         // Calculate root signature
         let rootSignature = TDFCrypto.segmentSignature(
             segmentCiphertext: segmentSignature,
-            symmetricKey: symmetricKey
+            symmetricKey: symmetricKey,
         )
 
         // Create key access object with EC ephemeral public key
@@ -153,7 +153,7 @@ public struct TDFJSONBuilder: Sendable {
             kid: kasKid,
             sid: nil,
             schemaVersion: "1.0",
-            ephemeralPublicKey: ecWrapped.ephemeralPublicKey
+            ephemeralPublicKey: ecWrapped.ephemeralPublicKey,
         )
 
         // Create integrity information
@@ -166,16 +166,16 @@ public struct TDFJSONBuilder: Sendable {
                 TDFSegment(
                     hash: segmentSignature.base64EncodedString(),
                     segmentSize: Int64(plaintext.count),
-                    encryptedSegmentSize: Int64(payloadData.count)
+                    encryptedSegmentSize: Int64(payloadData.count),
                 ),
-            ]
+            ],
         )
 
         // Create method descriptor
         let method = TDFMethodDescriptor(
             algorithm: "AES-256-GCM",
             iv: iv.base64EncodedString(),
-            isStreamable: true
+            isStreamable: true,
         )
 
         // Create encryption information
@@ -184,13 +184,13 @@ public struct TDFJSONBuilder: Sendable {
             keyAccess: [keyAccessObject],
             method: method,
             integrityInformation: integrityInfo,
-            policy: policy.base64String
+            policy: policy.base64String,
         )
 
         // Create manifest
         let manifest = TDFJSONManifest(
             encryptionInformation: encryptionInfo,
-            assertions: nil
+            assertions: nil,
         )
 
         // Create payload
@@ -200,7 +200,7 @@ public struct TDFJSONBuilder: Sendable {
             mimeType: mimeType,
             isEncrypted: true,
             length: UInt64(payloadData.count),
-            value: payloadData.base64EncodedString()
+            value: payloadData.base64EncodedString(),
         )
 
         // Create envelope
@@ -210,7 +210,7 @@ public struct TDFJSONBuilder: Sendable {
             version: "1.0.0",
             created: created,
             manifest: manifest,
-            payload: payload
+            payload: payload,
         )
 
         let container = TDFJSONContainer(envelope: envelope, payloadData: payloadData)
@@ -219,7 +219,7 @@ public struct TDFJSONBuilder: Sendable {
             container: container,
             symmetricKey: symmetricKey,
             iv: iv,
-            tag: tag
+            tag: tag,
         )
     }
 }
@@ -284,26 +284,7 @@ public struct TDFJSONDecryptor: Sendable {
 
     /// Decrypt a TDF-JSON container with a symmetric key
     public func decrypt(container: TDFJSONContainer, symmetricKey: SymmetricKey) throws -> Data {
-        let payloadData = container.payloadData
-
-        let ivSize = 12
-        let tagSize = 16
-        let minSize = ivSize + tagSize
-
-        guard payloadData.count >= minSize else {
-            throw TDFJSONError.decryptionFailed("Malformed payload: insufficient data")
-        }
-
-        let iv = payloadData.prefix(ivSize)
-        let ciphertext = payloadData.dropFirst(ivSize).dropLast(tagSize)
-        let tag = payloadData.suffix(tagSize)
-
-        return try TDFCrypto.decryptPayload(
-            ciphertext: Data(ciphertext),
-            iv: Data(iv),
-            tag: Data(tag),
-            symmetricKey: symmetricKey
-        )
+        try TDFCrypto.decryptCombinedPayload(container.payloadData, symmetricKey: symmetricKey)
     }
 
     /// Decrypt a TDF-JSON container with a private key (unwraps the symmetric key first)
@@ -315,7 +296,7 @@ public struct TDFJSONDecryptor: Sendable {
 
         let symmetricKey = try TDFCrypto.unwrapSymmetricKeyWithRSA(
             privateKeyPEM: privateKeyPEM,
-            wrappedKey: keyAccess[0].wrappedKey
+            wrappedKey: keyAccess[0].wrappedKey,
         )
 
         return try decrypt(container: container, symmetricKey: symmetricKey)

@@ -10,8 +10,8 @@ enum CLIDataFormat: String {
     case nanoCollection = "nano-collection"
     case tdf
     case ztdf
-    case json = "json"
-    case cbor = "cbor"
+    case json
+    case cbor
 
     static func parse(_ rawValue: String) throws -> CLIDataFormat {
         let normalized = rawValue.lowercased()

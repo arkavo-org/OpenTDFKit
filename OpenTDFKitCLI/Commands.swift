@@ -1040,7 +1040,7 @@ extension Commands {
     /// Encrypt plaintext to TDF-JSON format
     static func encryptTDFJSON(
         plaintext: Data,
-        inputURL: URL,
+        inputURL _: URL,
     ) throws -> TDFInlineEncryptionResult {
         print("TDF-JSON Encryption")
         print("===================")
@@ -1060,18 +1060,16 @@ extension Commands {
             .kasURL(kasURL)
             .kasPublicKey(publicKeyPEM)
 
-        let builderWithKid: TDFJSONBuilder
-        if let kid = env["TDF_KAS_KID"] {
-            builderWithKid = builder.kasKid(kid)
+        let builderWithKid: TDFJSONBuilder = if let kid = env["TDF_KAS_KID"] {
+            builder.kasKid(kid)
         } else {
-            builderWithKid = builder
+            builder
         }
 
-        let builderWithMime: TDFJSONBuilder
-        if let mimeType = env["TDF_MIME_TYPE"] {
-            builderWithMime = builderWithKid.mimeType(mimeType)
+        let builderWithMime: TDFJSONBuilder = if let mimeType = env["TDF_MIME_TYPE"] {
+            builderWithKid.mimeType(mimeType)
         } else {
-            builderWithMime = builderWithKid
+            builderWithKid
         }
 
         let result = try builderWithMime
@@ -1084,14 +1082,14 @@ extension Commands {
 
         return TDFInlineEncryptionResult(
             data: jsonData,
-            symmetricKey: result.symmetricKey
+            symmetricKey: result.symmetricKey,
         )
     }
 
     /// Encrypt plaintext to TDF-CBOR format
     static func encryptTDFCBOR(
         plaintext: Data,
-        inputURL: URL,
+        inputURL _: URL,
     ) throws -> TDFInlineEncryptionResult {
         print("TDF-CBOR Encryption")
         print("===================")
@@ -1111,18 +1109,16 @@ extension Commands {
             .kasURL(kasURL)
             .kasPublicKey(publicKeyPEM)
 
-        let builderWithKid: TDFCBORBuilder
-        if let kid = env["TDF_KAS_KID"] {
-            builderWithKid = builder.kasKid(kid)
+        let builderWithKid: TDFCBORBuilder = if let kid = env["TDF_KAS_KID"] {
+            builder.kasKid(kid)
         } else {
-            builderWithKid = builder
+            builder
         }
 
-        let builderWithMime: TDFCBORBuilder
-        if let mimeType = env["TDF_MIME_TYPE"] {
-            builderWithMime = builderWithKid.mimeType(mimeType)
+        let builderWithMime: TDFCBORBuilder = if let mimeType = env["TDF_MIME_TYPE"] {
+            builderWithKid.mimeType(mimeType)
         } else {
-            builderWithMime = builderWithKid
+            builderWithKid
         }
 
         let result = try builderWithMime
@@ -1135,7 +1131,7 @@ extension Commands {
 
         return TDFInlineEncryptionResult(
             data: cborData,
-            symmetricKey: result.symmetricKey
+            symmetricKey: result.symmetricKey,
         )
     }
 

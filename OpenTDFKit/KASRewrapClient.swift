@@ -210,6 +210,66 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         let schemaVersion: String?
     }
 
+    // MARK: - KAS Public Key Response
+
+    /// Response structure for KAS EC public key endpoint
+    /// Handles both snake_case (public_key) and camelCase (publicKey) field names
+    public struct KasEcPublicKeyResponse: Decodable {
+        /// The PEM-encoded EC public key
+        public let publicKey: String
+
+        /// Key ID (optional, may be returned by some KAS implementations)
+        public let kid: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case publicKey
+            case publicKeySnake = "public_key"
+            case kid
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+
+            // Try camelCase first, then snake_case
+            if let key = try container.decodeIfPresent(String.self, forKey: .publicKey) {
+                publicKey = key
+            } else if let key = try container.decodeIfPresent(String.self, forKey: .publicKeySnake) {
+                publicKey = key
+            } else {
+                throw DecodingError.keyNotFound(
+                    CodingKeys.publicKey,
+                    DecodingError.Context(
+                        codingPath: container.codingPath,
+                        debugDescription: "Neither 'publicKey' nor 'public_key' found in response",
+                    ),
+                )
+            }
+
+            kid = try container.decodeIfPresent(String.self, forKey: .kid)
+        }
+
+        /// Initialize directly (for testing)
+        public init(publicKey: String, kid: String? = nil) {
+            self.publicKey = publicKey
+            self.kid = kid
+        }
+    }
+
+    /// Result of fetching and validating a KAS EC public key
+    public struct KasEcPublicKeyResult {
+        /// Compressed P-256 public key (33 bytes)
+        public let compressedKey: Data
+
+        /// The original PEM string from the KAS
+        public let pem: String
+
+        /// Key ID if provided by the KAS
+        public let kid: String?
+
+        /// The parsed CryptoKit public key
+        public let cryptoKitKey: P256.KeyAgreement.PublicKey
+    }
+
     // MARK: - Properties
 
     private let kasURL: URL
@@ -502,6 +562,176 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         }
     }
 
+    // MARK: - KAS Public Key Fetching
+
+    /// Fetch the KAS EC public key for NanoTDF encryption
+    /// - Parameter algorithm: The EC algorithm to request (defaults to P-256/secp256r1)
+    /// - Returns: KasEcPublicKeyResult containing the validated compressed key and metadata
+    /// - Throws: KASRewrapError if fetching or validation fails
+    public func fetchKasEcPublicKey(
+        algorithm: RewrapAlgorithm = .ecP256,
+    ) async throws -> KasEcPublicKeyResult {
+        // Validate algorithm is EC-based
+        guard algorithm == .ecP256 || algorithm == .ecP384 || algorithm == .ecP521 else {
+            throw KASRewrapError.unsupportedKeyAlgorithm(algorithm.rawValue)
+        }
+
+        // Build the URL with algorithm query parameter
+        let keyEndpoint = kasURL.appendingPathComponent("v2/kas_public_key")
+        var components = URLComponents(url: keyEndpoint, resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "algorithm", value: algorithm.rawValue)]
+
+        guard let requestURL = components?.url else {
+            throw KASRewrapError.keyFetchFailed("Failed to construct KAS public key URL")
+        }
+
+        // Create HTTP request
+        var request = URLRequest(url: requestURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 30
+        request.addValue("Bearer \(oauthToken)", forHTTPHeaderField: "Authorization")
+        request.addValue("application/json", forHTTPHeaderField: "Accept")
+
+        // Perform request
+        let (data, response) = try await urlSession.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw KASRewrapError.invalidResponse
+        }
+
+        switch httpResponse.statusCode {
+        case 200:
+            // Parse the JSON response
+            let keyResponse: KasEcPublicKeyResponse
+            do {
+                keyResponse = try JSONDecoder().decode(KasEcPublicKeyResponse.self, from: data)
+            } catch {
+                throw KASRewrapError.keyFetchFailed("Failed to parse response: \(error.localizedDescription)")
+            }
+
+            // Validate and parse the PEM
+            let result = try Self.validateEcPublicKeyPEM(keyResponse.publicKey, expectedAlgorithm: algorithm)
+
+            return KasEcPublicKeyResult(
+                compressedKey: result.compressedKey,
+                pem: keyResponse.publicKey,
+                kid: keyResponse.kid,
+                cryptoKitKey: result.cryptoKitKey,
+            )
+        case 401:
+            throw KASRewrapError.authenticationFailed
+        case 403:
+            let message = String(data: data, encoding: .utf8)
+            throw KASRewrapError.accessDenied(message ?? "Forbidden")
+        case 404:
+            throw KASRewrapError.keyFetchFailed("KAS public key endpoint not found")
+        default:
+            let message = String(data: data, encoding: .utf8)
+            throw KASRewrapError.httpError(httpResponse.statusCode, message)
+        }
+    }
+
+    /// Validate a PEM-encoded EC public key and extract the compressed representation
+    /// - Parameters:
+    ///   - pem: PEM-encoded public key string
+    ///   - expectedAlgorithm: The expected EC algorithm (for validation)
+    /// - Returns: Tuple containing compressed key data and CryptoKit public key
+    /// - Throws: KASRewrapError if validation fails
+    public static func validateEcPublicKeyPEM(
+        _ pem: String,
+        expectedAlgorithm: RewrapAlgorithm = .ecP256,
+    ) throws -> (compressedKey: Data, cryptoKitKey: P256.KeyAgreement.PublicKey) {
+        // Currently only P-256 is supported for validation
+        guard expectedAlgorithm == .ecP256 else {
+            throw KASRewrapError.unsupportedKeyAlgorithm(
+                "Validation only supports P-256, got: \(expectedAlgorithm.rawValue)",
+            )
+        }
+
+        // Normalize line endings and trim whitespace
+        let normalizedPEM = pem
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Support multiple PEM header formats
+        let beginMarkers = [
+            "-----BEGIN PUBLIC KEY-----",
+            "-----BEGIN EC PUBLIC KEY-----",
+            "-----BEGIN ECDSA PUBLIC KEY-----",
+        ]
+        let endMarkers = [
+            "-----END PUBLIC KEY-----",
+            "-----END EC PUBLIC KEY-----",
+            "-----END ECDSA PUBLIC KEY-----",
+        ]
+
+        // Extract base64 content by removing all markers
+        var base64Content = normalizedPEM
+        for marker in beginMarkers + endMarkers {
+            base64Content = base64Content.replacingOccurrences(of: marker, with: "")
+        }
+
+        // Remove all whitespace and newlines
+        base64Content = base64Content.components(separatedBy: .whitespacesAndNewlines).joined()
+
+        // Validate we have content
+        guard !base64Content.isEmpty else {
+            throw KASRewrapError.invalidEcPublicKey("Empty PEM content")
+        }
+
+        // Decode base64
+        guard let keyData = Data(base64Encoded: base64Content) else {
+            throw KASRewrapError.invalidEcPublicKey("Invalid base64 encoding")
+        }
+
+        // Parse public key - support multiple formats
+        // KAS server may return SEC1 bytes wrapped in SPKI PEM, or standard SPKI DER
+        let publicKey: P256.KeyAgreement.PublicKey
+
+        do {
+            if keyData.count == 65, keyData[0] == 0x04 {
+                // Raw uncompressed SEC1 point (0x04 || x || y) - 65 bytes
+                // This is the format some KAS servers return inside the PEM wrapper
+                publicKey = try P256.KeyAgreement.PublicKey(x963Representation: keyData)
+            } else if keyData.count == 33, keyData[0] == 0x02 || keyData[0] == 0x03 {
+                // Compressed SEC1 point (0x02/0x03 || x) - 33 bytes
+                publicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: keyData)
+            } else if keyData.count >= 59, keyData.count <= 91 {
+                // SPKI DER format (typically 91 bytes for P-256 with uncompressed point,
+                // or ~59 bytes with compressed point)
+                publicKey = try P256.KeyAgreement.PublicKey(derRepresentation: keyData)
+            } else {
+                throw KASRewrapError.invalidEcPublicKey(
+                    "Unrecognized key format: \(keyData.count) bytes",
+                )
+            }
+        } catch let error as KASRewrapError {
+            throw error
+        } catch {
+            throw KASRewrapError.invalidEcPublicKey("Failed to parse key: \(error.localizedDescription)")
+        }
+
+        // Get compressed representation
+        let compressedKey = publicKey.compressedRepresentation
+
+        // Validate compressed key size (33 bytes for P-256)
+        guard compressedKey.count == 33 else {
+            throw KASRewrapError.invalidEcPublicKey("Invalid compressed key size: \(compressedKey.count), expected 33")
+        }
+
+        // Validate first byte is valid compressed point prefix
+        guard compressedKey[0] == 0x02 || compressedKey[0] == 0x03 else {
+            throw KASRewrapError.invalidEcPublicKey(
+                "Invalid compressed point prefix: 0x\(String(format: "%02x", compressedKey[0]))",
+            )
+        }
+
+        return (compressedKey, publicKey)
+    }
+
+    // MARK: - Private Helpers
+
     private func matchesKasURL(_ otherURLString: String) -> Bool {
         guard let otherURL = URL(string: otherURLString) else { return false }
         guard let baseScheme = kasURL.scheme?.lowercased(),
@@ -694,6 +924,9 @@ public enum KASRewrapError: Error, CustomStringConvertible {
     case jwtSigningFailed(Error)
     case httpError(Int, String?)
     case invalidTDFRequest(String)
+    case keyFetchFailed(String)
+    case invalidEcPublicKey(String)
+    case unsupportedKeyAlgorithm(String)
 
     public var description: String {
         switch self {
@@ -719,6 +952,12 @@ public enum KASRewrapError: Error, CustomStringConvertible {
             "HTTP error \(code)" + (message.map { ": \($0)" } ?? "")
         case let .invalidTDFRequest(reason):
             "Invalid standard TDF rewrap request: \(reason)"
+        case let .keyFetchFailed(reason):
+            "Failed to fetch KAS public key: \(reason)"
+        case let .invalidEcPublicKey(reason):
+            "Invalid EC public key: \(reason)"
+        case let .unsupportedKeyAlgorithm(algorithm):
+            "Unsupported key algorithm: \(algorithm)"
         }
     }
 }

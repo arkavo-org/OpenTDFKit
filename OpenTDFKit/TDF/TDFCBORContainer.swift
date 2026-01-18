@@ -97,13 +97,13 @@ public struct TDFCBORBuilder: Sendable {
 
     /// Build a TDF-CBOR container by encrypting the provided plaintext
     public func encrypt(plaintext: Data) throws -> TDFCBOREncryptionResult {
-        guard let kasURL = kasURL else {
+        guard let kasURL else {
             throw TDFCBORError.encryptionFailed("KAS URL is required")
         }
-        guard let kasPublicKeyPEM = kasPublicKeyPEM else {
+        guard let kasPublicKeyPEM else {
             throw TDFCBORError.encryptionFailed("KAS public key is required")
         }
-        guard let policy = policy else {
+        guard let policy else {
             throw TDFCBORError.encryptionFailed("Policy is required")
         }
 
@@ -113,7 +113,7 @@ public struct TDFCBORBuilder: Sendable {
         // Encrypt the plaintext
         let (iv, ciphertext, tag) = try TDFCrypto.encryptPayload(
             plaintext: plaintext,
-            symmetricKey: symmetricKey
+            symmetricKey: symmetricKey,
         )
 
         // Combine IV + ciphertext + tag for the payload (as raw bytes)
@@ -122,25 +122,25 @@ public struct TDFCBORBuilder: Sendable {
         // Wrap the symmetric key using EC (ECDH + HKDF + AES-GCM)
         let ecWrapped = try TDFCrypto.wrapSymmetricKeyWithEC(
             publicKeyPEM: kasPublicKeyPEM,
-            symmetricKey: symmetricKey
+            symmetricKey: symmetricKey,
         )
 
         // Create policy binding
         let policyBinding = TDFCrypto.policyBinding(
             policy: policy.json,
-            symmetricKey: symmetricKey
+            symmetricKey: symmetricKey,
         )
 
         // Calculate segment signature (GMAC)
         let segmentSignature = try TDFCrypto.segmentSignatureGMAC(
             segmentCiphertext: payloadData,
-            symmetricKey: symmetricKey
+            symmetricKey: symmetricKey,
         )
 
         // Calculate root signature
         let rootSignature = TDFCrypto.segmentSignature(
             segmentCiphertext: segmentSignature,
-            symmetricKey: symmetricKey
+            symmetricKey: symmetricKey,
         )
 
         // Create key access object with EC ephemeral public key
@@ -154,7 +154,7 @@ public struct TDFCBORBuilder: Sendable {
             kid: kasKid,
             sid: nil,
             schemaVersion: "1.0",
-            ephemeralPublicKey: ecWrapped.ephemeralPublicKey
+            ephemeralPublicKey: ecWrapped.ephemeralPublicKey,
         )
 
         // Create integrity information
@@ -167,16 +167,16 @@ public struct TDFCBORBuilder: Sendable {
                 TDFSegment(
                     hash: segmentSignature.base64EncodedString(),
                     segmentSize: Int64(plaintext.count),
-                    encryptedSegmentSize: Int64(payloadData.count)
+                    encryptedSegmentSize: Int64(payloadData.count),
                 ),
-            ]
+            ],
         )
 
         // Create method descriptor
         let method = TDFMethodDescriptor(
             algorithm: "AES-256-GCM",
             iv: iv.base64EncodedString(),
-            isStreamable: true
+            isStreamable: true,
         )
 
         // Create encryption information
@@ -185,13 +185,13 @@ public struct TDFCBORBuilder: Sendable {
             keyAccess: [keyAccessObject],
             method: method,
             integrityInformation: integrityInfo,
-            policy: policy.base64String
+            policy: policy.base64String,
         )
 
         // Create manifest
         let manifest = TDFCBORManifest(
             encryptionInformation: encryptionInfo,
-            assertions: nil
+            assertions: nil,
         )
 
         // Create binary payload (not base64)
@@ -200,7 +200,7 @@ public struct TDFCBORBuilder: Sendable {
             protocol: "binary",
             mimeType: mimeType,
             isEncrypted: true,
-            value: payloadData
+            value: payloadData,
         )
 
         // Create timestamp
@@ -212,7 +212,7 @@ public struct TDFCBORBuilder: Sendable {
             version: [1, 0, 0],
             created: created,
             manifest: manifest,
-            payload: payload
+            payload: payload,
         )
 
         let container = TDFCBORContainer(envelope: envelope)
@@ -221,7 +221,7 @@ public struct TDFCBORBuilder: Sendable {
             container: container,
             symmetricKey: symmetricKey,
             iv: iv,
-            tag: tag
+            tag: tag,
         )
     }
 }
@@ -277,26 +277,7 @@ public struct TDFCBORDecryptor: Sendable {
 
     /// Decrypt a TDF-CBOR container with a symmetric key
     public func decrypt(container: TDFCBORContainer, symmetricKey: SymmetricKey) throws -> Data {
-        let payloadData = container.payloadData
-
-        let ivSize = 12
-        let tagSize = 16
-        let minSize = ivSize + tagSize
-
-        guard payloadData.count >= minSize else {
-            throw TDFCBORError.decryptionFailed("Malformed payload: insufficient data")
-        }
-
-        let iv = payloadData.prefix(ivSize)
-        let ciphertext = payloadData.dropFirst(ivSize).dropLast(tagSize)
-        let tag = payloadData.suffix(tagSize)
-
-        return try TDFCrypto.decryptPayload(
-            ciphertext: Data(ciphertext),
-            iv: Data(iv),
-            tag: Data(tag),
-            symmetricKey: symmetricKey
-        )
+        try TDFCrypto.decryptCombinedPayload(container.payloadData, symmetricKey: symmetricKey)
     }
 
     /// Decrypt a TDF-CBOR container with a private key (unwraps the symmetric key first)
@@ -308,7 +289,7 @@ public struct TDFCBORDecryptor: Sendable {
 
         let symmetricKey = try TDFCrypto.unwrapSymmetricKeyWithRSA(
             privateKeyPEM: privateKeyPEM,
-            wrappedKey: keyAccess[0].wrappedKey
+            wrappedKey: keyAccess[0].wrappedKey,
         )
 
         return try decrypt(container: container, symmetricKey: symmetricKey)
