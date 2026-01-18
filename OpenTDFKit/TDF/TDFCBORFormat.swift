@@ -47,6 +47,92 @@ public enum TDFCBOREnums {
     // Payload protocol: 0=binary, 1=binary-chunked
     public static let payloadProtocolBinary: UInt64 = 0
     public static let payloadProtocolBinaryChunked: UInt64 = 1
+
+    // Encryption type: 0=split
+    public static let encryptionTypeSplit: UInt64 = 0
+
+    // Key access type: 0=wrapped, 1=remote
+    public static let keyAccessTypeWrapped: UInt64 = 0
+    public static let keyAccessTypeRemote: UInt64 = 1
+
+    // Key protocol: 0=kas
+    public static let keyProtocolKas: UInt64 = 0
+
+    // Symmetric algorithm: 0=AES-256-GCM
+    public static let symmetricAlgAes256Gcm: UInt64 = 0
+
+    // Hash/Signature algorithm
+    public static let hashAlgHS256: UInt64 = 0
+    public static let hashAlgHS384: UInt64 = 1
+    public static let hashAlgHS512: UInt64 = 2
+    public static let hashAlgGMAC: UInt64 = 3
+    public static let hashAlgSHA256: UInt64 = 4
+    public static let hashAlgES256: UInt64 = 5
+    public static let hashAlgES384: UInt64 = 6
+    public static let hashAlgES512: UInt64 = 7
+}
+
+/// Manifest integer key mappings per TDF-CBOR spec section 3.1
+public enum TDFCBORManifestKey: Int {
+    case encryptionInformation = 1
+    case assertions = 2
+}
+
+/// EncryptionInformation integer key mappings
+public enum TDFCBOREncInfoKey: Int {
+    case type = 1
+    case keyAccess = 2
+    case method = 3
+    case integrityInformation = 4
+    case policy = 5
+}
+
+/// KeyAccess integer key mappings
+public enum TDFCBORKeyAccessKey: Int {
+    case type = 1
+    case url = 2
+    case `protocol` = 3
+    case wrappedKey = 4
+    case policyBinding = 5
+    case encryptedMetadata = 6
+    case kid = 7
+    case ephemeralPublicKey = 8
+    case schemaVersion = 9
+}
+
+/// PolicyBinding integer key mappings
+public enum TDFCBORPolicyBindingKey: Int {
+    case alg = 1
+    case hash = 2
+}
+
+/// Method integer key mappings
+public enum TDFCBORMethodKey: Int {
+    case algorithm = 1
+    case iv = 2
+    case isStreamable = 3
+}
+
+/// IntegrityInformation integer key mappings
+public enum TDFCBORIntegrityKey: Int {
+    case rootSignature = 1
+    case segmentHashAlg = 2
+    case segments = 3
+    case segmentSizeDefault = 4
+    case encryptedSegmentSizeDefault = 5
+}
+
+/// RootSignature integer key mappings
+public enum TDFCBORRootSigKey: Int {
+    case alg = 1
+    case sig = 2
+}
+
+/// Segment integer key mappings
+public enum TDFCBORSegmentKey: Int {
+    case hash = 1
+    case segmentSize = 2
+    case encryptedSegmentSize = 3
 }
 
 // MARK: - TDF-CBOR Envelope
@@ -226,13 +312,8 @@ extension TDFCBOREnvelope {
 extension TDFCBOREnvelope {
     /// Encode to CBOR bytes with self-describe tag
     public func toCBORData() throws -> Data {
-        // Encode manifest as JSON string
-        let manifestEncoder = JSONEncoder()
-        manifestEncoder.outputFormatting = [.sortedKeys]
-        let manifestData = try manifestEncoder.encode(ManifestWrapper(manifest: manifest))
-        guard let manifestJSON = String(data: manifestData, encoding: .utf8) else {
-            throw TDFCBORError.cborEncodingFailed("Failed to encode manifest as JSON")
-        }
+        // Build manifest as native CBOR with integer keys and enums
+        let manifestCBOR = try encodeManifestToCBOR()
 
         // Build payload map with integer keys and enum values per spec section 1.5
         let payloadTypeEnum: UInt64 = payload.type == "inline" ? TDFCBOREnums.payloadTypeInline : TDFCBOREnums.payloadTypeReference
@@ -252,7 +333,7 @@ extension TDFCBOREnvelope {
         var mainMap: [CBOR: CBOR] = [
             CBOR.unsignedInt(UInt64(TDFCBORKey.tdf.rawValue)): .utf8String(tdf),
             CBOR.unsignedInt(UInt64(TDFCBORKey.version.rawValue)): .array(version.map { .unsignedInt(UInt64($0)) }),
-            CBOR.unsignedInt(UInt64(TDFCBORKey.manifest.rawValue)): .utf8String(manifestJSON),
+            CBOR.unsignedInt(UInt64(TDFCBORKey.manifest.rawValue)): manifestCBOR,
             CBOR.unsignedInt(UInt64(TDFCBORKey.payload.rawValue)): .map(payloadMap),
         ]
 
@@ -267,6 +348,193 @@ extension TDFCBOREnvelope {
         var result = Data(TDF_CBOR_MAGIC)
         result.append(contentsOf: encoded)
         return result
+    }
+
+    /// Encode manifest to native CBOR with integer keys and enums
+    private func encodeManifestToCBOR() throws -> CBOR {
+        let encInfo = manifest.encryptionInformation
+
+        // Decode policy from base64 to raw bytes
+        guard let policyData = Data(base64Encoded: encInfo.policy) else {
+            throw TDFCBORError.cborEncodingFailed("Invalid policy base64")
+        }
+
+        // Encode key access array
+        let keyAccessArray: [CBOR] = try encInfo.keyAccess.map { try encodeKeyAccessToCBOR($0) }
+
+        // Encode method
+        let methodCBOR = try encodeMethodToCBOR(encInfo.method)
+
+        // Encode integrity information (if present)
+        guard let integrityInfo = encInfo.integrityInformation else {
+            throw TDFCBORError.missingField("integrityInformation")
+        }
+        let integrityCBOR = try encodeIntegrityToCBOR(integrityInfo)
+
+        // Encryption type enum: "split" -> 0
+        let encTypeEnum: UInt64 = encInfo.type == .split ? TDFCBOREnums.encryptionTypeSplit : TDFCBOREnums.encryptionTypeSplit
+
+        // Build encryptionInformation map
+        let encInfoMap: [CBOR: CBOR] = [
+            .unsignedInt(UInt64(TDFCBOREncInfoKey.type.rawValue)): .unsignedInt(encTypeEnum),
+            .unsignedInt(UInt64(TDFCBOREncInfoKey.keyAccess.rawValue)): .array(keyAccessArray),
+            .unsignedInt(UInt64(TDFCBOREncInfoKey.method.rawValue)): methodCBOR,
+            .unsignedInt(UInt64(TDFCBOREncInfoKey.integrityInformation.rawValue)): integrityCBOR,
+            .unsignedInt(UInt64(TDFCBOREncInfoKey.policy.rawValue)): .byteString(Array(policyData)),
+        ]
+
+        // Build manifest map
+        let manifestMap: [CBOR: CBOR] = [
+            .unsignedInt(UInt64(TDFCBORManifestKey.encryptionInformation.rawValue)): .map(encInfoMap),
+        ]
+
+        return .map(manifestMap)
+    }
+
+    /// Encode a single key access object to CBOR
+    private func encodeKeyAccessToCBOR(_ ka: TDFKeyAccessObject) throws -> CBOR {
+        // Key access type enum
+        let kaTypeEnum: UInt64 = ka.type == .wrapped ? TDFCBOREnums.keyAccessTypeWrapped : TDFCBOREnums.keyAccessTypeRemote
+
+        // Protocol enum: "kas" -> 0
+        let protocolEnum: UInt64 = ka.protocolValue.rawValue == "kas" ? TDFCBOREnums.keyProtocolKas : TDFCBOREnums.keyProtocolKas
+
+        // Decode wrapped key from base64 to raw bytes
+        guard let wrappedKeyData = Data(base64Encoded: ka.wrappedKey) else {
+            throw TDFCBORError.cborEncodingFailed("Invalid wrappedKey base64")
+        }
+
+        // Encode policy binding
+        let bindingAlgEnum = hashAlgToEnum(ka.policyBinding.alg)
+        guard let bindingHashData = Data(base64Encoded: ka.policyBinding.hash) else {
+            throw TDFCBORError.cborEncodingFailed("Invalid policy binding hash base64")
+        }
+
+        let policyBindingMap: [CBOR: CBOR] = [
+            .unsignedInt(UInt64(TDFCBORPolicyBindingKey.alg.rawValue)): .unsignedInt(bindingAlgEnum),
+            .unsignedInt(UInt64(TDFCBORPolicyBindingKey.hash.rawValue)): .byteString(Array(bindingHashData)),
+        ]
+
+        var kaMap: [CBOR: CBOR] = [
+            .unsignedInt(UInt64(TDFCBORKeyAccessKey.type.rawValue)): .unsignedInt(kaTypeEnum),
+            .unsignedInt(UInt64(TDFCBORKeyAccessKey.url.rawValue)): .utf8String(ka.url),
+            .unsignedInt(UInt64(TDFCBORKeyAccessKey.protocol.rawValue)): .unsignedInt(protocolEnum),
+            .unsignedInt(UInt64(TDFCBORKeyAccessKey.wrappedKey.rawValue)): .byteString(Array(wrappedKeyData)),
+            .unsignedInt(UInt64(TDFCBORKeyAccessKey.policyBinding.rawValue)): .map(policyBindingMap),
+        ]
+
+        // Add optional fields
+        if let kid = ka.kid {
+            kaMap[.unsignedInt(UInt64(TDFCBORKeyAccessKey.kid.rawValue))] = .utf8String(kid)
+        }
+
+        if let epk = ka.ephemeralPublicKey, let epkData = Data(base64Encoded: epk) {
+            kaMap[.unsignedInt(UInt64(TDFCBORKeyAccessKey.ephemeralPublicKey.rawValue))] = .byteString(Array(epkData))
+        }
+
+        if let sv = ka.schemaVersion {
+            kaMap[.unsignedInt(UInt64(TDFCBORKeyAccessKey.schemaVersion.rawValue))] = .utf8String(sv)
+        }
+
+        return .map(kaMap)
+    }
+
+    /// Encode method to CBOR
+    private func encodeMethodToCBOR(_ method: TDFMethodDescriptor) throws -> CBOR {
+        // Algorithm enum: "AES-256-GCM" -> 0
+        let algEnum: UInt64 = method.algorithm == "AES-256-GCM" ? TDFCBOREnums.symmetricAlgAes256Gcm : TDFCBOREnums.symmetricAlgAes256Gcm
+
+        // Decode IV from base64 to raw bytes
+        guard let ivData = Data(base64Encoded: method.iv) else {
+            throw TDFCBORError.cborEncodingFailed("Invalid IV base64")
+        }
+
+        let methodMap: [CBOR: CBOR] = [
+            .unsignedInt(UInt64(TDFCBORMethodKey.algorithm.rawValue)): .unsignedInt(algEnum),
+            .unsignedInt(UInt64(TDFCBORMethodKey.iv.rawValue)): .byteString(Array(ivData)),
+            .unsignedInt(UInt64(TDFCBORMethodKey.isStreamable.rawValue)): .boolean(method.isStreamable ?? true),
+        ]
+
+        return .map(methodMap)
+    }
+
+    /// Encode integrity information to CBOR
+    private func encodeIntegrityToCBOR(_ integrity: TDFIntegrityInformation) throws -> CBOR {
+        // Encode root signature
+        let rootAlgEnum = hashAlgToEnum(integrity.rootSignature.alg)
+        guard let rootSigData = Data(base64Encoded: integrity.rootSignature.sig) else {
+            throw TDFCBORError.cborEncodingFailed("Invalid root signature base64")
+        }
+
+        let rootSigMap: [CBOR: CBOR] = [
+            .unsignedInt(UInt64(TDFCBORRootSigKey.alg.rawValue)): .unsignedInt(rootAlgEnum),
+            .unsignedInt(UInt64(TDFCBORRootSigKey.sig.rawValue)): .byteString(Array(rootSigData)),
+        ]
+
+        // Segment hash algorithm enum
+        let segHashAlgEnum = hashAlgToEnum(integrity.segmentHashAlg)
+
+        // Encode segments
+        let segmentsArray: [CBOR] = try integrity.segments.map { seg in
+            guard let hashData = Data(base64Encoded: seg.hash) else {
+                throw TDFCBORError.cborEncodingFailed("Invalid segment hash base64")
+            }
+
+            var segMap: [CBOR: CBOR] = [
+                .unsignedInt(UInt64(TDFCBORSegmentKey.hash.rawValue)): .byteString(Array(hashData)),
+                .unsignedInt(UInt64(TDFCBORSegmentKey.segmentSize.rawValue)): .unsignedInt(UInt64(seg.segmentSize)),
+            ]
+
+            if let size = seg.encryptedSegmentSize {
+                segMap[.unsignedInt(UInt64(TDFCBORSegmentKey.encryptedSegmentSize.rawValue))] = .unsignedInt(UInt64(size))
+            }
+
+            return .map(segMap)
+        }
+
+        var integrityMap: [CBOR: CBOR] = [
+            .unsignedInt(UInt64(TDFCBORIntegrityKey.rootSignature.rawValue)): .map(rootSigMap),
+            .unsignedInt(UInt64(TDFCBORIntegrityKey.segmentHashAlg.rawValue)): .unsignedInt(segHashAlgEnum),
+            .unsignedInt(UInt64(TDFCBORIntegrityKey.segments.rawValue)): .array(segmentsArray),
+            .unsignedInt(UInt64(TDFCBORIntegrityKey.segmentSizeDefault.rawValue)): .unsignedInt(UInt64(integrity.segmentSizeDefault)),
+        ]
+
+        // Add optional encryptedSegmentSizeDefault if present
+        if let encSize = integrity.encryptedSegmentSizeDefault {
+            integrityMap[.unsignedInt(UInt64(TDFCBORIntegrityKey.encryptedSegmentSizeDefault.rawValue))] = .unsignedInt(UInt64(encSize))
+        }
+
+        return .map(integrityMap)
+    }
+
+    /// Convert hash algorithm string to enum value
+    private func hashAlgToEnum(_ alg: String) -> UInt64 {
+        switch alg {
+        case "HS256": return TDFCBOREnums.hashAlgHS256
+        case "HS384": return TDFCBOREnums.hashAlgHS384
+        case "HS512": return TDFCBOREnums.hashAlgHS512
+        case "GMAC": return TDFCBOREnums.hashAlgGMAC
+        case "SHA256": return TDFCBOREnums.hashAlgSHA256
+        case "ES256": return TDFCBOREnums.hashAlgES256
+        case "ES384": return TDFCBOREnums.hashAlgES384
+        case "ES512": return TDFCBOREnums.hashAlgES512
+        default: return TDFCBOREnums.hashAlgHS256
+        }
+    }
+
+    /// Convert enum value to hash algorithm string
+    private static func enumToHashAlg(_ val: UInt64) -> String {
+        switch val {
+        case TDFCBOREnums.hashAlgHS256: return "HS256"
+        case TDFCBOREnums.hashAlgHS384: return "HS384"
+        case TDFCBOREnums.hashAlgHS512: return "HS512"
+        case TDFCBOREnums.hashAlgGMAC: return "GMAC"
+        case TDFCBOREnums.hashAlgSHA256: return "SHA256"
+        case TDFCBOREnums.hashAlgES256: return "ES256"
+        case TDFCBOREnums.hashAlgES384: return "ES384"
+        case TDFCBOREnums.hashAlgES512: return "ES512"
+        default: return "HS256"
+        }
     }
 
     /// Decode from CBOR bytes
@@ -315,15 +583,26 @@ extension TDFCBOREnvelope {
             created = ts
         }
 
-        // Extract manifest (JSON string)
-        guard let manifestValue = mainMap[CBOR.unsignedInt(UInt64(TDFCBORKey.manifest.rawValue))],
-              case let .utf8String(manifestJSON) = manifestValue,
-              let manifestData = manifestJSON.data(using: .utf8)
-        else {
+        // Extract manifest - support both native CBOR map (new) and JSON string (legacy)
+        guard let manifestValue = mainMap[CBOR.unsignedInt(UInt64(TDFCBORKey.manifest.rawValue))] else {
             throw TDFCBORError.missingField("manifest")
         }
-        let manifestWrapper = try JSONDecoder().decode(ManifestWrapper.self, from: manifestData)
-        let manifest = manifestWrapper.toManifest()
+
+        let manifest: TDFCBORManifest
+        switch manifestValue {
+        case let .map(manifestMap):
+            // Native CBOR manifest with integer keys
+            manifest = try decodeManifestFromCBOR(manifestMap)
+        case let .utf8String(manifestJSON):
+            // Legacy JSON string format
+            guard let manifestData = manifestJSON.data(using: .utf8) else {
+                throw TDFCBORError.cborDecodingFailed("Invalid manifest JSON encoding")
+            }
+            let manifestWrapper = try JSONDecoder().decode(ManifestWrapper.self, from: manifestData)
+            manifest = manifestWrapper.toManifest()
+        default:
+            throw TDFCBORError.cborDecodingFailed("Expected manifest as map or string")
+        }
 
         // Extract payload
         guard let payloadValue = mainMap[CBOR.unsignedInt(UInt64(TDFCBORKey.payload.rawValue))],
@@ -422,6 +701,299 @@ extension TDFCBOREnvelope {
             manifest: manifest,
             payload: payload
         )
+    }
+
+    /// Decode manifest from native CBOR map
+    private static func decodeManifestFromCBOR(_ manifestMap: [CBOR: CBOR]) throws -> TDFCBORManifest {
+        guard let encInfoValue = manifestMap[.unsignedInt(UInt64(TDFCBORManifestKey.encryptionInformation.rawValue))],
+              case let .map(encInfoMap) = encInfoValue
+        else {
+            throw TDFCBORError.missingField("encryptionInformation")
+        }
+
+        let encInfo = try decodeEncryptionInfo(encInfoMap)
+
+        return TDFCBORManifest(
+            encryptionInformation: encInfo,
+            assertions: nil // TODO: decode assertions if present
+        )
+    }
+
+    /// Decode encryption information from CBOR
+    private static func decodeEncryptionInfo(_ encMap: [CBOR: CBOR]) throws -> TDFEncryptionInformation {
+        // Encryption type
+        var encType: TDFEncryptionInformation.KeyAccessType = .split
+        if let typeValue = encMap[.unsignedInt(UInt64(TDFCBOREncInfoKey.type.rawValue))],
+           case let .unsignedInt(typeEnum) = typeValue
+        {
+            encType = typeEnum == TDFCBOREnums.encryptionTypeSplit ? .split : .remote
+        }
+
+        // Key access
+        var keyAccess: [TDFKeyAccessObject] = []
+        if let kaValue = encMap[.unsignedInt(UInt64(TDFCBOREncInfoKey.keyAccess.rawValue))],
+           case let .array(kaArray) = kaValue
+        {
+            for kaItem in kaArray {
+                if case let .map(kaMap) = kaItem {
+                    keyAccess.append(try decodeKeyAccess(kaMap))
+                }
+            }
+        }
+
+        // Method
+        guard let methodValue = encMap[.unsignedInt(UInt64(TDFCBOREncInfoKey.method.rawValue))],
+              case let .map(methodMap) = methodValue
+        else {
+            throw TDFCBORError.missingField("method")
+        }
+        let method = try decodeMethod(methodMap)
+
+        // Integrity information
+        guard let integrityValue = encMap[.unsignedInt(UInt64(TDFCBOREncInfoKey.integrityInformation.rawValue))],
+              case let .map(integrityMap) = integrityValue
+        else {
+            throw TDFCBORError.missingField("integrityInformation")
+        }
+        let integrity = try decodeIntegrity(integrityMap)
+
+        // Policy
+        var policy = ""
+        if let policyValue = encMap[.unsignedInt(UInt64(TDFCBOREncInfoKey.policy.rawValue))],
+           case let .byteString(policyBytes) = policyValue
+        {
+            policy = Data(policyBytes).base64EncodedString()
+        }
+
+        return TDFEncryptionInformation(
+            type: encType,
+            keyAccess: keyAccess,
+            method: method,
+            integrityInformation: integrity,
+            policy: policy
+        )
+    }
+
+    /// Decode key access from CBOR
+    private static func decodeKeyAccess(_ kaMap: [CBOR: CBOR]) throws -> TDFKeyAccessObject {
+        // Type
+        var accessType: TDFKeyAccessObject.AccessType = .wrapped
+        if let typeValue = kaMap[.unsignedInt(UInt64(TDFCBORKeyAccessKey.type.rawValue))],
+           case let .unsignedInt(typeEnum) = typeValue
+        {
+            accessType = typeEnum == TDFCBOREnums.keyAccessTypeWrapped ? .wrapped : .remote
+        }
+
+        // URL
+        var url = ""
+        if let urlValue = kaMap[.unsignedInt(UInt64(TDFCBORKeyAccessKey.url.rawValue))],
+           case let .utf8String(urlStr) = urlValue
+        {
+            url = urlStr
+        }
+
+        // Protocol
+        var protocolStr = "kas"
+        if let protocolValue = kaMap[.unsignedInt(UInt64(TDFCBORKeyAccessKey.protocol.rawValue))],
+           case let .unsignedInt(protocolEnum) = protocolValue
+        {
+            protocolStr = protocolEnum == TDFCBOREnums.keyProtocolKas ? "kas" : "kas"
+        }
+
+        // Wrapped key
+        var wrappedKey = ""
+        if let wkValue = kaMap[.unsignedInt(UInt64(TDFCBORKeyAccessKey.wrappedKey.rawValue))],
+           case let .byteString(wkBytes) = wkValue
+        {
+            wrappedKey = Data(wkBytes).base64EncodedString()
+        }
+
+        // Policy binding
+        guard let pbValue = kaMap[.unsignedInt(UInt64(TDFCBORKeyAccessKey.policyBinding.rawValue))],
+              case let .map(pbMap) = pbValue
+        else {
+            throw TDFCBORError.missingField("policyBinding")
+        }
+        let policyBinding = try decodePolicyBinding(pbMap)
+
+        // Optional fields
+        var kid: String?
+        if let kidValue = kaMap[.unsignedInt(UInt64(TDFCBORKeyAccessKey.kid.rawValue))],
+           case let .utf8String(kidStr) = kidValue
+        {
+            kid = kidStr
+        }
+
+        var ephemeralPublicKey: String?
+        if let epkValue = kaMap[.unsignedInt(UInt64(TDFCBORKeyAccessKey.ephemeralPublicKey.rawValue))],
+           case let .byteString(epkBytes) = epkValue
+        {
+            ephemeralPublicKey = Data(epkBytes).base64EncodedString()
+        }
+
+        var schemaVersion: String?
+        if let svValue = kaMap[.unsignedInt(UInt64(TDFCBORKeyAccessKey.schemaVersion.rawValue))],
+           case let .utf8String(svStr) = svValue
+        {
+            schemaVersion = svStr
+        }
+
+        return TDFKeyAccessObject(
+            type: accessType,
+            url: url,
+            protocolValue: TDFKeyAccessObject.AccessProtocol(rawValue: protocolStr) ?? .kas,
+            wrappedKey: wrappedKey,
+            policyBinding: policyBinding,
+            encryptedMetadata: nil,
+            kid: kid,
+            sid: nil,
+            schemaVersion: schemaVersion,
+            ephemeralPublicKey: ephemeralPublicKey
+        )
+    }
+
+    /// Decode policy binding from CBOR
+    private static func decodePolicyBinding(_ pbMap: [CBOR: CBOR]) throws -> TDFPolicyBinding {
+        var alg = "HS256"
+        if let algValue = pbMap[.unsignedInt(UInt64(TDFCBORPolicyBindingKey.alg.rawValue))],
+           case let .unsignedInt(algEnum) = algValue
+        {
+            alg = enumToHashAlg(algEnum)
+        }
+
+        var hash = ""
+        if let hashValue = pbMap[.unsignedInt(UInt64(TDFCBORPolicyBindingKey.hash.rawValue))],
+           case let .byteString(hashBytes) = hashValue
+        {
+            hash = Data(hashBytes).base64EncodedString()
+        }
+
+        return TDFPolicyBinding(alg: alg, hash: hash)
+    }
+
+    /// Decode method from CBOR
+    private static func decodeMethod(_ methodMap: [CBOR: CBOR]) throws -> TDFMethodDescriptor {
+        var algorithm = "AES-256-GCM"
+        if let algValue = methodMap[.unsignedInt(UInt64(TDFCBORMethodKey.algorithm.rawValue))],
+           case let .unsignedInt(algEnum) = algValue
+        {
+            algorithm = algEnum == TDFCBOREnums.symmetricAlgAes256Gcm ? "AES-256-GCM" : "AES-256-GCM"
+        }
+
+        var iv = ""
+        if let ivValue = methodMap[.unsignedInt(UInt64(TDFCBORMethodKey.iv.rawValue))],
+           case let .byteString(ivBytes) = ivValue
+        {
+            iv = Data(ivBytes).base64EncodedString()
+        }
+
+        var isStreamable: Bool? = true
+        if let streamValue = methodMap[.unsignedInt(UInt64(TDFCBORMethodKey.isStreamable.rawValue))],
+           case let .boolean(streamBool) = streamValue
+        {
+            isStreamable = streamBool
+        }
+
+        return TDFMethodDescriptor(algorithm: algorithm, iv: iv, isStreamable: isStreamable)
+    }
+
+    /// Decode integrity information from CBOR
+    private static func decodeIntegrity(_ intMap: [CBOR: CBOR]) throws -> TDFIntegrityInformation {
+        // Root signature
+        guard let rootSigValue = intMap[.unsignedInt(UInt64(TDFCBORIntegrityKey.rootSignature.rawValue))],
+              case let .map(rootSigMap) = rootSigValue
+        else {
+            throw TDFCBORError.missingField("rootSignature")
+        }
+        let rootSig = try decodeRootSignature(rootSigMap)
+
+        // Segment hash algorithm
+        var segmentHashAlg = "GMAC"
+        if let segAlgValue = intMap[.unsignedInt(UInt64(TDFCBORIntegrityKey.segmentHashAlg.rawValue))],
+           case let .unsignedInt(segAlgEnum) = segAlgValue
+        {
+            segmentHashAlg = enumToHashAlg(segAlgEnum)
+        }
+
+        // Segments
+        var segments: [TDFSegment] = []
+        if let segsValue = intMap[.unsignedInt(UInt64(TDFCBORIntegrityKey.segments.rawValue))],
+           case let .array(segsArray) = segsValue
+        {
+            for segItem in segsArray {
+                if case let .map(segMap) = segItem {
+                    segments.append(try decodeSegment(segMap))
+                }
+            }
+        }
+
+        // Segment size defaults
+        var segmentSizeDefault: Int = 0
+        if let ssdValue = intMap[.unsignedInt(UInt64(TDFCBORIntegrityKey.segmentSizeDefault.rawValue))],
+           case let .unsignedInt(ssd) = ssdValue
+        {
+            segmentSizeDefault = Int(ssd)
+        }
+
+        var encryptedSegmentSizeDefault: Int = 0
+        if let essdValue = intMap[.unsignedInt(UInt64(TDFCBORIntegrityKey.encryptedSegmentSizeDefault.rawValue))],
+           case let .unsignedInt(essd) = essdValue
+        {
+            encryptedSegmentSizeDefault = Int(essd)
+        }
+
+        return TDFIntegrityInformation(
+            rootSignature: rootSig,
+            segmentHashAlg: segmentHashAlg,
+            segmentSizeDefault: Int64(segmentSizeDefault),
+            encryptedSegmentSizeDefault: Int64(encryptedSegmentSizeDefault),
+            segments: segments
+        )
+    }
+
+    /// Decode root signature from CBOR
+    private static func decodeRootSignature(_ sigMap: [CBOR: CBOR]) throws -> TDFRootSignature {
+        var alg = "HS256"
+        if let algValue = sigMap[.unsignedInt(UInt64(TDFCBORRootSigKey.alg.rawValue))],
+           case let .unsignedInt(algEnum) = algValue
+        {
+            alg = enumToHashAlg(algEnum)
+        }
+
+        var sig = ""
+        if let sigValue = sigMap[.unsignedInt(UInt64(TDFCBORRootSigKey.sig.rawValue))],
+           case let .byteString(sigBytes) = sigValue
+        {
+            sig = Data(sigBytes).base64EncodedString()
+        }
+
+        return TDFRootSignature(alg: alg, sig: sig)
+    }
+
+    /// Decode segment from CBOR
+    private static func decodeSegment(_ segMap: [CBOR: CBOR]) throws -> TDFSegment {
+        var hash = ""
+        if let hashValue = segMap[.unsignedInt(UInt64(TDFCBORSegmentKey.hash.rawValue))],
+           case let .byteString(hashBytes) = hashValue
+        {
+            hash = Data(hashBytes).base64EncodedString()
+        }
+
+        var segmentSize: Int64 = 0
+        if let ssValue = segMap[.unsignedInt(UInt64(TDFCBORSegmentKey.segmentSize.rawValue))],
+           case let .unsignedInt(ss) = ssValue
+        {
+            segmentSize = Int64(ss)
+        }
+
+        var encryptedSegmentSize: Int64?
+        if let essValue = segMap[.unsignedInt(UInt64(TDFCBORSegmentKey.encryptedSegmentSize.rawValue))],
+           case let .unsignedInt(ess) = essValue
+        {
+            encryptedSegmentSize = Int64(ess)
+        }
+
+        return TDFSegment(hash: hash, segmentSize: segmentSize, encryptedSegmentSize: encryptedSegmentSize)
     }
 }
 

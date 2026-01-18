@@ -21,6 +21,9 @@ public enum CollectionPolicyConfiguration: Sendable {
 ///
 /// Performs single ECDH + HKDF derivation per collection for efficiency.
 ///
+/// - Important: NanoTDF is deprecated. Use ``TDFCBORBuilder`` instead.
+///   See the migration guide at `docs/NANOTDF_MIGRATION.md` for details.
+///
 /// ## Example Usage
 /// ```swift
 /// let collection = try await NanoTDFCollectionBuilder()
@@ -29,6 +32,7 @@ public enum CollectionPolicyConfiguration: Sendable {
 ///     .configuration(.default)
 ///     .build()
 /// ```
+@available(*, deprecated, message: "NanoTDF is deprecated. Use TDFCBORBuilder instead. See docs/NANOTDF_MIGRATION.md")
 public struct NanoTDFCollectionBuilder: Sendable {
     private var kasMetadata: KasMetadata?
     private var policyConfig: CollectionPolicyConfiguration?
