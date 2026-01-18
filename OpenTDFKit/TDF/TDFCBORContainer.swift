@@ -119,8 +119,8 @@ public struct TDFCBORBuilder: Sendable {
         // Combine IV + ciphertext + tag for the payload (as raw bytes)
         let payloadData = iv + ciphertext + tag
 
-        // Wrap the symmetric key
-        let wrappedKey = try TDFCrypto.wrapSymmetricKeyWithRSA(
+        // Wrap the symmetric key using EC (ECDH + HKDF + AES-GCM)
+        let ecWrapped = try TDFCrypto.wrapSymmetricKeyWithEC(
             publicKeyPEM: kasPublicKeyPEM,
             symmetricKey: symmetricKey
         )
@@ -143,18 +143,18 @@ public struct TDFCBORBuilder: Sendable {
             symmetricKey: symmetricKey
         )
 
-        // Create key access object
+        // Create key access object with EC ephemeral public key
         let keyAccessObject = TDFKeyAccessObject(
             type: .wrapped,
             url: kasURL.absoluteString,
             protocolValue: .kas,
-            wrappedKey: wrappedKey,
+            wrappedKey: ecWrapped.wrappedKey,
             policyBinding: policyBinding,
             encryptedMetadata: nil,
             kid: kasKid,
             sid: nil,
             schemaVersion: "1.0",
-            ephemeralPublicKey: nil
+            ephemeralPublicKey: ecWrapped.ephemeralPublicKey
         )
 
         // Create integrity information
