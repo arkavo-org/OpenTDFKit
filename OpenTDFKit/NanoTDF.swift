@@ -64,15 +64,17 @@ public struct NanoTDF: Sendable {
     static let sharedCryptoHelper = CryptoHelper()
 
     public func getPayloadPlaintext(symmetricKey: SymmetricKey) async throws -> Data {
-        // Use shared CryptoHelper instance to avoid per-call instantiation overhead
-        // The NanoTDF spec uses a 3-byte IV, but AES-GCM typically requires a 12-byte nonce.
-        // Adjust the IV to 12 bytes (e.g., by padding). The CryptoHelper handles this.
+        // Pad the 3-byte NanoTDF IV to the 12 bytes required by AES-GCM
         let paddedIV = await NanoTDF.sharedCryptoHelper.adjustNonce(payload.iv, to: 12)
-        return try await NanoTDF.sharedCryptoHelper.decryptPayload(
+        // Use cipher-aware decryption that routes to CryptoSwift for non-128-bit tags
+        // (CryptoKit only supports 16-byte tags; NanoTDF default is 8-byte/64-bit)
+        let cipher = header.payloadSignatureConfig.payloadCipher ?? .aes256GCM64
+        return try CryptoHelper.decryptNanoTDF(
+            cipher: cipher,
+            key: symmetricKey,
+            iv: paddedIV,
             ciphertext: payload.ciphertext,
-            symmetricKey: symmetricKey,
-            nonce: paddedIV,
-            tag: payload.mac,
+            tag: payload.mac
         )
     }
 }
