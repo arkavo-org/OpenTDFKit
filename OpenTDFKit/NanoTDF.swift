@@ -158,7 +158,8 @@ public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: 
 
     // Step 8: Encrypt plaintext directly with the TDF symmetric key (no separate payload key)
     // This is the key difference from v1.3 - we use the derived key directly
-    let fullIV = Data(count: 9) + payloadIV
+    // Pad 3-byte IV to 12 bytes by appending zeros (must match adjustNonce in getPayloadPlaintext)
+    let fullIV = payloadIV + Data(count: 9)
     let nonce = try AES.GCM.Nonce(data: fullIV)
     let sealed = try AES.GCM.seal(plaintext, using: tdfSymmetricKey, nonce: nonce)
     let mac = Data(sealed.tag.prefix(authTagSize))
