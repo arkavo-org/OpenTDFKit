@@ -768,11 +768,14 @@ public class KASRewrapClient: KASRewrapClientProtocol {
     ///   - wrappedKey: The wrapped key from KAS response
     ///   - sessionPublicKey: The session public key from KAS response
     ///   - clientPrivateKey: The client's ephemeral private key
+    ///   - salt: HKDF salt for session key derivation. Pass `nil` to use the default
+    ///           NanoTDF v12 salt (matching KAS behavior). Pass empty `Data()` for Standard TDF.
     /// - Returns: The decrypted symmetric key
     public static func unwrapKey(
         wrappedKey: Data,
         sessionPublicKey: Data,
         clientPrivateKey: Data,
+        salt: Data? = nil,
     ) throws -> SymmetricKey {
         // Perform ECDH with session public key
         let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: clientPrivateKey)
@@ -780,10 +783,11 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
 
         // Derive symmetric key using HKDF
-        // For Standard TDF rewrap: empty salt, empty info (matches KAS implementation)
+        // Default to NanoTDF v12 salt (matches KAS rewrap_dek session key derivation)
+        let hkdfSalt = salt ?? CryptoConstants.hkdfSalt
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data(),
+            salt: hkdfSalt,
             sharedInfo: Data(),
             outputByteCount: 32,
         )
