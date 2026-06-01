@@ -74,4 +74,40 @@ final class KASDiscoveryTests: XCTestCase {
         XCTAssertEqual(cfg.kas?.rewrapURL, "https://kas.example.com/kas/v2/rewrap")
         XCTAssertEqual(cfg.kas?.publicKeyURL, "https://kas.example.com/kas/v2/kas_public_key")
     }
+
+    func testValidateAcceptsHTTPSAndLoopbackHTTP() {
+        XCTAssertNoThrow(try validateKasURL("https://kas.example.com/kas.AccessService/Rewrap"))
+        XCTAssertNoThrow(try validateKasURL("http://localhost:8080/x"))
+        XCTAssertNoThrow(try validateKasURL("http://127.0.0.1:8080/x"))
+        XCTAssertNoThrow(try validateKasURL("http://[::1]:8080/x"))
+    }
+
+    func testValidateRejectsNonLoopbackHTTPAndBadScheme() {
+        XCTAssertThrowsError(try validateKasURL("http://evil.com/x"))
+        XCTAssertThrowsError(try validateKasURL("ftp://kas.example.com/x"))
+    }
+
+    func testValidateRejectsIPv4PrivateAndLinkLocal() {
+        for url in ["https://10.0.0.1/x", "https://172.16.0.1/x",
+                    "https://192.168.1.1/x", "https://169.254.169.254/x"]
+        {
+            XCTAssertThrowsError(try validateKasURL(url), "\(url) should be rejected")
+        }
+    }
+
+    func testValidateRejectsIPv6ULAAndLinkLocal() {
+        for url in ["https://[fd00::1]/x", "https://[fc00::1]/x", "https://[fe80::1]/x"] {
+            XCTAssertThrowsError(try validateKasURL(url), "\(url) should be rejected")
+        }
+    }
+
+    func testValidateRejectsUnspecifiedAddresses() {
+        XCTAssertThrowsError(try validateKasURL("https://0.0.0.0/x"))
+        XCTAssertThrowsError(try validateKasURL("https://[::]/x"))
+    }
+
+    func testValidateRejectsIPv4MappedMetadataAddress() {
+        XCTAssertThrowsError(try validateKasURL("https://[::ffff:169.254.169.254]/x"))
+        XCTAssertThrowsError(try validateKasURL("https://[::ffff:10.0.0.1]/x"))
+    }
 }

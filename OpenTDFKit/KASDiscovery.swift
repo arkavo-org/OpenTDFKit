@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 // MARK: - Configuration documents (/.well-known/opentdf-configuration)
@@ -133,5 +134,102 @@ public struct IdpConfig: Codable, Sendable {
             try c.decodeIfPresent([String].self, forKey: .responseTypesSupported) ?? []
         subjectTypesSupported =
             try c.decodeIfPresent([String].self, forKey: .subjectTypesSupported) ?? []
+    }
+}
+
+// MARK: - Errors
+
+public enum KASDiscoveryError: Error, CustomStringConvertible {
+    case invalidURL(String)
+    case configError(String)
+    case httpError(Int, String)
+    case invalidResponse(String)
+
+    public var description: String {
+        switch self {
+        case let .invalidURL(m): "Invalid KAS URL: \(m)"
+        case let .configError(m): "KAS configuration error: \(m)"
+        case let .httpError(s, m): "HTTP error \(s): \(m)"
+        case let .invalidResponse(m): "Invalid response: \(m)"
+        }
+    }
+}
+
+// MARK: - URL / SSRF validation
+
+private enum IPLiteral {
+    case v4([UInt8]) // 4 bytes, network order
+    case v6([UInt8]) // 16 bytes, network order
+}
+
+private func classifyIP(_ host: String) -> IPLiteral? {
+    var v4 = in_addr()
+    if host.withCString({ inet_pton(AF_INET, $0, &v4) }) == 1 {
+        return .v4(withUnsafeBytes(of: v4.s_addr) { Array($0) })
+    }
+    var v6 = in6_addr()
+    if host.withCString({ inet_pton(AF_INET6, $0, &v6) }) == 1 {
+        return .v6(withUnsafeBytes(of: v6) { Array($0) })
+    }
+    return nil
+}
+
+private func isLoopbackHost(_ host: String) -> Bool {
+    if host == "localhost" { return true }
+    switch classifyIP(host) {
+    case let .v4(o): return o[0] == 127 // 127.0.0.0/8
+    case let .v6(b): return b.dropLast() == ArraySlice(repeating: 0, count: 15) && b[15] == 1 // ::1
+    case .none: return false
+    }
+}
+
+private func isBlockedV4(_ o: [UInt8]) -> Bool {
+    if o[0] == 10 { return true } // 10.0.0.0/8
+    if o[0] == 172, (o[1] & 0xF0) == 16 { return true } // 172.16.0.0/12
+    if o[0] == 192, o[1] == 168 { return true } // 192.168.0.0/16
+    if o[0] == 169, o[1] == 254 { return true } // 169.254.0.0/16
+    if o == [0, 0, 0, 0] { return true } // 0.0.0.0
+    return false
+}
+
+private func isBlockedIP(_ ip: IPLiteral) -> Bool {
+    switch ip {
+    case let .v4(o):
+        return isBlockedV4(o)
+    case let .v6(b):
+        // Fold IPv4-mapped ::ffff:a.b.c.d back to IPv4.
+        if b[0 ..< 10].allSatisfy({ $0 == 0 }), b[10] == 0xFF, b[11] == 0xFF {
+            return isBlockedV4(Array(b[12 ..< 16]))
+        }
+        if b.allSatisfy({ $0 == 0 }) { return true } // :: unspecified
+        let first = (UInt16(b[0]) << 8) | UInt16(b[1])
+        return (first & 0xFE00) == 0xFC00 || (first & 0xFFC0) == 0xFE80 // fc00::/7, fe80::/10
+    }
+}
+
+/// Validate a KAS URL for scheme / HTTPS / SSRF constraints.
+///
+/// - `http` is allowed only for loopback hosts (`localhost`, `127.0.0.0/8`, `::1`).
+/// - Private, link-local, and unspecified IPs are rejected (IPv4, IPv6 ULA/link-local,
+///   and IPv4-mapped IPv6 literals folded back to IPv4).
+public func validateKasURL(_ urlString: String) throws {
+    guard let url = URL(string: urlString), let scheme = url.scheme?.lowercased() else {
+        throw KASDiscoveryError.invalidURL("Failed to parse URL: \(urlString)")
+    }
+    let host = url.host ?? ""
+
+    switch scheme {
+    case "https":
+        break
+    case "http":
+        if !isLoopbackHost(host) {
+            throw KASDiscoveryError.invalidURL("KAS URL must use HTTPS (HTTP only allowed for localhost)")
+        }
+    default:
+        throw KASDiscoveryError.invalidURL("Unsupported URL scheme '\(scheme)', must be https")
+    }
+
+    if let ip = classifyIP(host), isBlockedIP(ip) {
+        throw KASDiscoveryError.invalidURL("KAS URL must not target private or link-local IP addresses")
     }
 }
