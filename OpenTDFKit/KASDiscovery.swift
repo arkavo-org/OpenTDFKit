@@ -139,7 +139,7 @@ public struct IdpConfig: Codable, Sendable {
 
 // MARK: - Errors
 
-public enum KASDiscoveryError: Error, CustomStringConvertible {
+public enum KASDiscoveryError: Error, CustomStringConvertible, Sendable {
     case invalidURL(String)
     case configError(String)
     case httpError(Int, String)
@@ -217,6 +217,9 @@ public func validateKasURL(_ urlString: String) throws {
         throw KASDiscoveryError.invalidURL("Failed to parse URL: \(urlString)")
     }
     let host = url.host ?? ""
+    guard !host.isEmpty else {
+        throw KASDiscoveryError.invalidURL("KAS URL must have a non-empty host")
+    }
 
     switch scheme {
     case "https":
