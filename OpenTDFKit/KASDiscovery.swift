@@ -1,6 +1,17 @@
 import Darwin
 import Foundation
 
+// MARK: - Helpers
+
+/// Strip any trailing `/` characters from a base URL string.
+private func trimmingTrailingSlashes(_ s: String) -> String {
+    var result = s
+    while result.hasSuffix("/") {
+        result.removeLast()
+    }
+    return result
+}
+
 // MARK: - Configuration documents (/.well-known/opentdf-configuration)
 
 /// The platform's well-known configuration document.
@@ -23,7 +34,7 @@ public struct OpenTDFConfiguration: Codable, Sendable {
     /// Synthesize a Connect-only configuration for a single KAS base URL.
     /// Use when the platform does not expose the well-known endpoint.
     public static func forKasConnect(_ baseURL: String) -> OpenTDFConfiguration {
-        let base = String(baseURL.reversed().drop { $0 == "/" }.reversed())
+        let base = trimmingTrailingSlashes(baseURL)
         return OpenTDFConfiguration(
             kas: KasConfig(
                 uri: base,
@@ -40,7 +51,7 @@ public struct OpenTDFConfiguration: Codable, Sendable {
 
     /// Synthesize a legacy-REST configuration for a single KAS base URL.
     public static func forKasLegacyRest(_ baseURL: String) -> OpenTDFConfiguration {
-        let base = String(baseURL.reversed().drop { $0 == "/" }.reversed())
+        let base = trimmingTrailingSlashes(baseURL)
         return OpenTDFConfiguration(
             kas: KasConfig(
                 uri: base,
@@ -277,5 +288,40 @@ public struct KasEndpoints: Sendable {
         try validateKasURL(resolved.rewrapURL)
         try validateKasURL(resolved.publicKeyURL)
         return resolved
+    }
+}
+
+// MARK: - Well-known discovery
+
+/// Fetch the platform's /.well-known/opentdf-configuration document.
+/// `platformURL` is the platform base (e.g. "https://platform.arkavo.net"); a
+/// trailing slash is tolerated.
+public func fetchWellKnown(platformURL: String,
+                           urlSession: URLSession = .shared) async throws -> OpenTDFConfiguration
+{
+    let base = trimmingTrailingSlashes(platformURL)
+    let urlString = "\(base)/.well-known/opentdf-configuration"
+    guard let url = URL(string: urlString) else {
+        throw KASDiscoveryError.invalidURL("Failed to parse URL: \(urlString)")
+    }
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "GET"
+    request.timeoutInterval = 30
+    request.addValue("application/json", forHTTPHeaderField: "Accept")
+
+    let (data, response) = try await urlSession.data(for: request)
+    guard let http = response as? HTTPURLResponse else {
+        throw KASDiscoveryError.invalidResponse("Non-HTTP response from \(urlString)")
+    }
+    guard (200 ..< 300).contains(http.statusCode) else {
+        let body = String(data: data, encoding: .utf8) ?? ""
+        throw KASDiscoveryError.httpError(http.statusCode, "GET \(urlString): \(body)")
+    }
+
+    do {
+        return try JSONDecoder().decode(OpenTDFConfiguration.self, from: data)
+    } catch {
+        throw KASDiscoveryError.invalidResponse("Failed to parse well-known JSON: \(error)")
     }
 }

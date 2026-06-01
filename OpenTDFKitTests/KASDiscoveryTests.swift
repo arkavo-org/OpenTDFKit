@@ -151,4 +151,38 @@ final class KASDiscoveryTests: XCTestCase {
         )
         XCTAssertThrowsError(try KasEndpoints.from(cfg))
     }
+
+    func testFetchWellKnownReturnsParsedConfig() async throws {
+        MockURLProtocol.handler = { req in
+            XCTAssertEqual(req.url?.path, "/.well-known/opentdf-configuration")
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 200,
+                                       httpVersion: nil, headerFields: nil)!
+            return (resp, Data(Self.platformWellKnown.utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+        let session = MockURLProtocol.makeSession()
+        let cfg = try await fetchWellKnown(platformURL: "https://platform.arkavo.net",
+                                           urlSession: session)
+        XCTAssertNotNil(cfg.kas)
+        XCTAssertEqual(cfg.platformIssuer, "https://identity.arkavo.net")
+    }
+
+    func testFetchWellKnown404Throws() async {
+        MockURLProtocol.handler = { req in
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 404,
+                                       httpVersion: nil, headerFields: nil)!
+            return (resp, Data("not found".utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+        let session = MockURLProtocol.makeSession()
+        do {
+            _ = try await fetchWellKnown(platformURL: "https://platform.arkavo.net",
+                                         urlSession: session)
+            XCTFail("expected throw")
+        } catch let KASDiscoveryError.httpError(status, _) {
+            XCTAssertEqual(status, 404)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
 }
