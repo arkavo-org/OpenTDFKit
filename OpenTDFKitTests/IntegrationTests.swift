@@ -60,7 +60,7 @@ final class IntegrationTests: XCTestCase {
 
         let kasMetadata = try await kasService.generateKasMetadata()
 
-        let remotePolicy = ResourceLocator(protocolEnum: .https, body: "\(platformURL.host ?? "localhost")/policy/integration-test")!
+        let remotePolicy = try XCTUnwrap(ResourceLocator(protocolEnum: .https, body: "\(platformURL.host ?? "localhost")/policy/integration-test"))
         var policy = Policy(type: .remote, body: nil, remote: remotePolicy, binding: nil)
 
         let nanoTDF = try await createNanoTDF(
@@ -122,7 +122,7 @@ final class IntegrationTests: XCTestCase {
 
         let kasMetadata = try await kasService.generateKasMetadata()
 
-        let remotePolicy = ResourceLocator(protocolEnum: .https, body: "\(platformURL.host ?? "localhost")/policy/test")!
+        let remotePolicy = try XCTUnwrap(ResourceLocator(protocolEnum: .https, body: "\(platformURL.host ?? "localhost")/policy/test"))
         var policy = Policy(type: .remote, body: nil, remote: remotePolicy, binding: nil)
 
         let nanoTDF = try await createNanoTDF(
@@ -151,7 +151,7 @@ final class IntegrationTests: XCTestCase {
                 clientKeyPair: clientKeyPair,
             )
             XCTFail("Expected authentication failure with invalid token")
-        } catch KASRewrapError.authenticationFailed {
+        } catch KASRewrapError.authenticationFailed(_) {
         } catch let KASRewrapError.httpError(code, _) where code == 401 {
         } catch {
             XCTFail("Expected KASRewrapError.authenticationFailed, got \(error)")
@@ -201,7 +201,7 @@ final class IntegrationTests: XCTestCase {
         let privateKeyData = await keyStore.getPrivateKey(forPublicKey: kasPublicKey)
         XCTAssertNotNil(privateKeyData, "KAS private key should be in keystore")
 
-        let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData!)
+        let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: XCTUnwrap(privateKeyData))
         let clientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: nanoTDF.header.ephemeralPublicKey)
 
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
@@ -409,10 +409,10 @@ final class IntegrationTests: XCTestCase {
         }
 
         // Test with multiple items
-        let testItems = [
-            "Collection item 1: Hello".data(using: .utf8)!,
-            "Collection item 2: World".data(using: .utf8)!,
-            "Collection item 3: NanoTDF Collection Test".data(using: .utf8)!,
+        let testItems = try [
+            XCTUnwrap("Collection item 1: Hello".data(using: .utf8)),
+            XCTUnwrap("Collection item 2: World".data(using: .utf8)),
+            XCTUnwrap("Collection item 3: NanoTDF Collection Test".data(using: .utf8)),
         ]
 
         let keyStore = KeyStore(curve: .secp256r1)
@@ -421,10 +421,10 @@ final class IntegrationTests: XCTestCase {
         let kasMetadata = try await kasService.generateKasMetadata()
 
         // Create policy locator
-        let policyLocator = ResourceLocator(
+        let policyLocator = try XCTUnwrap(ResourceLocator(
             protocolEnum: .https,
             body: "\(platformURL.host ?? "localhost")/policy/collection-test",
-        )!
+        ))
 
         // Build the collection
         let collection = try await NanoTDFCollectionBuilder()
@@ -499,9 +499,9 @@ final class IntegrationTests: XCTestCase {
             return
         }
 
-        let testItems = [
-            "Serialization test 1".data(using: .utf8)!,
-            "Serialization test 2".data(using: .utf8)!,
+        let testItems = try [
+            XCTUnwrap("Serialization test 1".data(using: .utf8)),
+            XCTUnwrap("Serialization test 2".data(using: .utf8)),
         ]
 
         let keyStore = KeyStore(curve: .secp256r1)
@@ -509,10 +509,10 @@ final class IntegrationTests: XCTestCase {
 
         let kasMetadata = try await kasService.generateKasMetadata()
 
-        let policyLocator = ResourceLocator(
+        let policyLocator = try XCTUnwrap(ResourceLocator(
             protocolEnum: .https,
             body: "\(platformURL.host ?? "localhost")/policy/serial-test",
-        )!
+        ))
 
         let collection = try await NanoTDFCollectionBuilder()
             .kasMetadata(kasMetadata)
@@ -580,10 +580,10 @@ final class IntegrationTests: XCTestCase {
 
         let kasMetadata = try await kasService.generateKasMetadata()
 
-        let policyLocator = ResourceLocator(
+        let policyLocator = try XCTUnwrap(ResourceLocator(
             protocolEnum: .https,
             body: "\(platformURL.host ?? "localhost")/policy/batch-test",
-        )!
+        ))
 
         let collection = try await NanoTDFCollectionBuilder()
             .kasMetadata(kasMetadata)

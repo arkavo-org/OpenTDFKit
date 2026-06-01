@@ -399,7 +399,8 @@ public class KASRewrapClient: KASRewrapClientProtocol {
             let errorMessage = String(data: data, encoding: .utf8) ?? "Bad request"
             throw KASRewrapError.httpError(400, errorMessage)
         case 401:
-            throw KASRewrapError.authenticationFailed
+            let message = String(data: data, encoding: .utf8)
+            throw KASRewrapError.authenticationFailed(message)
         case 403:
             let errorMessage = String(data: data, encoding: .utf8)
             throw KASRewrapError.accessDenied(errorMessage ?? "Forbidden")
@@ -542,7 +543,8 @@ public class KASRewrapClient: KASRewrapClientProtocol {
             let message = String(data: data, encoding: .utf8)
             throw KASRewrapError.httpError(400, message)
         case 401:
-            throw KASRewrapError.authenticationFailed
+            let message = String(data: data, encoding: .utf8)
+            throw KASRewrapError.authenticationFailed(message)
         case 403:
             let message = String(data: data, encoding: .utf8)
             throw KASRewrapError.accessDenied(message ?? "Forbidden")
@@ -619,7 +621,8 @@ public class KASRewrapClient: KASRewrapClientProtocol {
                 cryptoKitKey: result.cryptoKitKey,
             )
         case 401:
-            throw KASRewrapError.authenticationFailed
+            let message = String(data: data, encoding: .utf8)
+            throw KASRewrapError.authenticationFailed(message)
         case 403:
             let message = String(data: data, encoding: .utf8)
             throw KASRewrapError.accessDenied(message ?? "Forbidden")
@@ -920,7 +923,7 @@ public enum KASRewrapError: Error, CustomStringConvertible {
     case invalidResponse
     case emptyResponse
     case accessDenied(String)
-    case authenticationFailed
+    case authenticationFailed(String?)
     case missingWrappedKey
     case missingSessionKey
     case invalidWrappedKeyFormat
@@ -940,8 +943,8 @@ public enum KASRewrapError: Error, CustomStringConvertible {
             "Empty response from KAS server"
         case let .accessDenied(reason):
             "Access denied: \(reason)"
-        case .authenticationFailed:
-            "Authentication failed - check OAuth token"
+        case let .authenticationFailed(reason):
+            "Authentication failed - check OAuth token" + (reason.map { ": \($0)" } ?? "")
         case .missingWrappedKey:
             "KAS response missing wrapped key"
         case .missingSessionKey:
@@ -968,7 +971,7 @@ public enum KASRewrapError: Error, CustomStringConvertible {
 
 // Use the existing EphemeralKeyPair from KeyStore
 
-// Extension for base64URL encoding
+/// Extension for base64URL encoding
 extension Data {
     func base64URLEncodedString() -> String {
         base64EncodedString()
