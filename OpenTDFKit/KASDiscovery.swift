@@ -236,3 +236,46 @@ public func validateKasURL(_ urlString: String) throws {
         throw KASDiscoveryError.invalidURL("KAS URL must not target private or link-local IP addresses")
     }
 }
+
+// MARK: - Endpoint resolution
+
+public enum KasTransport: Sendable, Equatable {
+    /// ConnectRPC endpoints at /kas.AccessService/*
+    case connect
+    /// Legacy REST gateway at /kas/v2/*
+    case legacyRest
+}
+
+public struct KasEndpoints: Sendable {
+    public let rewrapURL: String
+    public let publicKeyURL: String
+    public let transport: KasTransport
+
+    public init(rewrapURL: String, publicKeyURL: String, transport: KasTransport) {
+        self.rewrapURL = rewrapURL
+        self.publicKeyURL = publicKeyURL
+        self.transport = transport
+    }
+
+    /// Resolve KAS endpoints, preferring ConnectRPC URLs and falling back to
+    /// legacy REST when only REST is advertised. Both resolved URLs are
+    /// validated (HTTPS / scheme / SSRF) before returning.
+    public static func from(_ config: OpenTDFConfiguration) throws -> KasEndpoints {
+        guard let kas = config.kas else {
+            throw KASDiscoveryError.configError("well-known configuration is missing a 'kas' block")
+        }
+
+        let resolved: KasEndpoints
+        if let rewrap = kas.connectRewrapURL, let pub = kas.connectPublicKeyURL {
+            resolved = KasEndpoints(rewrapURL: rewrap, publicKeyURL: pub, transport: .connect)
+        } else if let rewrap = kas.rewrapURL, let pub = kas.publicKeyURL {
+            resolved = KasEndpoints(rewrapURL: rewrap, publicKeyURL: pub, transport: .legacyRest)
+        } else {
+            throw KASDiscoveryError.configError("well-known kas block exposes neither Connect nor REST URLs")
+        }
+
+        try validateKasURL(resolved.rewrapURL)
+        try validateKasURL(resolved.publicKeyURL)
+        return resolved
+    }
+}

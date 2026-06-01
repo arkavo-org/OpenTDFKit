@@ -110,4 +110,45 @@ final class KASDiscoveryTests: XCTestCase {
         XCTAssertThrowsError(try validateKasURL("https://[::ffff:169.254.169.254]/x"))
         XCTAssertThrowsError(try validateKasURL("https://[::ffff:10.0.0.1]/x"))
     }
+
+    func testFromConfigPicksConnectWhenPresent() throws {
+        let cfg = try JSONDecoder().decode(OpenTDFConfiguration.self,
+                                           from: Data(Self.platformWellKnown.utf8))
+        let ep = try KasEndpoints.from(cfg)
+        XCTAssertEqual(ep.rewrapURL, "https://platform.arkavo.net/kas.AccessService/Rewrap")
+        XCTAssertEqual(ep.publicKeyURL, "https://platform.arkavo.net/kas.AccessService/PublicKey")
+        XCTAssertEqual(ep.transport, .connect)
+    }
+
+    func testFromConfigFallsBackToRest() throws {
+        let cfg = OpenTDFConfiguration.forKasLegacyRest("https://k.example.com")
+        let ep = try KasEndpoints.from(cfg)
+        XCTAssertEqual(ep.rewrapURL, "https://k.example.com/kas/v2/rewrap")
+        XCTAssertEqual(ep.transport, .legacyRest)
+    }
+
+    func testFromConfigThrowsWhenKasMissing() {
+        let cfg = OpenTDFConfiguration(kas: nil, idp: nil, platformIssuer: "https://x.com")
+        XCTAssertThrowsError(try KasEndpoints.from(cfg))
+    }
+
+    func testFromConfigThrowsWhenURLsMissing() {
+        let cfg = OpenTDFConfiguration(
+            kas: KasConfig(uri: "https://k.example.com", algorithms: [], publicKeyURL: nil,
+                           rewrapURL: nil, connectPublicKeyURL: nil, connectRewrapURL: nil),
+            idp: nil, platformIssuer: nil,
+        )
+        XCTAssertThrowsError(try KasEndpoints.from(cfg))
+    }
+
+    func testFromConfigRejectsHostileConnectURL() {
+        let cfg = OpenTDFConfiguration(
+            kas: KasConfig(uri: "https://platform.example.com", algorithms: [],
+                           publicKeyURL: nil, rewrapURL: nil,
+                           connectPublicKeyURL: "https://platform.example.com/kas.AccessService/PublicKey",
+                           connectRewrapURL: "https://169.254.169.254/kas.AccessService/Rewrap"),
+            idp: nil, platformIssuer: nil,
+        )
+        XCTAssertThrowsError(try KasEndpoints.from(cfg))
+    }
 }
