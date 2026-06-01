@@ -185,4 +185,16 @@ final class KASDiscoveryTests: XCTestCase {
             XCTFail("unexpected error: \(error)")
         }
     }
+
+    func testParseConnectErrorValidBody() {
+        let err = parseConnectError(#"{"code":"unauthenticated","message":"missing bearer token"}"#)
+        XCTAssertEqual(err?.code, "unauthenticated")
+        XCTAssertEqual(err?.message, "missing bearer token")
+    }
+
+    func testParseConnectErrorGarbageReturnsNil() {
+        XCTAssertNil(parseConnectError("not json"))
+        XCTAssertNil(parseConnectError(""))
+        XCTAssertNil(parseConnectError(#"{"unrelated":"shape"}"#))
+    }
 }

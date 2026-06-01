@@ -327,3 +327,19 @@ public func fetchWellKnown(platformURL: String,
         throw KASDiscoveryError.invalidResponse("Failed to parse well-known JSON: \(error)")
     }
 }
+
+// MARK: - Connect error envelope
+
+/// Error envelope returned by Connect unary-JSON RPCs on non-2xx responses.
+public struct ConnectError: Codable, Sendable {
+    public let code: String
+    public let message: String
+}
+
+/// Parse a Connect error envelope from a response body. Returns nil for empty,
+/// non-JSON, or shapes lacking a non-empty `code`.
+public func parseConnectError(_ body: String) -> ConnectError? {
+    guard !body.isEmpty, let data = body.data(using: .utf8) else { return nil }
+    guard let parsed = try? JSONDecoder().decode(ConnectError.self, from: data) else { return nil }
+    return parsed.code.isEmpty ? nil : parsed
+}
