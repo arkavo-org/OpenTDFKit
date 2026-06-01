@@ -250,6 +250,7 @@ public func validateKasURL(_ urlString: String) throws {
 
 // MARK: - Endpoint resolution
 
+/// The wire protocol used to communicate with a KAS.
 public enum KasTransport: Sendable, Equatable {
     /// ConnectRPC endpoints at /kas.AccessService/*
     case connect
@@ -257,7 +258,8 @@ public enum KasTransport: Sendable, Equatable {
     case legacyRest
 }
 
-public struct KasEndpoints: Sendable {
+/// Resolved, validated KAS endpoint URLs and their associated transport.
+public struct KasEndpoints: Sendable, Equatable {
     public let rewrapURL: String
     public let publicKeyURL: String
     public let transport: KasTransport
