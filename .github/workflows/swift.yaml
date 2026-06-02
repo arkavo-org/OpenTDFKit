@@ -29,7 +29,8 @@ jobs:
         run: brew install swiftformat
 
       - name: Run SwiftFormat
-        run: swiftformat --swiftversion 6.2 . --lint
+        # Rules and Swift version are pinned in the repo's .swiftformat config.
+        run: swiftformat --lint .
         
 #      - name: Run SwiftLint
 #        run: swiftlint --strict

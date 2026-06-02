@@ -359,8 +359,7 @@ public class BinaryParser {
         else {
             throw ParsingError.invalidPayload("Failed to read ciphertext or payload MAC")
         }
-        let payload = Payload(length: length, iv: iv, ciphertext: ciphertext, mac: payloadMAC)
-        return payload
+        return Payload(length: length, iv: iv, ciphertext: ciphertext, mac: payloadMAC)
     }
 
     public func parseSignature(config: SignatureAndPayloadConfig) throws -> Signature? {
@@ -394,7 +393,7 @@ public class BinaryParser {
     }
 }
 
-// see https://github.com/opentdf/spec/tree/main/schema/nanotdf
+/// see https://github.com/opentdf/spec/tree/main/schema/nanotdf
 enum FieldSize {
     static let magicNumberSize = 2
     static let versionSize = 1

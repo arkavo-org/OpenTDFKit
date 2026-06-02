@@ -3,7 +3,7 @@
 import XCTest
 
 final class KeyStoreTests: XCTestCase {
-    func testGenerateAndStoreSingleKey() async throws {
+    func testGenerateAndStoreSingleKey() async {
         let keyStore = KeyStore(curve: .secp256r1)
         let keyPair = await keyStore.generateKeyPair()
         await keyStore.store(keyPair: keyPair)
@@ -95,12 +95,12 @@ final class KeyStoreTests: XCTestCase {
 
     // MARK: - Tests for derivePayloadSymmetricKey
 
-    // Helper enum for test-specific errors
+    /// Helper enum for test-specific errors
     enum TestError: Error {
         case keyGenerationFailed(String)
     }
 
-    // Helper to generate client ephemeral key pair for tests
+    /// Helper to generate client ephemeral key pair for tests
     private func generateClientEphemeralKeyPair(curve: Curve) async throws -> EphemeralKeyPair {
         let cryptoHelper = CryptoHelper()
         guard let keyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: curve) else {
@@ -279,7 +279,7 @@ final class KeyStoreTests: XCTestCase {
     }
 }
 
-// Helper extension for testing
+/// Helper extension for testing
 extension KeyStore {
     func getAllPublicKeys() -> [Data] {
         Array(keyPairs.values.map(\.publicKey))

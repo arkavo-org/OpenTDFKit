@@ -11,7 +11,9 @@ public struct TDFJSONContainer: TrustedDataContainer, Sendable {
     /// Raw payload data (encrypted ciphertext)
     public let payloadData: Data
 
-    public var formatKind: TrustedDataFormatKind { .json }
+    public var formatKind: TrustedDataFormatKind {
+        .json
+    }
 
     public init(envelope: TDFJSONEnvelope, payloadData: Data) {
         self.envelope = envelope

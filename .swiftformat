@@ -1,0 +1,14 @@
+# SwiftFormat configuration for OpenTDFKit
+# Pinned so `swiftformat .` and the CI lint check agree.
+
+# Match the package's declared language version (Package.swift: swift-tools-version:6.2).
+--swiftversion 6.2
+
+# Force-unwraps in tests/benchmarks are intentional here: a nil in a test is a
+# legitimate, immediate failure. The autocorrect for this rule rewrites `!` to
+# `try XCTUnwrap(...)`, which breaks compilation in non-throwing benchmark
+# functions, so the rule is disabled rather than auto-applied.
+--disable noForceUnwrapInTests
+
+# Never touch build artifacts.
+--exclude .build

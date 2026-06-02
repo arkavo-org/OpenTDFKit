@@ -158,7 +158,7 @@ public enum PublicKeyStoreError: Error {
     case unsupportedCurve
 }
 
-// For testing purposes only
+/// For testing purposes only
 extension PublicKeyStore {
     var keys: [Data] {
         get async {

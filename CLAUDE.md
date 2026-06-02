@@ -213,7 +213,9 @@ OpenTDFKit is composed of several key components that work together to implement
 
 - **PublicKeyStore**: Manages only public keys for sharing with peers. Allows secure distribution of one-time use TDF keys.
 
-- **KASRewrapClient**: Client for interacting with KAS rewrap endpoints. Implements JWT signing (ES256), PEM parsing, and key unwrapping protocols. Supports both NanoTDF (EC key wrapping) and TDF (Archive Envelope) (RSA key wrapping) rewrap requests. Designed with protocol-based architecture for testability.
+- **KASRewrapClient**: Client for interacting with KAS rewrap endpoints. Implements JWT signing (ES256), PEM parsing, and key unwrapping protocols. Supports both NanoTDF (EC key wrapping) and TDF (Archive Envelope) (RSA key wrapping) rewrap requests. Designed with protocol-based architecture for testability. Resolves transport endpoints from an `OpenTDFConfiguration` (well-known discovery via `fetchWellKnown`, or `OpenTDFConfiguration.forKasConnect`), preferring ConnectRPC `/kas.AccessService/*` and falling back to legacy REST `/kas/v2/*`; the rewrap client follows no redirects and parses Connect error envelopes. Bearer tokens are opaque (a JWT or a base64url-encoded CWT — the platform decides validation).
+
+- **KASDiscovery**: ConnectRPC/well-known discovery support. Provides `OpenTDFConfiguration`/`KasConfig`/`IdpConfig` Codable types, `KasEndpoints` resolution (Connect-preferred, REST-fallback) with HTTPS/SSRF URL validation, Connect error-envelope parsing, and `fetchWellKnown` for `/.well-known/opentdf-configuration`.
 
 ### TDF (Archive Envelope) Components
 

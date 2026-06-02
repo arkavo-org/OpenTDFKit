@@ -15,8 +15,13 @@ public enum TDFCBORKey: Int, CodingKey {
     case manifest = 4
     case payload = 5
 
-    public var intValue: Int? { rawValue }
-    public var stringValue: String { String(rawValue) }
+    public var intValue: Int? {
+        rawValue
+    }
+
+    public var stringValue: String {
+        String(rawValue)
+    }
 
     public init?(intValue: Int) {
         self.init(rawValue: intValue)
@@ -56,10 +61,10 @@ public enum TDFCBOREnums {
     public static let keyAccessTypeWrapped: UInt64 = 0
     public static let keyAccessTypeRemote: UInt64 = 1
 
-    // Key protocol: 0=kas
+    /// Key protocol: 0=kas
     public static let keyProtocolKas: UInt64 = 0
 
-    // Symmetric algorithm: 0=AES-256-GCM
+    /// Symmetric algorithm: 0=AES-256-GCM
     public static let symmetricAlgAes256Gcm: UInt64 = 0
 
     // Hash/Signature algorithm
@@ -184,7 +189,9 @@ public struct TDFCBOREnvelope: Sendable {
     }
 
     /// Format identifier (always "cbor")
-    public var formatId: String { tdf }
+    public var formatId: String {
+        tdf
+    }
 }
 
 // MARK: - TDF-CBOR Manifest

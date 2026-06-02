@@ -207,7 +207,7 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         }
     }
 
-    // Helper function for benchmarking - complete end-to-end encryption
+    /// Helper function for benchmarking - complete end-to-end encryption
     private static func deriveKeysAndEncryptBenchmark(
         cryptoHelper: CryptoHelper,
         keyPair: EphemeralKeyPair,
