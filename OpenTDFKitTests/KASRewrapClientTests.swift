@@ -166,16 +166,22 @@ final class KASRewrapClientTests: XCTestCase {
         }
     }
 
-    func testKeyUnwrappingWithValidKeys() throws {
+    /// Round-trips a random 256-bit key through HKDF(`sealSalt`) → AES-GCM seal →
+    /// `unwrapKey(salt: unwrapSalt)` and asserts the recovered key matches.
+    /// The seal and unwrap salts must agree for the GCM tag to verify, mirroring
+    /// the KAS session-key derivation. `unwrapSalt == nil` exercises `unwrapKey`'s
+    /// default (NanoTDF v12 salt).
+    private func assertUnwrapRoundTrip(sealSalt: Data, unwrapSalt: Data?,
+                                       file: StaticString = #filePath, line: UInt = #line) throws
+    {
         let clientPrivateKey = P256.KeyAgreement.PrivateKey()
         let sessionPrivateKey = P256.KeyAgreement.PrivateKey()
 
         let sharedSecret = try sessionPrivateKey.sharedSecretFromKeyAgreement(with: clientPrivateKey.publicKey)
 
-        // Use empty salt/info to match KAS implementation
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data(),
+            salt: sealSalt,
             sharedInfo: Data(),
             outputByteCount: 32,
         )
@@ -195,10 +201,23 @@ final class KASRewrapClientTests: XCTestCase {
             wrappedKey: wrappedKey,
             sessionPublicKey: sessionPrivateKey.publicKey.compressedRepresentation,
             clientPrivateKey: clientPrivateKey.rawRepresentation,
+            salt: unwrapSalt,
         )
 
         let unwrappedKeyData = unwrappedKey.withUnsafeBytes { Data(Array($0)) }
-        XCTAssertEqual(unwrappedKeyData, testKeyData, "Unwrapped key should match original key")
+        XCTAssertEqual(unwrappedKeyData, testKeyData, "Unwrapped key should match original key",
+                       file: file, line: line)
+    }
+
+    /// NanoTDF: `unwrapKey` defaults (salt == nil) to the v12 session-key salt
+    /// (`CryptoConstants.hkdfSalt`), matching the KAS `rewrap_dek` derivation.
+    func testKeyUnwrappingNanoTDFDefaultSalt() throws {
+        try assertUnwrapRoundTrip(sealSalt: CryptoConstants.hkdfSalt, unwrapSalt: nil)
+    }
+
+    /// Standard (Base) TDF: empty HKDF salt on both the seal and the unwrap.
+    func testKeyUnwrappingStandardTDFEmptySalt() throws {
+        try assertUnwrapRoundTrip(sealSalt: Data(), unwrapSalt: Data())
     }
 
     func testKeyUnwrappingWithInvalidWrappedKeyFormat() {
