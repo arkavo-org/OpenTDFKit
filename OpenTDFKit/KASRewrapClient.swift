@@ -2,6 +2,18 @@ import CryptoKit
 import Darwin
 import Foundation
 
+/// URLSession task delegate that refuses HTTP redirects. The KAS rewrap target
+/// is an RPC endpoint that must never redirect; following a 3xx could re-issue
+/// the bearer-carrying request to an unvalidated host.
+final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_: URLSession, task _: URLSessionTask,
+                    willPerformHTTPRedirection _: HTTPURLResponse, newRequest _: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void)
+    {
+        completionHandler(nil)
+    }
+}
+
 /// Protocol for KAS rewrap client operations, enabling testability through dependency injection
 public protocol KASRewrapClientProtocol {
     /// Perform NanoTDF rewrap request to KAS
@@ -272,21 +284,46 @@ public class KASRewrapClient: KASRewrapClientProtocol {
 
     // MARK: - Properties
 
-    private let kasURL: URL
+    private let endpoints: KasEndpoints
+    /// KAS identity url for the request-body KeyAccessObject when the NanoTDF
+    /// header locator is unavailable (fallback only).
+    private let kasIdentityURL: String
     private let oauthToken: String
     private let urlSession: URLSession
     private let signingKey: P256.Signing.PrivateKey
+    private let noRedirect = NoRedirectDelegate()
 
     // MARK: - Initialization
 
-    /// Initialize KAS rewrap client with required parameters
+    /// Initialize from a resolved configuration document (preferred).
     /// - Parameters:
-    ///   - kasURL: The KAS endpoint URL
-    ///   - oauthToken: OAuth bearer token for authentication
-    ///   - urlSession: URLSession for network requests (defaults to .shared)
-    ///   - signingKey: Optional P256 private key for JWT signing (generates new key if not provided)
-    public init(kasURL: URL, oauthToken: String, urlSession: URLSession = .shared, signingKey: P256.Signing.PrivateKey? = nil) {
-        self.kasURL = kasURL
+    ///   - configuration: Resolved config; obtain via `fetchWellKnown(...)` or
+    ///     `OpenTDFConfiguration.forKasConnect(_:)`. Both resolved KAS URLs are
+    ///     validated (HTTPS / scheme / SSRF) here.
+    ///   - oauthToken: Bearer token (opaque: a JWT or base64url-encoded CWT).
+    public init(configuration: OpenTDFConfiguration, oauthToken: String,
+                urlSession: URLSession = .shared,
+                signingKey: P256.Signing.PrivateKey? = nil) throws
+    {
+        endpoints = try KasEndpoints.from(configuration)
+        kasIdentityURL = configuration.kas?.uri ?? ""
+        self.oauthToken = oauthToken
+        self.urlSession = urlSession
+        self.signingKey = signingKey ?? P256.Signing.PrivateKey()
+    }
+
+    /// Legacy initializer: treats `kasURL` as a `{base}/kas` REST endpoint and
+    /// builds `{kasURL}/v2/*` endpoints, preserving prior behavior.
+    /// Transitional bridge — prefer `init(configuration:)`. (Removed in a later task.)
+    public init(kasURL: URL, oauthToken: String, urlSession: URLSession = .shared,
+                signingKey: P256.Signing.PrivateKey? = nil)
+    {
+        endpoints = KasEndpoints(
+            rewrapURL: kasURL.appendingPathComponent("v2/rewrap").absoluteString,
+            publicKeyURL: kasURL.appendingPathComponent("v2/kas_public_key").absoluteString,
+            transport: .legacyRest,
+        )
+        kasIdentityURL = kasURL.absoluteString
         self.oauthToken = oauthToken
         self.urlSession = urlSession
         self.signingKey = signingKey ?? P256.Signing.PrivateKey()
@@ -304,7 +341,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         // Build the Key Access Object
         let keyAccess = KeyAccessObject(
             header: header.base64EncodedString(),
-            url: kasURL.absoluteString,
+            url: resolveNanoKasURL(parsedHeader),
         )
 
         // Build the Key Access Object wrapper for v2 API
@@ -346,18 +383,20 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         let signedRequest = SignedRewrapRequest(signed_request_token: signedToken)
 
         // Create HTTP request
-        let rewrapEndpoint = kasURL.appendingPathComponent("v2/rewrap")
+        guard let rewrapEndpoint = URL(string: endpoints.rewrapURL) else {
+            throw KASRewrapError.invalidTDFRequest("Invalid rewrap URL: \(endpoints.rewrapURL)")
+        }
         var request = URLRequest(url: rewrapEndpoint)
         request.httpMethod = "POST"
-        request.timeoutInterval = 30 // 30 second timeout
+        request.timeoutInterval = 30
 
-        let authHeader = "Bearer \(oauthToken)"
-        request.addValue(authHeader, forHTTPHeaderField: "Authorization")
+        request.addValue("Bearer \(oauthToken)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
         request.httpBody = try JSONEncoder().encode(signedRequest)
 
-        // Perform request
-        let (data, response) = try await urlSession.data(for: request)
+        // Perform request (no redirects for the bearer-carrying call)
+        let (data, response) = try await urlSession.data(for: request, delegate: noRedirect)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw KASRewrapError.invalidResponse
@@ -395,28 +434,8 @@ public class KASRewrapClient: KASRewrapClientProtocol {
             let sessionKey = try extractCompressedKeyFromPEM(sessionKeyPEM)
 
             return (wrappedKey, sessionKey)
-        case 400:
-            let errorMessage = String(data: data, encoding: .utf8) ?? "Bad request"
-            throw KASRewrapError.httpError(400, errorMessage)
-        case 401:
-            let message = String(data: data, encoding: .utf8)
-            throw KASRewrapError.authenticationFailed(message)
-        case 403:
-            let errorMessage = String(data: data, encoding: .utf8)
-            throw KASRewrapError.accessDenied(errorMessage ?? "Forbidden")
-        case 404:
-            throw KASRewrapError.httpError(404, "KAS endpoint not found")
-        case 500:
-            throw KASRewrapError.httpError(500, "Internal server error")
-        case 502:
-            throw KASRewrapError.httpError(502, "Bad gateway - KAS service unavailable")
-        case 503:
-            throw KASRewrapError.httpError(503, "Service unavailable - try again later")
-        case 504:
-            throw KASRewrapError.httpError(504, "Gateway timeout")
         default:
-            let errorMessage = String(data: data, encoding: .utf8)
-            throw KASRewrapError.httpError(httpResponse.statusCode, errorMessage)
+            throw mapRewrapHTTPError(status: httpResponse.statusCode, data: data)
         }
     }
 
@@ -438,7 +457,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         let keyAccessEntries = manifest.encryptionInformation.keyAccess.filter { matchesKasURL($0.url) }
 
         guard !keyAccessEntries.isEmpty else {
-            throw KASRewrapError.invalidTDFRequest("No key access entries for KAS \(kasURL.absoluteString)")
+            throw KASRewrapError.invalidTDFRequest("No key access entries for KAS \(kasIdentityURL)")
         }
 
         var wrappers: [StandardKeyAccessObjectWrapper] = []
@@ -495,15 +514,18 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         let signedToken = try createSignedJWT(requestBody: requestBodyJSON, signingKey: signingKey)
         let signedRequest = SignedRewrapRequest(signed_request_token: signedToken)
 
-        let rewrapEndpoint = kasURL.appendingPathComponent("v2/rewrap")
+        guard let rewrapEndpoint = URL(string: endpoints.rewrapURL) else {
+            throw KASRewrapError.invalidTDFRequest("Invalid rewrap URL: \(endpoints.rewrapURL)")
+        }
         var request = URLRequest(url: rewrapEndpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.addValue("Bearer \(oauthToken)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
         request.httpBody = try JSONEncoder().encode(signedRequest)
 
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.data(for: request, delegate: noRedirect)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw KASRewrapError.invalidResponse
@@ -539,28 +561,8 @@ public class KASRewrapClient: KASRewrapClientProtocol {
                 wrappedKeys: wrappedKeys,
                 sessionPublicKeyPEM: rewrapResponse.sessionPublicKey,
             )
-        case 400:
-            let message = String(data: data, encoding: .utf8)
-            throw KASRewrapError.httpError(400, message)
-        case 401:
-            let message = String(data: data, encoding: .utf8)
-            throw KASRewrapError.authenticationFailed(message)
-        case 403:
-            let message = String(data: data, encoding: .utf8)
-            throw KASRewrapError.accessDenied(message ?? "Forbidden")
-        case 404:
-            throw KASRewrapError.httpError(404, "KAS endpoint not found")
-        case 500:
-            throw KASRewrapError.httpError(500, "Internal server error")
-        case 502:
-            throw KASRewrapError.httpError(502, "Bad gateway - KAS service unavailable")
-        case 503:
-            throw KASRewrapError.httpError(503, "Service unavailable - try again later")
-        case 504:
-            throw KASRewrapError.httpError(504, "Gateway timeout")
         default:
-            let message = String(data: data, encoding: .utf8)
-            throw KASRewrapError.httpError(httpResponse.statusCode, message)
+            throw mapRewrapHTTPError(status: httpResponse.statusCode, data: data)
         }
     }
 
@@ -578,24 +580,38 @@ public class KASRewrapClient: KASRewrapClientProtocol {
             throw KASRewrapError.unsupportedKeyAlgorithm(algorithm.rawValue)
         }
 
-        // Build the URL with algorithm query parameter
-        let keyEndpoint = kasURL.appendingPathComponent("v2/kas_public_key")
-        var components = URLComponents(url: keyEndpoint, resolvingAgainstBaseURL: false)
-        components?.queryItems = [URLQueryItem(name: "algorithm", value: algorithm.rawValue)]
-
-        guard let requestURL = components?.url else {
-            throw KASRewrapError.keyFetchFailed("Failed to construct KAS public key URL")
+        var request: URLRequest
+        switch endpoints.transport {
+        case .connect:
+            // ConnectRPC PublicKey RPC: POST the PublicKeyRequest message as JSON.
+            // `algorithm` is a request-message field (Go opentdf/platform proto).
+            guard let url = URL(string: endpoints.publicKeyURL) else {
+                throw KASRewrapError.keyFetchFailed("Invalid public key URL: \(endpoints.publicKeyURL)")
+            }
+            request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 30
+            request.addValue("Bearer \(oauthToken)", forHTTPHeaderField: "Authorization")
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.addValue("application/json", forHTTPHeaderField: "Accept")
+            request.addValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
+            request.httpBody = try JSONEncoder().encode(["algorithm": algorithm.rawValue])
+        case .legacyRest:
+            guard var components = URLComponents(string: endpoints.publicKeyURL) else {
+                throw KASRewrapError.keyFetchFailed("Invalid public key URL: \(endpoints.publicKeyURL)")
+            }
+            components.queryItems = [URLQueryItem(name: "algorithm", value: algorithm.rawValue)]
+            guard let requestURL = components.url else {
+                throw KASRewrapError.keyFetchFailed("Failed to construct KAS public key URL")
+            }
+            request = URLRequest(url: requestURL)
+            request.httpMethod = "GET"
+            request.timeoutInterval = 30
+            request.addValue("Bearer \(oauthToken)", forHTTPHeaderField: "Authorization")
+            request.addValue("application/json", forHTTPHeaderField: "Accept")
         }
 
-        // Create HTTP request
-        var request = URLRequest(url: requestURL)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 30
-        request.addValue("Bearer \(oauthToken)", forHTTPHeaderField: "Authorization")
-        request.addValue("application/json", forHTTPHeaderField: "Accept")
-
-        // Perform request
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.data(for: request, delegate: noRedirect)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw KASRewrapError.invalidResponse
@@ -735,8 +751,37 @@ public class KASRewrapClient: KASRewrapClientProtocol {
 
     // MARK: - Private Helpers
 
+    /// Resolve the request-body KAS url for a NanoTDF rewrap from the parsed
+    /// header's resource locator, falling back to the configured identity.
+    private func resolveNanoKasURL(_ parsedHeader: Header) -> String {
+        let locator = parsedHeader.kas
+        let scheme: String? = switch locator.protocolEnum {
+        case .http: "http"
+        case .https: "https"
+        default: nil
+        }
+        if let scheme, !locator.body.isEmpty {
+            return "\(scheme)://\(locator.body)"
+        }
+        return kasIdentityURL
+    }
+
+    /// Map a non-2xx rewrap response to a KASRewrapError, enriching the message
+    /// from a Connect error envelope when present.
+    private func mapRewrapHTTPError(status: Int, data: Data) -> KASRewrapError {
+        let body = String(data: data, encoding: .utf8) ?? ""
+        let detail = parseConnectError(body).map { "\($0.code): \($0.message)" }
+            ?? (body.isEmpty ? "HTTP \(status)" : body)
+        switch status {
+        case 401: return .authenticationFailed(detail)
+        case 403: return .accessDenied(detail)
+        default: return .httpError(status, detail)
+        }
+    }
+
     private func matchesKasURL(_ otherURLString: String) -> Bool {
         guard let otherURL = URL(string: otherURLString) else { return false }
+        guard let kasURL = URL(string: kasIdentityURL) else { return false }
         guard let baseScheme = kasURL.scheme?.lowercased(),
               let otherScheme = otherURL.scheme?.lowercased(),
               let baseHost = kasURL.host?.lowercased(),
@@ -744,11 +789,9 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         else {
             return false
         }
-
         guard baseScheme == otherScheme, baseHost == otherHost else {
             return false
         }
-
         return effectivePort(for: kasURL) == effectivePort(for: otherURL)
     }
 
