@@ -392,7 +392,9 @@ public class KASRewrapClient: KASRewrapClientProtocol {
 
         request.addValue("Bearer \(oauthToken)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.addValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
+        if endpoints.transport == .connect {
+            request.addValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
+        }
         request.httpBody = try JSONEncoder().encode(signedRequest)
 
         // Perform request (no redirects for the bearer-carrying call)
@@ -522,7 +524,9 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         request.timeoutInterval = 30
         request.addValue("Bearer \(oauthToken)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.addValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
+        if endpoints.transport == .connect {
+            request.addValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
+        }
         request.httpBody = try JSONEncoder().encode(signedRequest)
 
         let (data, response) = try await urlSession.data(for: request, delegate: noRedirect)
