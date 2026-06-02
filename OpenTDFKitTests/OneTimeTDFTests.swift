@@ -1,8 +1,7 @@
 import CryptoKit
 import Foundation
-import XCTest
-
 @testable import OpenTDFKit
+import XCTest
 
 final class OneTimeTDFTests: XCTestCase {
     func testOneTimeTDFKeyRemoval() async throws {

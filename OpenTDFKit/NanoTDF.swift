@@ -52,11 +52,11 @@ public struct NanoTDF: Sendable {
         return data
     }
 
-    /// Decrypts the payload ciphertext using the provided symmetric key.
-    /// Handles nonce padding/adjusting internally.
-    /// - Parameter symmetricKey: The `SymmetricKey` derived during the TDF creation or key access process.
-    /// - Returns: The original plaintext `Data`.
-    /// - Throws: Errors from `CryptoHelper` or `CryptoKit` if decryption fails (e.g., incorrect key, corrupted data).
+    // Decrypts the payload ciphertext using the provided symmetric key.
+    // Handles nonce padding/adjusting internally.
+    // - Parameter symmetricKey: The `SymmetricKey` derived during the TDF creation or key access process.
+    // - Returns: The original plaintext `Data`.
+    // - Throws: Errors from `CryptoHelper` or `CryptoKit` if decryption fails (e.g., incorrect key, corrupted data).
 
     /// Shared CryptoHelper instance to avoid per-call actor instantiation overhead.
     /// Thread safety is guaranteed by CryptoHelper's actor isolation.
@@ -74,7 +74,7 @@ public struct NanoTDF: Sendable {
             key: symmetricKey,
             iv: paddedIV,
             ciphertext: payload.ciphertext,
-            tag: payload.mac
+            tag: payload.mac,
         )
     }
 }
@@ -684,7 +684,7 @@ public enum ProtocolEnum: UInt8, Sendable {
     // BEGIN out-of-spec
     case ws = 0x02
     case wss = 0x03
-    // END out-of-spec
+    /// END out-of-spec
     case sharedResourceDirectory = 0xFF // Likely for non-network resources
 }
 
@@ -941,7 +941,7 @@ public enum Curve: UInt8, Sendable {
     /// NIST P-521 curve (secp521r1).
     case secp521r1 = 0x02
     // BEGIN in-spec unsupported
-    /// SECG secp256k1 curve (commonly used in Bitcoin). Marked as unsupported in this implementation context.
+    // SECG secp256k1 curve (commonly used in Bitcoin). Marked as unsupported in this implementation context.
     // case xsecp256k1 = 0x03
     // removed to simplify
     // END in-spec unsupported

@@ -4,7 +4,7 @@ import Foundation
 // MARK: - Key Types and Storage
 
 public struct KeyPairIdentifier: Hashable, Sendable {
-    // Store the public key bytes directly - already fixed size per curve
+    /// Store the public key bytes directly - already fixed size per curve
     private let bytes: Data
 
     public var publicKey: Data {
@@ -73,7 +73,7 @@ public struct EphemeralKeyPair: Sendable {
 public actor KeyStore {
     public let curve: Curve
     public var keyPairs: [KeyPairIdentifier: StoredKeyPair]
-    // Track total memory used
+    /// Track total memory used
     public var totalBytesStored: Int = 0
 
     public init(curve: Curve, capacity: Int = 1000) {
@@ -93,7 +93,7 @@ public actor KeyStore {
         totalBytesStored += curve.publicKeyLength + curve.privateKeyLength
     }
 
-    // Batch storage optimized for memory
+    /// Batch storage optimized for memory
     public func storeBatch(pairs: [(publicKey: Data, privateKey: Data)]) {
         // Pre-allocate for entire batch
         let totalNewBytes = pairs.count * (curve.publicKeyLength + curve.privateKeyLength)
@@ -109,7 +109,7 @@ public actor KeyStore {
         totalBytesStored += totalNewBytes
     }
 
-    // Batch generation method
+    /// Batch generation method
     public func generateAndStoreKeyPairs(count: Int) async throws {
         // Capture immutable state before leaving the actor context
         let curveSnapshot = curve
@@ -311,14 +311,12 @@ public actor KeyStore {
         //    Salt: SHA256("L1" + VERSION) - use v12 for NanoTDF collection compatibility
         //    Info: empty per spec guidance
         //    Output Byte Count: 32 (for AES-256)
-        let symmetricKeyCryptoKit = sharedSecret.hkdfDerivedSymmetricKey(
+        return sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
             salt: CryptoConstants.hkdfSaltV12,
             sharedInfo: CryptoConstants.hkdfInfoEncryption,
             outputByteCount: CryptoConstants.symmetricKeyByteCount,
         )
-
-        return symmetricKeyCryptoKit
     }
 
     // MARK: - One-Time TDF Extensions
@@ -364,7 +362,7 @@ public actor KeyStore {
     }
 }
 
-// Helper extension for testing
+/// Helper extension for testing
 extension KeyStore {
     func getAllPublicKeys() -> [Data] {
         Array(keyPairs.values.map(\.publicKey))
@@ -384,7 +382,7 @@ public enum KeyStoreError: Error, Equatable {
     case keyAgreementFailed(String? = nil)
     case keyDerivationFailed(String? = nil)
 
-    // Equatable conformance
+    /// Equatable conformance
     public static func == (lhs: KeyStoreError, rhs: KeyStoreError) -> Bool {
         switch (lhs, rhs) {
         case (.unsupportedCurve, .unsupportedCurve):
@@ -415,14 +413,14 @@ public enum KeyStoreError: Error, Equatable {
     }
 }
 
-// Helper extension for Data to hex string (for debugging/errors)
+/// Helper extension for Data to hex string (for debugging/errors)
 public extension Data {
     var hexString: String {
         map { String(format: "%02x", $0) }.joined()
     }
 }
 
-// Helper extension
+/// Helper extension
 extension Curve {
     var publicKeyLength: Int {
         switch self {

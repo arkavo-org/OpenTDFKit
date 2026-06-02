@@ -49,7 +49,9 @@ public struct TDFJSONEnvelope: Codable, Sendable {
     }
 
     /// Format identifier (always "json")
-    public var formatId: String { tdf }
+    public var formatId: String {
+        tdf
+    }
 }
 
 // MARK: - TDF-JSON Manifest

@@ -11,7 +11,7 @@ final class NanoTDFTests: XCTestCase {
         // Put teardown code here. This method is called after the invocation of each test method in the class.
     }
 
-    // 6.1.5 nanotdf
+    /// 6.1.5 nanotdf
     func testSpecExampleBinaryParser() throws {
         let hexString = """
         4c 31 4c 01 0e 6b 61 73 2e 76 69 72 74 72 75 2e 63 6f 6d 80
@@ -69,7 +69,7 @@ final class NanoTDFTests: XCTestCase {
         }
     }
 
-    // 6.1.5 nanotdf
+    /// 6.1.5 nanotdf
     func testSpecExampleBinaryParserSerializerParser() throws {
         let hexString = """
         4c 31 4c 01 0e 6b 61 73 2e 76 69 72 74 72 75 2e 63 6f 6d 80
@@ -139,7 +139,7 @@ final class NanoTDFTests: XCTestCase {
         }
     }
 
-    // 6.1.5 nanotdf
+    /// 6.1.5 nanotdf
     func testSpecExampleDecryptPayload() {
         let hexString = """
         4c 31 4c 01 0e 6b 61 73 2e 76 69 72 74 72 75 2e 63 6f 6d 80
@@ -203,7 +203,7 @@ final class NanoTDFTests: XCTestCase {
         }
     }
 
-    // 6.2 No Signature Example
+    /// 6.2 No Signature Example
     func testNoSignatureSpecExampleBinaryParser() throws {
         let hexString = """
         4c 31 4c 01 0f 6b 61 73 2e 65 78 61 6d 70 6c 65 2e 63 6f 6d
@@ -384,14 +384,14 @@ final class NanoTDFTests: XCTestCase {
 //        XCTAssertEqual(signature?.signature, nanoTDF.signature?.signature)
     }
 
-    func testPerformanceExample() throws {
+    func testPerformanceExample() {
         // This is an example of a performance test case.
         measure {
             // Put the code you want to measure the time of here.
         }
     }
 
-    // Test NanoTDF creation and decryption with KeyStore and KASService using different curves
+    /// Test NanoTDF creation and decryption with KeyStore and KASService using different curves
     func testNanoTDFWithKeyStoreAndKASService_secp256r1() async throws {
         // Initialize KeyStore with secp256r1 curve
         let keyStore = KeyStore(curve: .secp256r1)
@@ -649,7 +649,7 @@ class SymmetricAndPayloadConfigTests: XCTestCase {
     }
 }
 
-// Extend SymmetricAndPayloadConfig to include a parsing method
+/// Extend SymmetricAndPayloadConfig to include a parsing method
 extension SignatureAndPayloadConfig {
     static func parse(from data: Data) -> SignatureAndPayloadConfig? {
         guard data.count == 1 else { return nil }

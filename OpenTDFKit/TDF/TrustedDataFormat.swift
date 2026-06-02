@@ -30,7 +30,9 @@ public struct TDFContainer: TrustedDataContainer {
         self.compression = compression
     }
 
-    public var formatKind: TrustedDataFormatKind { .archive }
+    public var formatKind: TrustedDataFormatKind {
+        .archive
+    }
 
     public func serializedData() throws -> Data {
         let writer = TDFArchiveWriter(compressionMethod: compression)

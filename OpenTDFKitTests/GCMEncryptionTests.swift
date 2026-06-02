@@ -92,10 +92,10 @@ final class GCMEncryptionTests: XCTestCase {
         }
     }
 
-    func testInvalidKeySizeForDecryption() {
+    func testInvalidKeySizeForDecryption() throws {
         let invalidKey = SymmetricKey(size: .bits192)
 
-        let (ciphertext, tag) = try! CryptoHelper.encryptNanoTDF(
+        let (ciphertext, tag) = try CryptoHelper.encryptNanoTDF(
             cipher: .aes256GCM128,
             key: testKey,
             iv: testIV,
@@ -136,10 +136,10 @@ final class GCMEncryptionTests: XCTestCase {
         }
     }
 
-    func testInvalidIVSizeForDecryption() {
+    func testInvalidIVSizeForDecryption() throws {
         let invalidIV = Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08])
 
-        let (ciphertext, tag) = try! CryptoHelper.encryptNanoTDF(
+        let (ciphertext, tag) = try CryptoHelper.encryptNanoTDF(
             cipher: .aes256GCM128,
             key: testKey,
             iv: testIV,
@@ -162,8 +162,8 @@ final class GCMEncryptionTests: XCTestCase {
         }
     }
 
-    func testTagSizeMismatchForDecryption() {
-        let (ciphertext, tag) = try! CryptoHelper.encryptNanoTDF(
+    func testTagSizeMismatchForDecryption() throws {
+        let (ciphertext, tag) = try CryptoHelper.encryptNanoTDF(
             cipher: .aes256GCM128,
             key: testKey,
             iv: testIV,
@@ -188,8 +188,8 @@ final class GCMEncryptionTests: XCTestCase {
         }
     }
 
-    func testInvalidTagForDecryption() {
-        let (ciphertext, _) = try! CryptoHelper.encryptNanoTDF(
+    func testInvalidTagForDecryption() throws {
+        let (ciphertext, _) = try CryptoHelper.encryptNanoTDF(
             cipher: .aes256GCM128,
             key: testKey,
             iv: testIV,
@@ -210,8 +210,8 @@ final class GCMEncryptionTests: XCTestCase {
         }
     }
 
-    func testModifiedCiphertextFailsDecryption() {
-        let (ciphertext, tag) = try! CryptoHelper.encryptNanoTDF(
+    func testModifiedCiphertextFailsDecryption() throws {
+        let (ciphertext, tag) = try CryptoHelper.encryptNanoTDF(
             cipher: .aes256GCM128,
             key: testKey,
             iv: testIV,

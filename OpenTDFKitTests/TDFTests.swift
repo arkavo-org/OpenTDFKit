@@ -80,7 +80,7 @@ final class StandardTDFTests: XCTestCase {
         XCTAssertEqual(originalKeyData, unwrappedKeyData, "Unwrapped key should match original")
     }
 
-    func testTDFContainerCreation() throws {
+    func testTDFContainerCreation() {
         let manifest = createTestManifest()
         let payload = testPlaintext
 
@@ -152,7 +152,7 @@ final class StandardTDFTests: XCTestCase {
         XCTAssertEqual(decrypted, testPlaintext, "Decrypted data should match original")
     }
 
-    func testManifestStructure() throws {
+    func testManifestStructure() {
         let manifest = createTestManifest()
 
         XCTAssertEqual(manifest.schemaVersion, "1.0.0")

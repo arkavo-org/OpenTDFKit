@@ -8,7 +8,9 @@ public struct TDFCBORContainer: TrustedDataContainer, Sendable {
     /// The TDF-CBOR envelope
     public let envelope: TDFCBOREnvelope
 
-    public var formatKind: TrustedDataFormatKind { .cbor }
+    public var formatKind: TrustedDataFormatKind {
+        .cbor
+    }
 
     public init(envelope: TDFCBOREnvelope) {
         self.envelope = envelope

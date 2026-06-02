@@ -13,7 +13,7 @@ public enum KASServiceError: Error, Equatable {
     case serverError(String)
     case networkError(String)
 
-    // Custom error equality implementation
+    /// Custom error equality implementation
     public static func == (lhs: KASServiceError, rhs: KASServiceError) -> Bool {
         switch (lhs, rhs) {
         case (.invalidRequest, .invalidRequest),

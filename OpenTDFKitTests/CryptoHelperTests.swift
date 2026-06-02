@@ -3,7 +3,6 @@ import Foundation
 import XCTest
 
 @preconcurrency import CryptoKit // Add this to handle Sendable warnings
-
 @testable import OpenTDFKit
 
 final class CryptoHelperTests: XCTestCase {
@@ -55,9 +54,9 @@ final class CryptoHelperTests: XCTestCase {
     }
 }
 
-// Add these to CryptoHelper.swift:
+/// Add these to CryptoHelper.swift:
 extension CryptoHelper {
-    // Combined operation that keeps sensitive types within the actor
+    /// Combined operation that keeps sensitive types within the actor
     struct EncryptionResult {
         let gmacTag: Data
         let nonce: Data

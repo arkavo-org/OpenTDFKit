@@ -34,7 +34,7 @@ final class StreamingBenchmarkTests: XCTestCase {
         try await measureStreamingEncryption(fileSize: 100 * 1024 * 1024, chunkSize: chunkSizes[2].size, chunkName: chunkSizes[2].name)
     }
 
-    func testMultiSegmentEncryption() async throws {
+    func testMultiSegmentEncryption() throws {
         let fileSize = 20 * 1024 * 1024
         let segmentSizes = [2 * 1024 * 1024, 5 * 1024 * 1024, 25 * 1024 * 1024]
 
@@ -79,7 +79,7 @@ final class StreamingBenchmarkTests: XCTestCase {
         print("Multi-segment decryption: \(String(format: "%.2f", decryptionTime))s")
     }
 
-    func testVariableSegmentSizes() async throws {
+    func testVariableSegmentSizes() throws {
         let segmentSizes = [
             2 * 1024 * 1024,
             5 * 1024 * 1024,

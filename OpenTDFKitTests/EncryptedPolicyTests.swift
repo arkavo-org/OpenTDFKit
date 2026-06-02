@@ -74,7 +74,7 @@ final class EncryptedPolicyTests: XCTestCase {
         XCTAssertEqual(serializedData, reserializedData, "Serialized data should match after round-trip")
     }
 
-    // Test encrypted policy with key access using the same KAS for both payload and policy
+    /// Test encrypted policy with key access using the same KAS for both payload and policy
     func testEncryptedPolicyWithKeyAccess() async throws {
         // Create KAS ResourceLocator (same KAS for both payload and policy)
         let kasRL = ResourceLocator(protocolEnum: .http, body: "kas.example.org")!

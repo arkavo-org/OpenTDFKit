@@ -130,8 +130,8 @@ public actor CryptoHelper {
         publicKey.compressedRepresentation
     }
 
-    // Note: `activeSessions` is declared but not currently used in the provided methods.
-    // It might be intended for future stateful operations.
+    /// Note: `activeSessions` is declared but not currently used in the provided methods.
+    /// It might be intended for future stateful operations.
     private var activeSessions: [String: EphemeralKeyPair] = [:]
 
     /// Generates a new ephemeral key pair for the specified elliptic curve.
