@@ -385,27 +385,6 @@ enum Commands {
         return result.compressedKey
     }
 
-    /// Extract compressed P256 public key from PEM
-    static func extractCompressedKeyFromPEM(_ pem: String) -> Data? {
-        let pemLines = pem
-            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-            .replacingOccurrences(of: "\r", with: "")
-
-        guard let spkiData = Data(base64Encoded: pemLines) else {
-            return nil
-        }
-
-        // Parse SPKI to get compressed key
-        do {
-            let publicKey = try P256.KeyAgreement.PublicKey(derRepresentation: spkiData)
-            return publicKey.compressedRepresentation
-        } catch {
-            return nil
-        }
-    }
-
     /// Verify and parse a NanoTDF file using OpenTDFKit's parser
     static func verifyNanoTDF(data: Data, filename: String) throws {
         print("NanoTDF Verification Report")
