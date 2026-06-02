@@ -74,8 +74,8 @@ final class IntegrationTests: XCTestCase {
 
         let token = try await getOAuthToken()
 
-        let kasRewrapClient = KASRewrapClient(
-            kasURL: kasURL,
+        let kasRewrapClient = try KASRewrapClient(
+            configuration: OpenTDFConfiguration.forKasLegacyRest(kasURL.absoluteString),
             oauthToken: token,
         )
 
@@ -133,8 +133,8 @@ final class IntegrationTests: XCTestCase {
 
         let invalidToken = "invalid_token_12345"
 
-        let kasRewrapClient = KASRewrapClient(
-            kasURL: kasURL,
+        let kasRewrapClient = try KASRewrapClient(
+            configuration: OpenTDFConfiguration.forKasLegacyRest(kasURL.absoluteString),
             oauthToken: invalidToken,
         )
 
@@ -360,7 +360,10 @@ final class IntegrationTests: XCTestCase {
         // Generate ephemeral P-256 key for JWT signing in rewrap request
         let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
 
-        let kasClient = KASRewrapClient(kasURL: kasURL, oauthToken: token)
+        let kasClient = try KASRewrapClient(
+            configuration: OpenTDFConfiguration.forKasLegacyRest(kasURL.absoluteString),
+            oauthToken: token,
+        )
         let rewrapResult = try await kasClient.rewrapTDF(
             manifest: container.manifest,
             clientPrivateKey: ephemeralPrivateKey,
@@ -453,8 +456,8 @@ final class IntegrationTests: XCTestCase {
         let header = await collection.header
         let headerBytes = await collection.getHeaderBytes()
 
-        let kasRewrapClient = KASRewrapClient(
-            kasURL: kasURL,
+        let kasRewrapClient = try KASRewrapClient(
+            configuration: OpenTDFConfiguration.forKasLegacyRest(kasURL.absoluteString),
             oauthToken: token,
         )
 

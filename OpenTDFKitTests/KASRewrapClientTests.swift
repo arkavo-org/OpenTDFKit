@@ -9,8 +9,8 @@ final class KASRewrapClientTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        client = KASRewrapClient(
-            kasURL: testKASURL,
+        client = try! KASRewrapClient(
+            configuration: OpenTDFConfiguration.forKasLegacyRest(testKASURL.absoluteString),
             oauthToken: testOAuthToken,
         )
     }
