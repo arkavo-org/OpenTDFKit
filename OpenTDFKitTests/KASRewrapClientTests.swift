@@ -29,13 +29,13 @@ final class KASRewrapClientTests: XCTestCase {
         let components = jwt.split(separator: ".")
         XCTAssertEqual(components.count, 3, "JWT should have 3 parts: header.payload.signature")
 
-        let headerData = Data(base64URLDecoded: String(components[0]))!
-        let header = try JSONSerialization.jsonObject(with: headerData) as! [String: String]
+        let headerData = try XCTUnwrap(Data(base64URLDecoded: String(components[0])))
+        let header = try XCTUnwrap(try JSONSerialization.jsonObject(with: headerData) as? [String: String])
         XCTAssertEqual(header["alg"], "ES256")
         XCTAssertEqual(header["typ"], "JWT")
 
-        let payloadData = Data(base64URLDecoded: String(components[1]))!
-        let payload = try JSONSerialization.jsonObject(with: payloadData) as! [String: Any]
+        let payloadData = try XCTUnwrap(Data(base64URLDecoded: String(components[1])))
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: payloadData) as? [String: Any])
         XCTAssertNotNil(payload["requestBody"])
         XCTAssertNotNil(payload["iat"])
         XCTAssertNotNil(payload["exp"])
@@ -49,7 +49,7 @@ final class KASRewrapClientTests: XCTestCase {
 
         let components = jwt.split(separator: ".")
         let signingInput = "\(components[0]).\(components[1])".data(using: .utf8)!
-        let signatureData = Data(base64URLDecoded: String(components[2]))!
+        let signatureData = try XCTUnwrap(Data(base64URLDecoded: String(components[2])))
 
         let signature = try P256.Signing.ECDSASignature(rawRepresentation: signatureData)
         let publicKey = signingKey.publicKey
@@ -64,11 +64,11 @@ final class KASRewrapClientTests: XCTestCase {
         let jwt = try client.createSignedJWT(requestBody: requestBody, signingKey: signingKey)
 
         let components = jwt.split(separator: ".")
-        let payloadData = Data(base64URLDecoded: String(components[1]))!
-        let payload = try JSONSerialization.jsonObject(with: payloadData) as! [String: Any]
+        let payloadData = try XCTUnwrap(Data(base64URLDecoded: String(components[1])))
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: payloadData) as? [String: Any])
 
-        let iat = payload["iat"] as! Int
-        let exp = payload["exp"] as! Int
+        let iat = try XCTUnwrap(payload["iat"] as? Int)
+        let exp = try XCTUnwrap(payload["exp"] as? Int)
 
         XCTAssertEqual(exp - iat, 60, "Token should expire 60 seconds after issuance")
     }
@@ -166,16 +166,22 @@ final class KASRewrapClientTests: XCTestCase {
         }
     }
 
-    func testKeyUnwrappingWithValidKeys() throws {
+    /// Round-trips a random 256-bit key through HKDF(`sealSalt`) → AES-GCM seal →
+    /// `unwrapKey(salt: unwrapSalt)` and asserts the recovered key matches.
+    /// The seal and unwrap salts must agree for the GCM tag to verify, mirroring
+    /// the KAS session-key derivation. `unwrapSalt == nil` exercises `unwrapKey`'s
+    /// default (NanoTDF v12 salt).
+    private func assertUnwrapRoundTrip(sealSalt: Data, unwrapSalt: Data?,
+                                       file: StaticString = #filePath, line: UInt = #line) throws
+    {
         let clientPrivateKey = P256.KeyAgreement.PrivateKey()
         let sessionPrivateKey = P256.KeyAgreement.PrivateKey()
 
         let sharedSecret = try sessionPrivateKey.sharedSecretFromKeyAgreement(with: clientPrivateKey.publicKey)
 
-        // Use empty salt/info to match KAS implementation
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data(),
+            salt: sealSalt,
             sharedInfo: Data(),
             outputByteCount: 32,
         )
@@ -195,10 +201,23 @@ final class KASRewrapClientTests: XCTestCase {
             wrappedKey: wrappedKey,
             sessionPublicKey: sessionPrivateKey.publicKey.compressedRepresentation,
             clientPrivateKey: clientPrivateKey.rawRepresentation,
+            salt: unwrapSalt,
         )
 
         let unwrappedKeyData = unwrappedKey.withUnsafeBytes { Data(Array($0)) }
-        XCTAssertEqual(unwrappedKeyData, testKeyData, "Unwrapped key should match original key")
+        XCTAssertEqual(unwrappedKeyData, testKeyData, "Unwrapped key should match original key",
+                       file: file, line: line)
+    }
+
+    /// NanoTDF: `unwrapKey` defaults (salt == nil) to the v12 session-key salt
+    /// (`CryptoConstants.hkdfSalt`), matching the KAS `rewrap_dek` derivation.
+    func testKeyUnwrappingNanoTDFDefaultSalt() throws {
+        try assertUnwrapRoundTrip(sealSalt: CryptoConstants.hkdfSalt, unwrapSalt: nil)
+    }
+
+    /// Standard (Base) TDF: empty HKDF salt on both the seal and the unwrap.
+    func testKeyUnwrappingStandardTDFEmptySalt() throws {
+        try assertUnwrapRoundTrip(sealSalt: Data(), unwrapSalt: Data())
     }
 
     func testKeyUnwrappingWithInvalidWrappedKeyFormat() {
@@ -284,7 +303,7 @@ final class KASRewrapClientTests: XCTestCase {
 
         let encoder = JSONEncoder()
         let jsonData = try encoder.encode(keyAccess)
-        let json = try JSONSerialization.jsonObject(with: jsonData) as! [String: Any]
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: jsonData) as? [String: Any])
 
         XCTAssertEqual(json["type"] as? String, "remote")
         XCTAssertEqual(json["protocol"] as? String, "kas")
@@ -292,7 +311,7 @@ final class KASRewrapClientTests: XCTestCase {
         XCTAssertEqual(json["header"] as? String, header.base64EncodedString())
     }
 
-    func testRewrapRequestEntryWithDefaultAlgorithm() throws {
+    func testRewrapRequestEntryWithDefaultAlgorithm() {
         let policyBody = "test policy".data(using: .utf8)!
         let policy = KASRewrapClient.Policy(body: policyBody.base64EncodedString())
 
@@ -329,7 +348,7 @@ final class KASRewrapClientTests: XCTestCase {
         }
         """
 
-        let jsonData = jsonString.data(using: .utf8)!
+        let jsonData = try XCTUnwrap(jsonString.data(using: .utf8))
         let decoder = JSONDecoder()
         let response = try decoder.decode(KASRewrapClient.RewrapResponse.self, from: jsonData)
 
@@ -355,7 +374,7 @@ final class KASRewrapClientTests: XCTestCase {
         }
         """
 
-        let jsonData = jsonString.data(using: .utf8)!
+        let jsonData = try XCTUnwrap(jsonString.data(using: .utf8))
         let decoder = JSONDecoder()
         let response = try decoder.decode(KASRewrapClient.RewrapResponse.self, from: jsonData)
 
