@@ -166,7 +166,8 @@ enum Commands {
                 continue
             }
 
-            let client = KASRewrapClient(kasURL: kasURL, oauthToken: oauthToken)
+            let configuration = await resolveConfiguration(kasURL: kasURL, token: oauthToken)
+            let client = try KASRewrapClient(configuration: configuration, oauthToken: oauthToken)
             let result = try await client.rewrapTDF(
                 manifest: container.manifest,
                 clientPrivateKey: ephemeralPrivateKey,
@@ -354,39 +355,34 @@ enum Commands {
         return (result, archiveData)
     }
 
+    /// Resolve an OpenTDFConfiguration for the platform hosting `kasURL`.
+    /// Tries well-known discovery at the platform root (PLATFORMURL env, else
+    /// the scheme/host/port of `kasURL`), falling back to synthesized Connect
+    /// endpoints. The well-known doc and Connect endpoints live at the platform
+    /// root, not under the KAS `/kas` path.
+    static func resolveConfiguration(kasURL: URL, token _: String) async -> OpenTDFConfiguration {
+        let platformBase: String
+        if let env = ProcessInfo.processInfo.environment["PLATFORMURL"], !env.isEmpty {
+            platformBase = env
+        } else {
+            var comps = URLComponents()
+            comps.scheme = kasURL.scheme
+            comps.host = kasURL.host
+            comps.port = kasURL.port
+            platformBase = comps.string ?? kasURL.absoluteString
+        }
+        if let cfg = try? await fetchWellKnown(platformURL: platformBase) {
+            return cfg
+        }
+        return OpenTDFConfiguration.forKasConnect(platformBase)
+    }
+
     /// Fetch KAS public key
     static func fetchKASPublicKey(kasURL: URL, token: String) async throws -> Data {
-        // Request EC key for NanoTDF (not RSA)
-        let urlWithParams = kasURL.appendingPathComponent("v2/kas_public_key")
-        var components = URLComponents(url: urlWithParams, resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "algorithm", value: "ec:secp256r1")]
-
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200
-        else {
-            throw EncryptError.kasRequestFailed
-        }
-
-        // Parse JSON response to get public key
-        struct KASPublicKeyResponse: Decodable {
-            let publicKey: String
-        }
-
-        let decoder = JSONDecoder()
-        let keyResponse = try decoder.decode(KASPublicKeyResponse.self, from: data)
-
-        // Convert PEM to compressed key
-        guard let keyData = extractCompressedKeyFromPEM(keyResponse.publicKey) else {
-            throw EncryptError.invalidKASPublicKey
-        }
-
-        return keyData
+        let configuration = await resolveConfiguration(kasURL: kasURL, token: token)
+        let client = try KASRewrapClient(configuration: configuration, oauthToken: token)
+        let result = try await client.fetchKasEcPublicKey(algorithm: .ecP256)
+        return result.compressedKey
     }
 
     /// Extract compressed P256 public key from PEM
@@ -567,7 +563,8 @@ enum Commands {
 
         // Call KAS rewrap endpoint
         if verbose { print("\nCalling KAS rewrap endpoint...") }
-        let kasClient = KASRewrapClient(kasURL: kasURL, oauthToken: oauthToken)
+        let configuration = await resolveConfiguration(kasURL: kasURL, token: oauthToken)
+        let kasClient = try KASRewrapClient(configuration: configuration, oauthToken: oauthToken)
 
         let (wrappedKey, sessionPublicKey): (Data, Data)
         do {
@@ -929,7 +926,8 @@ extension Commands {
 
         // Call KAS rewrap endpoint (single rewrap for entire collection)
         print("\nCalling KAS rewrap endpoint...")
-        let kasClient = KASRewrapClient(kasURL: kasURL, oauthToken: oauthToken)
+        let configuration = await resolveConfiguration(kasURL: kasURL, token: oauthToken)
+        let kasClient = try KASRewrapClient(configuration: configuration, oauthToken: oauthToken)
 
         let (wrappedKey, sessionPublicKey) = try await kasClient.rewrapNanoTDF(
             header: headerBytes,
