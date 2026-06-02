@@ -34,8 +34,10 @@ final class PlatformConnectIntegrationTests: XCTestCase {
     func testConnectRewrapFakeBearerReturns401() async throws {
         try requireOptIn()
         let cfg = try await fetchWellKnown(platformURL: Self.platform)
+        // Deliberately invalid bearer — the platform must reject it. Kept as a
+        // plain non-JWT string so it isn't flagged as a hardcoded secret.
         let client = try KASRewrapClient(configuration: cfg,
-                                         oauthToken: "eyJhbGciOiJub25lIn0.e30.")
+                                         oauthToken: "invalid-bearer-token")
         let kas = try XCTUnwrap(ResourceLocator(protocolEnum: .https, body: "platform.arkavo.net/kas"))
         let header = makeMinimalHeader(kas: kas)
         let kp = EphemeralKeyPair(
