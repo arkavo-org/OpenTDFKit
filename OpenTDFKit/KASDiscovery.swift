@@ -186,6 +186,8 @@ private func classifyIP(_ host: String) -> IPLiteral? {
 }
 
 private func isLoopbackHost(_ host: String) -> Bool {
+    // Normalize a trailing FQDN dot ("localhost." resolves to loopback too).
+    let host = host.hasSuffix(".") ? String(host.dropLast()) : host
     if host == "localhost" { return true }
     switch classifyIP(host) {
     case let .v4(o): return o[0] == 127 // 127.0.0.0/8
@@ -276,6 +278,12 @@ public struct KasEndpoints: Sendable, Equatable {
     public static func from(_ config: OpenTDFConfiguration) throws -> KasEndpoints {
         guard let kas = config.kas else {
             throw KASDiscoveryError.configError("well-known configuration is missing a 'kas' block")
+        }
+        // `kas.uri` is the KAS identity used to match manifest key-access entries
+        // (see KASRewrapClient.matchesKasURL). An empty uri would silently match
+        // nothing, so reject it here rather than failing later in rewrapTDF.
+        guard !kas.uri.isEmpty else {
+            throw KASDiscoveryError.configError("well-known kas block has an empty 'uri'")
         }
 
         let resolved: KasEndpoints

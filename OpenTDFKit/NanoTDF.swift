@@ -52,17 +52,16 @@ public struct NanoTDF: Sendable {
         return data
     }
 
-    // Decrypts the payload ciphertext using the provided symmetric key.
-    // Handles nonce padding/adjusting internally.
-    // - Parameter symmetricKey: The `SymmetricKey` derived during the TDF creation or key access process.
-    // - Returns: The original plaintext `Data`.
-    // - Throws: Errors from `CryptoHelper` or `CryptoKit` if decryption fails (e.g., incorrect key, corrupted data).
-
     /// Shared CryptoHelper instance to avoid per-call actor instantiation overhead.
     /// Thread safety is guaranteed by CryptoHelper's actor isolation.
     /// This optimization eliminates actor creation and cross-actor await hops in hot paths.
     static let sharedCryptoHelper = CryptoHelper()
 
+    /// Decrypts the payload ciphertext using the provided symmetric key.
+    /// Handles nonce padding/adjusting internally.
+    /// - Parameter symmetricKey: The `SymmetricKey` derived during the TDF creation or key access process.
+    /// - Returns: The original plaintext `Data`.
+    /// - Throws: Errors from `CryptoHelper` or `CryptoKit` if decryption fails (e.g., incorrect key, corrupted data).
     public func getPayloadPlaintext(symmetricKey: SymmetricKey) async throws -> Data {
         // Pad the 3-byte NanoTDF IV to the 12 bytes required by AES-GCM
         let paddedIV = await NanoTDF.sharedCryptoHelper.adjustNonce(payload.iv, to: 12)

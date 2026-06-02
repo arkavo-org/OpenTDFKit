@@ -132,6 +132,17 @@ final class KASDiscoveryTests: XCTestCase {
         XCTAssertThrowsError(try KasEndpoints.from(cfg))
     }
 
+    func testFromConfigThrowsWhenUriEmpty() {
+        let cfg = OpenTDFConfiguration(
+            kas: KasConfig(uri: "", algorithms: [],
+                           publicKeyURL: "https://k.example.com/kas/v2/kas_public_key",
+                           rewrapURL: "https://k.example.com/kas/v2/rewrap",
+                           connectPublicKeyURL: nil, connectRewrapURL: nil),
+            idp: nil, platformIssuer: nil,
+        )
+        XCTAssertThrowsError(try KasEndpoints.from(cfg))
+    }
+
     func testFromConfigThrowsWhenURLsMissing() {
         let cfg = OpenTDFConfiguration(
             kas: KasConfig(uri: "https://k.example.com", algorithms: [], publicKeyURL: nil,
