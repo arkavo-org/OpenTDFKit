@@ -312,23 +312,6 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         self.signingKey = signingKey ?? P256.Signing.PrivateKey()
     }
 
-    /// Legacy initializer: treats `kasURL` as a `{base}/kas` REST endpoint and
-    /// builds `{kasURL}/v2/*` endpoints, preserving prior behavior.
-    /// Transitional bridge — prefer `init(configuration:)`. (Removed in a later task.)
-    public init(kasURL: URL, oauthToken: String, urlSession: URLSession = .shared,
-                signingKey: P256.Signing.PrivateKey? = nil)
-    {
-        endpoints = KasEndpoints(
-            rewrapURL: kasURL.appendingPathComponent("v2/rewrap").absoluteString,
-            publicKeyURL: kasURL.appendingPathComponent("v2/kas_public_key").absoluteString,
-            transport: .legacyRest,
-        )
-        kasIdentityURL = kasURL.absoluteString
-        self.oauthToken = oauthToken
-        self.urlSession = urlSession
-        self.signingKey = signingKey ?? P256.Signing.PrivateKey()
-    }
-
     // MARK: - Public Methods
 
     /// Perform NanoTDF rewrap request to KAS
