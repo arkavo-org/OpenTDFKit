@@ -372,6 +372,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         var request = URLRequest(url: rewrapEndpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = 30
+        request.assumesHTTP3Capable = true // KAS advertises alt-svc: h3; falls back to HTTP/2
 
         request.addValue("Bearer \(oauthToken)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -505,6 +506,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         var request = URLRequest(url: rewrapEndpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = 30
+        request.assumesHTTP3Capable = true // KAS advertises alt-svc: h3; falls back to HTTP/2
         request.addValue("Bearer \(oauthToken)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         if endpoints.transport == .connect {
@@ -597,6 +599,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
             request.addValue("Bearer \(oauthToken)", forHTTPHeaderField: "Authorization")
             request.addValue("application/json", forHTTPHeaderField: "Accept")
         }
+        request.assumesHTTP3Capable = true // KAS advertises alt-svc: h3; falls back to HTTP/2
 
         let (data, response) = try await urlSession.data(for: request, delegate: noRedirect)
 
