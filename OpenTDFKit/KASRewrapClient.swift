@@ -267,9 +267,16 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         }
     }
 
+    /// A validated KAS EC public key, typed by curve.
+    public enum KasEcPublicKey: Sendable {
+        case p256(P256.KeyAgreement.PublicKey)
+        case p384(P384.KeyAgreement.PublicKey)
+        case p521(P521.KeyAgreement.PublicKey)
+    }
+
     /// Result of fetching and validating a KAS EC public key
     public struct KasEcPublicKeyResult {
-        /// Compressed P-256 public key (33 bytes)
+        /// Compressed public key bytes (33, 49, or 67 bytes depending on curve).
         public let compressedKey: Data
 
         /// The original PEM string from the KAS
@@ -278,8 +285,8 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         /// Key ID if provided by the KAS
         public let kid: String?
 
-        /// The parsed CryptoKit public key
-        public let cryptoKitKey: P256.KeyAgreement.PublicKey
+        /// The parsed CryptoKit public key, typed by curve.
+        public let key: KasEcPublicKey
     }
 
     // MARK: - Properties
@@ -565,8 +572,8 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     public func fetchKasEcPublicKey(
         algorithm: RewrapAlgorithm = .ecP256,
     ) async throws -> KasEcPublicKeyResult {
-        // Only P-256 validation/parsing is currently implemented.
-        guard algorithm == .ecP256 else {
+        // Validate algorithm is EC-based
+        guard algorithm == .ecP256 || algorithm == .ecP384 || algorithm == .ecP521 else {
             throw KASRewrapError.unsupportedKeyAlgorithm(algorithm.rawValue)
         }
 
@@ -624,7 +631,7 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
                 compressedKey: result.compressedKey,
                 pem: keyResponse.publicKey,
                 kid: keyResponse.kid,
-                cryptoKitKey: result.cryptoKitKey,
+                key: result.key,
             )
         case 401:
             let message = String(data: data, encoding: .utf8)
@@ -640,21 +647,19 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         }
     }
 
-    /// Validate a PEM-encoded EC public key and extract the compressed representation
+    /// Validate a PEM-encoded EC public key and extract the compressed representation.
     /// - Parameters:
     ///   - pem: PEM-encoded public key string
-    ///   - expectedAlgorithm: The expected EC algorithm (for validation)
-    /// - Returns: Tuple containing compressed key data and CryptoKit public key
-    /// - Throws: KASRewrapError if validation fails
+    ///   - expectedAlgorithm: The expected EC algorithm (P-256, P-384, or P-521)
+    /// - Returns: Tuple containing compressed key data and a typed CryptoKit public key
+    /// - Throws: KASRewrapError if validation or parsing fails
     public static func validateEcPublicKeyPEM(
         _ pem: String,
         expectedAlgorithm: RewrapAlgorithm = .ecP256,
-    ) throws -> (compressedKey: Data, cryptoKitKey: P256.KeyAgreement.PublicKey) {
-        // Currently only P-256 is supported for validation
-        guard expectedAlgorithm == .ecP256 else {
-            throw KASRewrapError.unsupportedKeyAlgorithm(
-                "Validation only supports P-256, got: \(expectedAlgorithm.rawValue)",
-            )
+    ) throws -> (compressedKey: Data, key: KasEcPublicKey) {
+        // Validate algorithm is EC-based
+        guard expectedAlgorithm == .ecP256 || expectedAlgorithm == .ecP384 || expectedAlgorithm == .ecP521 else {
+            throw KASRewrapError.unsupportedKeyAlgorithm(expectedAlgorithm.rawValue)
         }
 
         // Normalize line endings and trim whitespace
@@ -694,49 +699,79 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
             throw KASRewrapError.invalidEcPublicKey("Invalid base64 encoding")
         }
 
-        // Parse public key - support multiple formats
-        // KAS server may return SEC1 bytes wrapped in SPKI PEM, or standard SPKI DER
-        let publicKey: P256.KeyAgreement.PublicKey
-
+        // Parse the key according to the expected curve and format.
         do {
-            if keyData.count == 65, keyData[0] == 0x04 {
-                // Raw uncompressed SEC1 point (0x04 || x || y) - 65 bytes
-                // This is the format some KAS servers return inside the PEM wrapper
-                publicKey = try P256.KeyAgreement.PublicKey(x963Representation: keyData)
-            } else if keyData.count == 33, keyData[0] == 0x02 || keyData[0] == 0x03 {
-                // Compressed SEC1 point (0x02/0x03 || x) - 33 bytes
-                publicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: keyData)
-            } else if keyData.count >= 59, keyData.count <= 91 {
-                // SPKI DER format (typically 91 bytes for P-256 with uncompressed point,
-                // or ~59 bytes with compressed point)
-                publicKey = try P256.KeyAgreement.PublicKey(derRepresentation: keyData)
-            } else {
-                throw KASRewrapError.invalidEcPublicKey(
-                    "Unrecognized key format: \(keyData.count) bytes",
-                )
+            switch expectedAlgorithm {
+            case .ecP256:
+                let publicKey = try parseP256PublicKey(keyData: keyData)
+                let compressedKey = publicKey.compressedRepresentation
+                try validateCompressedPoint(compressedKey, expectedSize: 33)
+                return (compressedKey, .p256(publicKey))
+            case .ecP384:
+                let publicKey = try parseP384PublicKey(keyData: keyData)
+                let compressedKey = publicKey.compressedRepresentation
+                try validateCompressedPoint(compressedKey, expectedSize: 49)
+                return (compressedKey, .p384(publicKey))
+            case .ecP521:
+                let publicKey = try parseP521PublicKey(keyData: keyData)
+                let compressedKey = publicKey.compressedRepresentation
+                try validateCompressedPoint(compressedKey, expectedSize: 67)
+                return (compressedKey, .p521(publicKey))
+            default:
+                throw KASRewrapError.unsupportedKeyAlgorithm(expectedAlgorithm.rawValue)
             }
         } catch let error as KASRewrapError {
             throw error
         } catch {
             throw KASRewrapError.invalidEcPublicKey("Failed to parse key: \(error.localizedDescription)")
         }
+    }
 
-        // Get compressed representation
-        let compressedKey = publicKey.compressedRepresentation
-
-        // Validate compressed key size (33 bytes for P-256)
-        guard compressedKey.count == 33 else {
-            throw KASRewrapError.invalidEcPublicKey("Invalid compressed key size: \(compressedKey.count), expected 33")
+    /// Parse a P-256 public key from raw SEC1 (compressed/uncompressed) or SPKI DER data.
+    private static func parseP256PublicKey(keyData: Data) throws -> P256.KeyAgreement.PublicKey {
+        if keyData.count == 65, keyData[0] == 0x04 {
+            try P256.KeyAgreement.PublicKey(x963Representation: keyData)
+        } else if keyData.count == 33, keyData[0] == 0x02 || keyData[0] == 0x03 {
+            try P256.KeyAgreement.PublicKey(compressedRepresentation: keyData)
+        } else {
+            try P256.KeyAgreement.PublicKey(derRepresentation: keyData)
         }
+    }
 
-        // Validate first byte is valid compressed point prefix
+    /// Parse a P-384 public key from raw SEC1 (compressed/uncompressed) or SPKI DER data.
+    private static func parseP384PublicKey(keyData: Data) throws -> P384.KeyAgreement.PublicKey {
+        if keyData.count == 97, keyData[0] == 0x04 {
+            try P384.KeyAgreement.PublicKey(x963Representation: keyData)
+        } else if keyData.count == 49, keyData[0] == 0x02 || keyData[0] == 0x03 {
+            try P384.KeyAgreement.PublicKey(compressedRepresentation: keyData)
+        } else {
+            try P384.KeyAgreement.PublicKey(derRepresentation: keyData)
+        }
+    }
+
+    /// Parse a P-521 public key from raw SEC1 (compressed/uncompressed) or SPKI DER data.
+    private static func parseP521PublicKey(keyData: Data) throws -> P521.KeyAgreement.PublicKey {
+        if keyData.count == 133, keyData[0] == 0x04 {
+            try P521.KeyAgreement.PublicKey(x963Representation: keyData)
+        } else if keyData.count == 67, keyData[0] == 0x02 || keyData[0] == 0x03 {
+            try P521.KeyAgreement.PublicKey(compressedRepresentation: keyData)
+        } else {
+            try P521.KeyAgreement.PublicKey(derRepresentation: keyData)
+        }
+    }
+
+    /// Validate that compressed key bytes start with a valid point prefix and have the expected size.
+    private static func validateCompressedPoint(_ compressedKey: Data, expectedSize: Int) throws {
+        guard compressedKey.count == expectedSize else {
+            throw KASRewrapError.invalidEcPublicKey(
+                "Invalid compressed key size: \(compressedKey.count), expected \(expectedSize)",
+            )
+        }
         guard compressedKey[0] == 0x02 || compressedKey[0] == 0x03 else {
             throw KASRewrapError.invalidEcPublicKey(
                 "Invalid compressed point prefix: 0x\(String(format: "%02x", compressedKey[0]))",
             )
         }
-
-        return (compressedKey, publicKey)
     }
 
     // MARK: - Private Helpers

@@ -355,6 +355,7 @@ public actor KASService {
 
     /// Compares two byte collections in constant time to mitigate timing attacks.
     /// Returns `true` if the collections are equal, `false` otherwise.
+    /// The length comparison is intentionally not constant-time: the tag length is public.
     private func constantTimeEquals(_ lhs: Data, _ rhs: Data) -> Bool {
         guard lhs.count == rhs.count else { return false }
         var result: UInt8 = 0

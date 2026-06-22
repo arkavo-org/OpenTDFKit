@@ -238,14 +238,8 @@ public class BinaryParser {
             throw ParsingError.invalidFormat
         }
 
-        let policy: Policy
-        do {
-            guard let p = try readPolicyField(bindingMode: policyBindingConfig) else {
-                throw ParsingError.invalidFormat
-            }
-            policy = p
-        } catch {
-            throw error
+        guard let policy = try readPolicyField(bindingMode: policyBindingConfig) else {
+            throw ParsingError.invalidFormat
         }
 
         let ephemeralPublicKeySize = switch policyBindingConfig.curve {
@@ -289,14 +283,8 @@ public class BinaryParser {
             throw ParsingError.invalidFormat
         }
 
-        let policy: Policy
-        do {
-            guard let p = try readPolicyField(bindingMode: policyBindingConfig) else {
-                throw ParsingError.invalidFormat
-            }
-            policy = p
-        } catch {
-            throw error
+        guard let policy = try readPolicyField(bindingMode: policyBindingConfig) else {
+            throw ParsingError.invalidFormat
         }
 
         let ephemeralPublicKeySize = switch policyBindingConfig.curve {

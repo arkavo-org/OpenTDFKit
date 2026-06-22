@@ -70,7 +70,7 @@ public enum TDFCrypto {
             return SecRandomCopyBytes(kSecRandomDefault, count, baseAddress)
         }
         guard status == errSecSuccess else {
-            throw TDFCryptoError.keyWrapFailed(nil)
+            throw TDFCryptoError.randomGenerationFailed(status)
         }
         return bytes
     }
@@ -588,6 +588,7 @@ public enum TDFCryptoError: Error, CustomStringConvertible {
     case ecKeyAgreementFailed(String)
     case unsupportedCurve(String)
     case decryptionFailed(String)
+    case randomGenerationFailed(OSStatus?)
 
     public var description: String {
         switch self {
@@ -630,6 +631,11 @@ public enum TDFCryptoError: Error, CustomStringConvertible {
             return "Unsupported EC curve: \(curve)"
         case let .decryptionFailed(reason):
             return "Decryption failed: \(reason)"
+        case let .randomGenerationFailed(status):
+            if let status {
+                return "Random number generation failed with status \(status)"
+            }
+            return "Random number generation failed"
         }
     }
 }

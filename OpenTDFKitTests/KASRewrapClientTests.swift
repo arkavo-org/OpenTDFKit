@@ -417,6 +417,42 @@ final class KASRewrapClientTests: XCTestCase {
         XCTAssertEqual(parsedCompressedKey, compressedKey)
     }
 
+    func testValidateEcPublicKeyPEMP256() throws {
+        let privateKey = P256.KeyAgreement.PrivateKey()
+        let pem = privateKey.publicKey.pemRepresentation
+        let result = try KASRewrapClient.validateEcPublicKeyPEM(pem, expectedAlgorithm: .ecP256)
+        XCTAssertEqual(result.compressedKey.count, 33)
+        if case .p256 = result.key {} else {
+            XCTFail("Expected p256 key")
+        }
+    }
+
+    func testValidateEcPublicKeyPEMP384() throws {
+        let privateKey = P384.KeyAgreement.PrivateKey()
+        let pem = privateKey.publicKey.pemRepresentation
+        let result = try KASRewrapClient.validateEcPublicKeyPEM(pem, expectedAlgorithm: .ecP384)
+        XCTAssertEqual(result.compressedKey.count, 49)
+        if case .p384 = result.key {} else {
+            XCTFail("Expected p384 key")
+        }
+    }
+
+    func testValidateEcPublicKeyPEMP521() throws {
+        let privateKey = P521.KeyAgreement.PrivateKey()
+        let pem = privateKey.publicKey.pemRepresentation
+        let result = try KASRewrapClient.validateEcPublicKeyPEM(pem, expectedAlgorithm: .ecP521)
+        XCTAssertEqual(result.compressedKey.count, 67)
+        if case .p521 = result.key {} else {
+            XCTFail("Expected p521 key")
+        }
+    }
+
+    func testValidateEcPublicKeyPEMRejectsWrongCurve() throws {
+        let privateKey = P384.KeyAgreement.PrivateKey()
+        let pem = privateKey.publicKey.pemRepresentation
+        XCTAssertThrowsError(try KASRewrapClient.validateEcPublicKeyPEM(pem, expectedAlgorithm: .ecP256))
+    }
+
     func testRewrapRequestContainsValidClientPublicKeyPEM() throws {
         // Build a minimal rewrap request by invoking the NanoTDF request builder path
         let header = Data([0x4C, 0x31, 0x4C])
