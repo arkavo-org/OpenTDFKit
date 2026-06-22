@@ -153,13 +153,19 @@ jobs:
             ${{ runner.os }}-swift-
 
       - name: Run KeyStore Benchmarks
-        run: swift test --configuration release --filter KeyStoreBenchmarkTests | tee keystore-benchmark.log
+        run: |
+          set -o pipefail
+          swift test --configuration release --filter KeyStoreBenchmarkTests | tee keystore-benchmark.log
 
       - name: Run KASService Benchmarks
-        run: swift test --configuration release --filter KASServiceBenchmarkTests | tee kasservice-benchmark.log
+        run: |
+          set -o pipefail
+          swift test --configuration release --filter KASServiceBenchmarkTests | tee kasservice-benchmark.log
 
       - name: Run NanoTDF Benchmarks
-        run: swift test --configuration release --filter NanoTDFBenchmarkTests | tee nanotdf-benchmark.log
+        run: |
+          set -o pipefail
+          swift test --configuration release --filter NanoTDFBenchmarkTests | tee nanotdf-benchmark.log
 
       - name: Restore benchmark baseline
         uses: actions/cache/restore@v4
@@ -168,6 +174,7 @@ jobs:
           key: benchmark-baseline-${{ runner.os }}-${{ github.ref }}
           restore-keys: |
             benchmark-baseline-${{ runner.os }}-${{ github.ref }}-
+            benchmark-baseline-${{ runner.os }}-refs/heads/main-
             benchmark-baseline-${{ runner.os }}-
 
       - name: Check benchmark regression

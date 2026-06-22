@@ -150,6 +150,13 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # Load the baseline into memory before writing the current summary. This
+    # makes output/baseline path aliasing safe in CI.
+    baseline: dict[str, dict[str, Any]] = {}
+    if args.baseline and args.baseline.exists():
+        with args.baseline.open("r", encoding="utf-8") as fh:
+            baseline = json.load(fh).get("metrics", {})
+
     current = parse_logs(args.logs)
     output_data = {
         "metrics": current,
@@ -161,10 +168,7 @@ def main() -> int:
 
     print(f"Parsed {len(current)} metrics from {len(args.logs)} log file(s).")
 
-    if args.baseline and args.baseline.exists():
-        with args.baseline.open("r", encoding="utf-8") as fh:
-            baseline_data = json.load(fh)
-        baseline = baseline_data.get("metrics", {})
+    if baseline:
         regressions = compare_to_baseline(current, baseline, args.threshold)
         if regressions:
             print("Benchmark regressions detected:")
