@@ -33,9 +33,7 @@ public enum CryptoHelperError: Error {
 enum CryptoConstants {
     /// HKDF salt for NanoTDF v12 ("L1L"), computed as SHA256(MAGIC_NUMBER + VERSION).
     static let hkdfSaltV12 = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
-    /// HKDF salt for NanoTDF v13 ("L1M"), computed as SHA256(MAGIC_NUMBER + VERSION).
-    static let hkdfSaltV13 = CryptoHelper.computeHKDFSalt(version: Header.version)
-    /// Default HKDF salt (prioritising v12 compatibility).
+    /// Default HKDF salt (v12 only; v13 creation has been removed).
     static let hkdfSalt = hkdfSaltV12
     /// Standard info tag used for HKDF key derivation for encryption keys in NanoTDF context.
     static let hkdfInfoEncryption = Data()
@@ -54,7 +52,7 @@ enum CryptoConstants {
 /// nonce handling, and signature generation.
 public actor CryptoHelper {
     /// Computes HKDF salt for a given NanoTDF version by hashing the magic number and version byte.
-    /// - Parameter version: The NanoTDF version byte (e.g. 0x4C for v12, 0x4D for v13).
+    /// - Parameter version: The NanoTDF version byte (currently 0x4C for v12).
     /// - Returns: The resulting salt as Data.
     static func computeHKDFSalt(version: UInt8) -> Data {
         let magicAndVersion = Header.magicNumber + Data([version])
@@ -229,10 +227,18 @@ public actor CryptoHelper {
     /// Generates a cryptographically secure random nonce (IV) of the specified length.
     /// - Parameter length: The desired length of the nonce in bytes. Defaults to `CryptoConstants.aesGcmNonceSize` (12 bytes).
     /// - Returns: The generated nonce as `Data`.
-    func generateNonce(length: Int = CryptoConstants.aesGcmNonceSize) -> Data {
+    func generateNonce(length: Int = CryptoConstants.aesGcmNonceSize) throws -> Data {
         var nonce = Data(count: length)
         // Use SecRandomCopyBytes for generating secure random data.
-        _ = nonce.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, length, $0.baseAddress!) }
+        let status = nonce.withUnsafeMutableBytes { buffer -> OSStatus in
+            guard let baseAddress = buffer.baseAddress else {
+                return errSecAllocate
+            }
+            return SecRandomCopyBytes(kSecRandomDefault, length, baseAddress)
+        }
+        guard status == errSecSuccess else {
+            throw CryptoHelperError.keyGenerationFailed
+        }
         return nonce
     }
 

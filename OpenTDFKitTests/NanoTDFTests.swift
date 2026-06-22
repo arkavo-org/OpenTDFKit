@@ -124,10 +124,10 @@ final class NanoTDFTests: XCTestCase {
             }.joined()
             print("Actual:")
             print(serializedNanoTDFHexString)
-            // We now generate v13 format TDFs (4c 31 4d) but the test was written for v12 (4c 31 4c)
-            // Just check that the serialized data starts with the magic number and has a version
+            // NanoTDF creation now only generates v12 format (4c 31 4c).
+            // Just check that the serialized data starts with the magic number and version.
             XCTAssertEqual(serializedNanoTDF.prefix(2), Data([0x4C, 0x31]), "Magic number should match")
-            XCTAssertTrue(serializedNanoTDF[2] == 0x4C || serializedNanoTDF[2] == 0x4D, "Version should be either 0x4C (v12) or 0x4D (v13)")
+            XCTAssertEqual(serializedNanoTDF[2], 0x4C, "Version should be 0x4C (v12)")
             print("NanoTDF has correct magic number and version.")
             // back again
             let bparser = BinaryParser(data: serializedNanoTDF)
@@ -259,6 +259,31 @@ final class NanoTDFTests: XCTestCase {
             XCTAssertFalse(header.payloadSignatureConfig.signed)
         } catch {
             XCTFail("Failed to parse data: \(error)")
+        }
+    }
+
+    func testZeroLengthEmbeddedPolicyBodyFails() throws {
+        // Build a minimal v12 header with an embedded plaintext policy whose body length is 0.
+        // Magic + version + KAS locator + binding config + payload config + policy type (embeddedPlaintext=0x01)
+        // + 2-byte body length 0x0000.
+        let kasLocator = ResourceLocator(protocolEnum: .http, body: "kas.example.com")!
+        var data = Data()
+        data.append(Header.magicNumber)
+        data.append(Header.versionV12)
+        data.append(kasLocator.toData())
+        data.append(PolicyBindingConfig(ecdsaBinding: false, curve: .secp256r1).toData())
+        data.append(SignatureAndPayloadConfig(signed: false, signatureCurve: nil, payloadCipher: .aes256GCM128).toData())
+        data.append(Policy.PolicyType.embeddedPlaintext.rawValue)
+        data.append(contentsOf: [0x00, 0x00]) // zero-length body
+
+        let parser = BinaryParser(data: data)
+        XCTAssertThrowsError(try parser.parseHeader()) { error in
+            guard let parsingError = error as? ParsingError,
+                  case .invalidPolicy = parsingError
+            else {
+                XCTFail("Expected ParsingError.invalidPolicy, got \(error)")
+                return
+            }
         }
     }
 

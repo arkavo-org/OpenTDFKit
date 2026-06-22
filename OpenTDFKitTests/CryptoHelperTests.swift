@@ -93,7 +93,7 @@ extension CryptoHelper {
         )
 
         // Generate nonce
-        let nonce = generateNonce()
+        let nonce = try generateNonce()
 
         // Encrypt payload
         let (ciphertext, tag) = try encryptPayload(

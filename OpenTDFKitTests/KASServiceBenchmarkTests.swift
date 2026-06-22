@@ -82,7 +82,7 @@ final class KASServiceBenchmarkTests: XCTestCase {
                 )
 
                 // Encrypt sample data with proper format
-                let nonce = await cryptoHelper.generateNonce()
+                let nonce = try await cryptoHelper.generateNonce()
                 let paddedNonce = await cryptoHelper.adjustNonce(nonce, to: 12)
                 let sealedBox = try AES.GCM.seal(plaintext, using: symmetricKey, nonce: AES.GCM.Nonce(data: paddedNonce))
 

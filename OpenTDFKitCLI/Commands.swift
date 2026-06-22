@@ -259,17 +259,19 @@ enum Commands {
         let oauthToken = String(data: tokenData, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-        // Fetch KAS public key - construct full URL for the API call
-        let kasFullURL = URL(string: "http://\(kasBody)/kas")!
+        // Fetch KAS public key - construct full URL for the API call, preserving the configured scheme
+        let scheme = kasURL.scheme ?? "http"
+        let kasFullURL = URL(string: "\(scheme)://\(kasBody)/kas")!
         let kasPublicKeyData = try await fetchKASPublicKey(
             kasURL: kasFullURL,
             token: oauthToken,
         )
         print("✓ Retrieved KAS public key")
 
-        // Create resource locator for KAS
+        // Create resource locator for KAS, matching the configured scheme
+        let protocolEnum: ProtocolEnum = scheme == "https" ? .https : .http
         guard let kasLocator = ResourceLocator(
-            protocolEnum: ProtocolEnum(rawValue: 0x00)!, // HTTP
+            protocolEnum: protocolEnum,
             body: kasBody,
             identifier: Data([0x65, 0x31]), // "e1" for EC key
         ) else {

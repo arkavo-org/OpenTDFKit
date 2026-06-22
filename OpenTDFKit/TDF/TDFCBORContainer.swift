@@ -150,7 +150,7 @@ public struct TDFCBORBuilder: Sendable {
 
         // Create key access object with EC ephemeral public key
         let keyAccessObject = TDFKeyAccessObject(
-            type: .wrapped,
+            type: .ecWrapped,
             url: kasURL.absoluteString,
             protocolValue: .kas,
             wrappedKey: ecWrapped.wrappedKey,
@@ -298,9 +298,14 @@ public struct TDFCBORDecryptor: Sendable {
             throw TDFCBORError.decryptionFailed("No key access objects found")
         }
 
-        let symmetricKey = try TDFCrypto.unwrapSymmetricKeyWithRSA(
+        guard let ephemeralPublicKey = keyAccess[0].ephemeralPublicKey else {
+            throw TDFCBORError.decryptionFailed("EC-wrapped key missing ephemeral public key")
+        }
+
+        let symmetricKey = try TDFCrypto.unwrapSymmetricKeyWithEC(
             privateKeyPEM: privateKeyPEM,
             wrappedKey: keyAccess[0].wrappedKey,
+            ephemeralPublicKey: ephemeralPublicKey,
         )
 
         return try decrypt(container: container, symmetricKey: symmetricKey)

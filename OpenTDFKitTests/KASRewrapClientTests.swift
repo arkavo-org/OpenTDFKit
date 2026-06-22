@@ -295,7 +295,7 @@ final class KASRewrapClientTests: XCTestCase {
     }
 
     func testRewrapRequestStructureSerialization() throws {
-        let header = Data([0x4C, 0x31, 0x4D])
+        let header = Data([0x4C, 0x31, 0x4C])
         let keyAccess = KASRewrapClient.KeyAccessObject(
             header: header.base64EncodedString(),
             url: "https://kas.example.com",
@@ -396,6 +396,102 @@ final class KASRewrapClientTests: XCTestCase {
         let hex = testData.hexEncodedString()
 
         XCTAssertEqual(hex, "010aff")
+    }
+
+    func testClientPublicKeyPEMConversion() throws {
+        // Generate a compressed P-256 public key (33 bytes)
+        let privateKey = P256.KeyAgreement.PrivateKey()
+        let compressedKey = privateKey.publicKey.compressedRepresentation
+        XCTAssertEqual(compressedKey.count, 33)
+
+        // Convert to PEM using the client's helper
+        let pem = try KASRewrapClient.pemRepresentation(compressedPublicKey: compressedKey)
+
+        // Verify the PEM is non-empty and has the expected markers
+        XCTAssertFalse(pem.isEmpty)
+        XCTAssertTrue(pem.contains("-----BEGIN PUBLIC KEY-----"))
+        XCTAssertTrue(pem.contains("-----END PUBLIC KEY-----"))
+
+        // Verify the PEM can be parsed back to the same compressed key
+        let parsedCompressedKey = try client.extractCompressedKeyFromPEM(pem)
+        XCTAssertEqual(parsedCompressedKey, compressedKey)
+    }
+
+    func testValidateEcPublicKeyPEMP256() throws {
+        let privateKey = P256.KeyAgreement.PrivateKey()
+        let pem = privateKey.publicKey.pemRepresentation
+        let result = try KASRewrapClient.validateEcPublicKeyPEM(pem, expectedAlgorithm: .ecP256)
+        XCTAssertEqual(result.compressedKey.count, 33)
+        if case .p256 = result.key {} else {
+            XCTFail("Expected p256 key")
+        }
+    }
+
+    func testValidateEcPublicKeyPEMP384() throws {
+        let privateKey = P384.KeyAgreement.PrivateKey()
+        let pem = privateKey.publicKey.pemRepresentation
+        let result = try KASRewrapClient.validateEcPublicKeyPEM(pem, expectedAlgorithm: .ecP384)
+        XCTAssertEqual(result.compressedKey.count, 49)
+        if case .p384 = result.key {} else {
+            XCTFail("Expected p384 key")
+        }
+    }
+
+    func testValidateEcPublicKeyPEMP521() throws {
+        let privateKey = P521.KeyAgreement.PrivateKey()
+        let pem = privateKey.publicKey.pemRepresentation
+        let result = try KASRewrapClient.validateEcPublicKeyPEM(pem, expectedAlgorithm: .ecP521)
+        XCTAssertEqual(result.compressedKey.count, 67)
+        if case .p521 = result.key {} else {
+            XCTFail("Expected p521 key")
+        }
+    }
+
+    func testValidateEcPublicKeyPEMRejectsWrongCurve() throws {
+        let privateKey = P384.KeyAgreement.PrivateKey()
+        let pem = privateKey.publicKey.pemRepresentation
+        XCTAssertThrowsError(try KASRewrapClient.validateEcPublicKeyPEM(pem, expectedAlgorithm: .ecP256))
+    }
+
+    func testRewrapRequestContainsValidClientPublicKeyPEM() throws {
+        // Build a minimal rewrap request by invoking the NanoTDF request builder path
+        let header = Data([0x4C, 0x31, 0x4C])
+        let keyAccess = KASRewrapClient.KeyAccessObject(
+            header: header.base64EncodedString(),
+            url: "https://kas.example.com",
+        )
+        let wrapper = KASRewrapClient.KeyAccessObjectWrapper(
+            keyAccessObjectId: "kao-0",
+            keyAccessObject: keyAccess,
+        )
+        let policy = KASRewrapClient.Policy(body: "test policy".data(using: .utf8)!.base64EncodedString())
+        let requestEntry = KASRewrapClient.RewrapRequestEntry(
+            policy: policy,
+            keyAccessObjects: [wrapper],
+        )
+
+        let clientPrivateKey = P256.KeyAgreement.PrivateKey()
+        let clientKeyPair = EphemeralKeyPair(
+            privateKey: clientPrivateKey.rawRepresentation,
+            publicKey: clientPrivateKey.publicKey.compressedRepresentation,
+            curve: .secp256r1,
+        )
+
+        let clientPublicKeyPEM = try KASRewrapClient.pemRepresentation(compressedPublicKey: clientKeyPair.publicKey)
+        XCTAssertFalse(clientPublicKeyPEM.isEmpty)
+        XCTAssertTrue(clientPublicKeyPEM.contains("-----BEGIN PUBLIC KEY-----"))
+
+        let unsignedRequest = KASRewrapClient.UnsignedRewrapRequest(
+            clientPublicKey: clientPublicKeyPEM,
+            requests: [requestEntry],
+        )
+
+        let encoder = JSONEncoder()
+        let jsonData = try encoder.encode(unsignedRequest)
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: jsonData) as? [String: Any])
+        let pemFromJSON = try XCTUnwrap(json["clientPublicKey"] as? String)
+        XCTAssertFalse(pemFromJSON.isEmpty)
+        XCTAssertTrue(pemFromJSON.contains("-----BEGIN PUBLIC KEY-----"))
     }
 }
 

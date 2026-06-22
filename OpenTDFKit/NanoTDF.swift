@@ -92,106 +92,7 @@ public struct NanoTDF: Sendable {
 /// - Throws: `CryptoHelperError` if key generation or derivation fails, or errors from `CryptoKit` during cryptographic operations.
 @available(*, deprecated, message: "NanoTDF is deprecated. Use TDFCBORBuilder instead. See docs/NANOTDF_MIGRATION.md")
 public func createNanoTDFv12(kas: KasMetadata, policy: inout Policy, plaintext: Data) async throws -> NanoTDF {
-    // Step 1: Generate an ephemeral key pair based on the KAS curve
-    guard let keyPair = await NanoTDF.sharedCryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
-        throw CryptoHelperError.keyDerivationFailed
-    }
-
-    // Step 2: Derive the shared secret using ECDH
-    let kasPublicKey = try kas.getPublicKey()
-    guard let sharedSecret = try await NanoTDF.sharedCryptoHelper.deriveSharedSecret(
-        keyPair: keyPair,
-        recipientPublicKey: kasPublicKey,
-    ) else {
-        throw CryptoHelperError.keyDerivationFailed
-    }
-
-    // Step 3: Derive the symmetric TDF key using HKDF with v1.2 salt
-    let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
-    let tdfSymmetricKey = await NanoTDF.sharedCryptoHelper.deriveSymmetricKey(
-        sharedSecret: sharedSecret,
-        salt: salt,
-        info: Data(),
-        outputByteCount: 32,
-    )
-    // Step 4: Process policy body based on type
-    let policyBody: Data
-    switch policy.type {
-    case .embeddedPlaintext, .remote:
-        policyBody = policy.body?.body ?? Data()
-    case .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
-        let plainPolicy = policy.body?.body ?? Data()
-        let zeroNonce = Data(count: 12)
-        let selectedCipher = Cipher.aes256GCM96
-        let (ciphertext, tag) = try CryptoHelper.encryptNanoTDF(
-            cipher: selectedCipher,
-            key: tdfSymmetricKey,
-            iv: zeroNonce,
-            plaintext: plainPolicy,
-        )
-        policyBody = ciphertext + tag
-    }
-
-    policy.body = EmbeddedPolicyBody(body: policyBody)
-
-    // Step 5: Calculate the policy binding
-    // NanoTDF v1.2 uses SHA256 hash of policy body bytes, taking last 8 bytes
-    let digest = SHA256.hash(data: policyBody)
-    policy.binding = Data(digest.suffix(8))
-
-    // Step 6: Configure cipher (use aes256GCM96 for otdfctl compatibility)
-    let selectedCipher = Cipher.aes256GCM96
-    let authTagSize = 12
-
-    // Step 7: Generate 3-byte IV for payload
-    var payloadIV = Data(count: 3)
-    let ivStatus = payloadIV.withUnsafeMutableBytes { buffer -> OSStatus in
-        guard let baseAddress = buffer.baseAddress else {
-            return errSecAllocate
-        }
-        return SecRandomCopyBytes(kSecRandomDefault, 3, baseAddress)
-    }
-    guard ivStatus == errSecSuccess else {
-        throw CryptoHelperError.keyGenerationFailed
-    }
-
-    // Step 8: Encrypt plaintext directly with the TDF symmetric key (no separate payload key)
-    // This is the key difference from v1.3 - we use the derived key directly
-    // Pad 3-byte IV to 12 bytes by appending zeros (must match adjustNonce in getPayloadPlaintext)
-    let fullIV = payloadIV + Data(count: 9)
-    let nonce = try AES.GCM.Nonce(data: fullIV)
-    let sealed = try AES.GCM.seal(plaintext, using: tdfSymmetricKey, nonce: nonce)
-    let mac = Data(sealed.tag.prefix(authTagSize))
-
-    // Create v1.2 header (empty KAS public key forces v1.2 format)
-    let payloadKeyAccess = PayloadKeyAccess(
-        kasEndpointLocator: kas.resourceLocator,
-        kasPublicKey: Data(), // Empty for v1.2 format
-    )
-
-    let header = Header(
-        payloadKeyAccess: payloadKeyAccess,
-        policyBindingConfig: PolicyBindingConfig(ecdsaBinding: false, curve: kas.curve),
-        payloadSignatureConfig: SignatureAndPayloadConfig(
-            signed: false,
-            signatureCurve: kas.curve,
-            payloadCipher: selectedCipher,
-        ),
-        policy: policy,
-        ephemeralPublicKey: keyPair.publicKey,
-    )
-
-    // Create payload WITHOUT wrapped key (per NanoTDF spec)
-    // Length field must include: IV (3 bytes) + ciphertext + MAC
-    let totalPayloadLength = UInt32(payloadIV.count + sealed.ciphertext.count + mac.count)
-    let payload = Payload(
-        length: totalPayloadLength,
-        iv: payloadIV,
-        ciphertext: sealed.ciphertext,
-        mac: mac,
-    )
-
-    return NanoTDF(header: header, payload: payload, signature: nil)
+    try await createNanoTDF(kas: kas, policy: &policy, plaintext: plaintext)
 }
 
 /// Creates a NanoTDF object by encrypting the provided plaintext.
@@ -222,7 +123,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
 
     // Step 3: Derive the symmetric TDF key from the shared secret using HKDF
     // Salt is SHA256(MAGIC_NUMBER + VERSION) per spec section 4
-    let salt = CryptoHelper.computeHKDFSalt(version: Header.version) // v13 by default
+    let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12) // v12 only
     let tdfSymmetricKey = await NanoTDF.sharedCryptoHelper.deriveSymmetricKey(
         sharedSecret: sharedSecret,
         salt: salt,
@@ -355,7 +256,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
     policy.binding = gmacTag
 
     // Step 4: Generate a 3-byte nonce/IV for the payload encryption
-    let nonce = await NanoTDF.sharedCryptoHelper.generateNonce(length: 3)
+    let nonce = try await NanoTDF.sharedCryptoHelper.generateNonce(length: 3)
     // Adjust the 3-byte nonce to 12 bytes for AES-GCM compatibility
     let nonce12 = await NanoTDF.sharedCryptoHelper.adjustNonce(nonce, to: 12)
 
@@ -378,13 +279,13 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
         mac: tag, // Store the 16-byte authentication tag
     )
 
-    // Create the PayloadKeyAccess structure for v13 header
+    // Create the PayloadKeyAccess structure for v12 header
     let payloadKeyAccess = PayloadKeyAccess(
         kasEndpointLocator: kas.resourceLocator,
-        kasPublicKey: kasPublicKey, // Include the KAS public key in the header
+        kasPublicKey: Data(), // Empty for v12 format
     )
 
-    // Create the Header struct with v13 format
+    // Create the Header struct with v12 format
     let header = Header(
         payloadKeyAccess: payloadKeyAccess,
         policyBindingConfig: PolicyBindingConfig(ecdsaBinding: false, curve: kas.curve), // Assuming GMAC binding for now
@@ -433,8 +334,7 @@ public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signi
     nanoTDF.header.payloadSignatureConfig.signatureCurve = config.signatureCurve
 }
 
-/// Represents the KAS (Key Access Service) information structure in the NanoTDF header,
-/// as per NanoTDF Spec v13 ("L1M").
+/// Represents the KAS (Key Access Service) information structure in the NanoTDF header.
 public struct PayloadKeyAccess: Sendable {
     /// Locator for the KAS endpoint.
     public let kasLocator: ResourceLocator
@@ -445,13 +345,12 @@ public struct PayloadKeyAccess: Sendable {
     /// This is not stored as a separate field but computed from the public key length.
     public var kasKeyCurve: Curve {
         switch kasPublicKey.count {
-        case 33: return .secp256r1
-        case 49: return .secp384r1
-        case 67: return .secp521r1
-        case 0: return .secp256r1 // Default for empty keys (v12 format)
+        case 33: .secp256r1
+        case 49: .secp384r1
+        case 67: .secp521r1
+        case 0: .secp256r1 // Default for empty keys (v12 format)
         default:
-            print("Warning: Invalid KAS public key size: \(kasPublicKey.count)")
-            return .secp256r1 // Default to P-256 as a fallback
+            .secp256r1 // Default to P-256 as a fallback
         }
     }
 
@@ -492,10 +391,7 @@ public struct Header: Sendable {
     /// Version identifier for NanoTDF v12 ("L1L").
     public static let versionV12: UInt8 = 0x4C
 
-    /// Version identifier for NanoTDF v13 ("L1M").
-    public static let version: UInt8 = 0x4D
-
-    /// Key Access Service information, as per NanoTDF Spec v13.
+    /// Key Access Service information.
     public let payloadKeyAccess: PayloadKeyAccess
 
     /// Configuration for the policy binding (e.g., curve used, binding type).
@@ -541,26 +437,17 @@ public struct Header: Sendable {
         self.ephemeralPublicKey = ephemeralPublicKey
     }
 
-    /// Serializes the Header into its binary `Data` representation according to the NanoTDF specification.
-    /// Conditionally creates a v12 or v13 format header based on the state of `payloadKeyAccess.kasPublicKey`.
+    /// Serializes the Header into its binary `Data` representation according to the NanoTDF v12 specification.
+    /// Always creates a v12 ("L1L") header; v13 ("L1M") creation has been removed.
     /// - Returns: A `Data` object representing the serialized header.
     public func toData() -> Data {
         var data = Data()
         data.append(Header.magicNumber)
 
-        // If kasPublicKey is empty, this indicates a v12 style header structure
-        // (e.g., as parsed by BinaryParser for v12, or if explicitly constructed for v12).
-        if payloadKeyAccess.kasPublicKey.isEmpty {
-            // Serialize as v12 "L1L"
-            data.append(Header.versionV12) // Use 0x4C
-            data.append(payloadKeyAccess.kasLocator.toData()) // KAS URL only
-        } else {
-            // Serialize as v13 "L1M"
-            data.append(Header.version) // Use 0x4D
-            data.append(payloadKeyAccess.toData()) // KAS URL + Curve + KAS Public Key
-        }
+        // Serialize as v12 "L1L"
+        data.append(Header.versionV12) // Use 0x4C
+        data.append(payloadKeyAccess.kasLocator.toData()) // KAS URL only
 
-        // Common parts for both v12 and v13
         data.append(policyBindingConfig.toData())
         data.append(payloadSignatureConfig.toData())
         data.append(policy.toData())
@@ -706,14 +593,7 @@ public struct ResourceLocator: Sendable {
     /// - Returns: An initialized `ResourceLocator` or `nil` if the body length or identifier size is invalid.
     public init?(protocolEnum: ProtocolEnum, body: String, identifier: Data? = nil) {
         // Validate body length (1 to 255 bytes as per spec for body content)
-        // ResourceLocator body itself can be 0 length if Identifier is "None" (0x0) as per KAS Endpoint Locator spec.
-        // However, the general ResourceLocator spec (3.4.1) says Body is 1-255.
-        // The current implementation of ResourceLocator.toData() uses body.data(using: .utf8)
-        // and then UInt8(bodyData.count). If body is empty, bodyData.count is 0.
-        // This is consistent with KAS Endpoint Locator Identifier "None" (0x0) if body is empty.
-        // For now, stick to current validation which requires non-empty body.
-        // If an empty body is needed for "None" identifier, this init needs adjustment.
-        guard body.utf8.count <= 255 else {
+        guard !body.isEmpty, body.utf8.count <= 255 else {
             return nil
         }
 
@@ -723,14 +603,6 @@ public struct ResourceLocator: Sendable {
             guard validSizes.contains(identifier.count) else {
                 return nil // Invalid identifier size
             }
-        }
-
-        // Allow empty body for KAS endpoint with "None" identifier
-        if body.isEmpty, protocolEnum == .http || protocolEnum == .https {
-            // For KAS Endpoint Locator with "None" identifier, empty body is valid
-            // Continue with initialization
-        } else if body.isEmpty {
-            return nil
         }
         self.protocolEnum = protocolEnum
         self.body = body
@@ -905,12 +777,11 @@ public struct PolicyKeyAccess: Sendable {
     /// The curve used by this key access, inferred from the public key size.
     public var curve: Curve {
         switch ephemeralPublicKey.count {
-        case 33: return .secp256r1
-        case 49: return .secp384r1
-        case 67: return .secp521r1
+        case 33: .secp256r1
+        case 49: .secp384r1
+        case 67: .secp521r1
         default:
-            print("Warning: Invalid ephemeral public key size: \(ephemeralPublicKey.count)")
-            return .secp256r1 // Default to P-256 as a fallback
+            .secp256r1 // Default to P-256 as a fallback
         }
     }
 

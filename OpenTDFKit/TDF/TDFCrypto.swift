@@ -1,6 +1,7 @@
 import CryptoKit
 import CryptoSwift
 import Foundation
+import Security
 
 /// Encryption mode for TDF payloads
 public enum TDFEncryptionMode: String, Sendable {
@@ -61,9 +62,17 @@ public enum TDFCrypto {
     }
 
     public static func randomBytes(count: Int) throws -> Data {
-        var generator = SystemRandomNumberGenerator()
-        let randomBytes = (0 ..< count).map { _ in UInt8.random(in: UInt8.min ... UInt8.max, using: &generator) }
-        return Data(randomBytes)
+        var bytes = Data(count: count)
+        let status = bytes.withUnsafeMutableBytes { buffer -> OSStatus in
+            guard let baseAddress = buffer.baseAddress else {
+                return errSecAllocate
+            }
+            return SecRandomCopyBytes(kSecRandomDefault, count, baseAddress)
+        }
+        guard status == errSecSuccess else {
+            throw TDFCryptoError.randomGenerationFailed(status)
+        }
+        return bytes
     }
 
     public static func encryptPayload(plaintext: Data, symmetricKey: SymmetricKey) throws -> (iv: Data, cipherText: Data, authenticationTag: Data) {
@@ -301,6 +310,25 @@ public enum TDFCrypto {
         case .p521:
             try wrapWithP521(publicKeyPEM: publicKeyPEM, symmetricKey: symmetricKey)
         }
+    }
+
+    /// Unwrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM).
+    /// - Parameters:
+    ///   - privateKeyPEM: The recipient's PEM-encoded EC private key
+    ///   - wrappedKey: The wrapped key data (base64-encoded nonce + ciphertext + tag)
+    ///   - ephemeralPublicKey: The sender's ephemeral public key (PEM or base64 SEC1 compressed)
+    /// - Returns: The unwrapped symmetric key
+    public static func unwrapSymmetricKeyWithEC(
+        privateKeyPEM: String,
+        wrappedKey: String,
+        ephemeralPublicKey ephemeralKeyString: String,
+    ) throws -> SymmetricKey {
+        let privateKey = try P256.KeyAgreement.PrivateKey(pemRepresentation: privateKeyPEM)
+        return try unwrapSymmetricKeyWithEC(
+            privateKey: privateKey,
+            wrappedKey: wrappedKey,
+            ephemeralPublicKey: ephemeralKeyString,
+        )
     }
 
     /// Unwrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM).
@@ -560,6 +588,7 @@ public enum TDFCryptoError: Error, CustomStringConvertible {
     case ecKeyAgreementFailed(String)
     case unsupportedCurve(String)
     case decryptionFailed(String)
+    case randomGenerationFailed(OSStatus?)
 
     public var description: String {
         switch self {
@@ -602,6 +631,11 @@ public enum TDFCryptoError: Error, CustomStringConvertible {
             return "Unsupported EC curve: \(curve)"
         case let .decryptionFailed(reason):
             return "Decryption failed: \(reason)"
+        case let .randomGenerationFailed(status):
+            if let status {
+                return "Random number generation failed with status \(status)"
+            }
+            return "Random number generation failed"
         }
     }
 }

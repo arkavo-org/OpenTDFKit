@@ -870,4 +870,90 @@ final class StandardTDFTests: XCTestCase {
             "Default algorithm should be AES-256-GCM",
         )
     }
+
+    // MARK: - TDF-JSON / TDF-CBOR EC round-trip tests
+
+    func testTDFJSONRoundTripWithECPrivateKey() throws {
+        let keyPair = generateTestECKeyPair()
+        let policy = try TDFPolicy(json: """
+        {"uuid":"test-policy","body":{"dataAttributes":[],"dissem":[]}}
+        """.data(using: .utf8)!)
+
+        let result = try TDFJSONBuilder()
+            .kasURL(URL(string: "http://localhost:8080/kas")!)
+            .kasPublicKey(keyPair.publicKeyPEM)
+            .policy(policy)
+            .encrypt(plaintext: testPlaintext)
+
+        XCTAssertEqual(result.container.encryptionInformation.keyAccess.first?.type, .ecWrapped)
+
+        let decrypted = try TDFJSONDecryptor().decrypt(
+            container: result.container,
+            privateKeyPEM: keyPair.privateKeyPEM,
+        )
+        XCTAssertEqual(decrypted, testPlaintext)
+    }
+
+    func testTDFCBORRoundTripWithECPrivateKey() throws {
+        let keyPair = generateTestECKeyPair()
+        let policy = try TDFPolicy(json: """
+        {"uuid":"test-policy","body":{"dataAttributes":[],"dissem":[]}}
+        """.data(using: .utf8)!)
+
+        let result = try TDFCBORBuilder()
+            .kasURL(URL(string: "http://localhost:8080/kas")!)
+            .kasPublicKey(keyPair.publicKeyPEM)
+            .policy(policy)
+            .encrypt(plaintext: testPlaintext)
+
+        XCTAssertEqual(result.container.encryptionInformation.keyAccess.first?.type, .ecWrapped)
+
+        let decrypted = try TDFCBORDecryptor().decrypt(
+            container: result.container,
+            privateKeyPEM: keyPair.privateKeyPEM,
+        )
+        XCTAssertEqual(decrypted, testPlaintext)
+    }
+
+    private func generateTestECKeyPair() -> (publicKeyPEM: String, privateKeyPEM: String) {
+        let privateKey = P256.KeyAgreement.PrivateKey()
+        return (privateKey.publicKey.pemRepresentation, privateKey.pemRepresentation)
+    }
+
+    func testTDFCBORAlgorithmRoundTrip() throws {
+        let keyPair = generateTestECKeyPair()
+        let policy = try TDFPolicy(json: """
+        {"uuid":"test-policy","body":{"dataAttributes":[],"dissem":[]}}
+        """.data(using: .utf8)!)
+
+        let result = try TDFCBORBuilder()
+            .kasURL(URL(string: "http://localhost:8080/kas")!)
+            .kasPublicKey(keyPair.publicKeyPEM)
+            .policy(policy)
+            .encrypt(plaintext: testPlaintext)
+
+        let serialized = try result.container.serializedData()
+        let loaded = try TDFCBORLoader().load(from: serialized)
+
+        XCTAssertEqual(loaded.manifest.encryptionInformation.method.algorithm, "AES-256-GCM")
+    }
+
+    func testTDFCBORKeyAccessTypeRoundTrip() throws {
+        let keyPair = generateTestECKeyPair()
+        let policy = try TDFPolicy(json: """
+        {"uuid":"test-policy","body":{"dataAttributes":[],"dissem":[]}}
+        """.data(using: .utf8)!)
+
+        let result = try TDFCBORBuilder()
+            .kasURL(URL(string: "http://localhost:8080/kas")!)
+            .kasPublicKey(keyPair.publicKeyPEM)
+            .policy(policy)
+            .encrypt(plaintext: testPlaintext)
+
+        let serialized = try result.container.serializedData()
+        let loaded = try TDFCBORLoader().load(from: serialized)
+
+        let accessType = try XCTUnwrap(loaded.manifest.encryptionInformation.keyAccess.first?.type)
+        XCTAssertEqual(accessType, .ecWrapped)
+    }
 }

@@ -152,7 +152,7 @@ public actor KASService {
         policyBinding: Data? = nil,
         attributes: [String: String]? = nil,
     ) async throws -> Data {
-        let rewrapEndpoint = baseURL.appendingPathComponent("rewrap")
+        let rewrapEndpoint = baseURL.appendingPathComponent("kas/v2/rewrap")
 
         var request = URLRequest(url: rewrapEndpoint)
         request.httpMethod = "POST"
@@ -211,7 +211,6 @@ public actor KASService {
         ephemeralPublicKey: Data,
         encryptedKey: Data,
         privateKeyData: Data,
-        version: UInt8? = nil,
     ) async throws -> (rewrappedKey: Data, newKeyPair: StoredKeyPair) {
         // 1. Derive shared secret using the client's ephemeral public key and KAS private key
         let sharedSecret: SharedSecret
@@ -233,31 +232,10 @@ public actor KASService {
             sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
         }
 
-        // 2. Derive symmetric key for decryption
-        // Support both v12 and v13 salt values (computed via spec formula)
-        let primarySalt: Data
-        let fallbackSalt: Data?
-
-        if let version {
-            switch version {
-            case Header.versionV12:
-                primarySalt = CryptoConstants.hkdfSaltV12
-                fallbackSalt = CryptoConstants.hkdfSaltV13
-            case Header.version:
-                primarySalt = CryptoConstants.hkdfSaltV13
-                fallbackSalt = CryptoConstants.hkdfSaltV12
-            default:
-                primarySalt = CryptoConstants.hkdfSaltV13
-                fallbackSalt = CryptoConstants.hkdfSaltV12
-            }
-        } else {
-            primarySalt = CryptoConstants.hkdfSaltV13
-            fallbackSalt = CryptoConstants.hkdfSaltV12
-        }
-
+        // 2. Derive symmetric key for decryption using v12 salt only
         let primaryKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: primarySalt,
+            salt: CryptoConstants.hkdfSaltV12,
             sharedInfo: Data(), // Empty per spec section 4
             outputByteCount: 32,
         )
@@ -281,20 +259,7 @@ public actor KASService {
             tag: tag,
         )
 
-        // Try decryption with the primary key first, then fallback if needed
-        let decryptedKey: Data
-        do {
-            decryptedKey = try AES.GCM.open(sealedBox, using: primaryKey)
-        } catch {
-            guard let fallbackSalt else { throw KASServiceError.rewrapFailed }
-            let fallbackKey = sharedSecret.hkdfDerivedSymmetricKey(
-                using: SHA256.self,
-                salt: fallbackSalt,
-                sharedInfo: Data(),
-                outputByteCount: 32,
-            )
-            decryptedKey = try AES.GCM.open(sealedBox, using: fallbackKey)
-        }
+        let decryptedKey = try AES.GCM.open(sealedBox, using: primaryKey)
 
         // 5. Create new shared secret for rewrapping
         let newSharedSecret: SharedSecret
@@ -316,10 +281,10 @@ public actor KASService {
             newSharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
         }
 
-        // 6. Derive new symmetric key for encryption (using v13 format)
+        // 6. Derive new symmetric key for encryption (using v12 format)
         let newSymmetricKey = newSharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: CryptoConstants.hkdfSaltV13, // Always use v13 salt for new keys
+            salt: CryptoConstants.hkdfSaltV12,
             sharedInfo: Data(), // Empty per spec section 4
             outputByteCount: 32,
         )
@@ -385,7 +350,19 @@ public actor KASService {
             return false
         }
         let expectedTag = Data(fullTag.prefix(policyBinding.count))
-        return policyBinding == expectedTag
+        return constantTimeEquals(policyBinding, expectedTag)
+    }
+
+    /// Compares two byte collections in constant time to mitigate timing attacks.
+    /// Returns `true` if the collections are equal, `false` otherwise.
+    /// The length comparison is intentionally not constant-time: the tag length is public.
+    private func constantTimeEquals(_ lhs: Data, _ rhs: Data) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        var result: UInt8 = 0
+        for (a, b) in zip(lhs, rhs) {
+            result |= a ^ b
+        }
+        return result == 0
     }
 
     /// Process a key access request and report which key was used

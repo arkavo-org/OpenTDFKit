@@ -50,14 +50,14 @@ final class NanoTDFCollectionTests: XCTestCase {
 
         let nonce = item.toGCMNonce()
         XCTAssertEqual(nonce.count, 12)
-        // First 9 bytes should be zero
-        for i in 0 ..< 9 {
+        // First 3 bytes should match IV
+        XCTAssertEqual(nonce[0], 0x01)
+        XCTAssertEqual(nonce[1], 0x02)
+        XCTAssertEqual(nonce[2], 0x03)
+        // Last 9 bytes should be zero
+        for i in 3 ..< 12 {
             XCTAssertEqual(nonce[i], 0)
         }
-        // Last 3 bytes should match IV
-        XCTAssertEqual(nonce[9], 0x01)
-        XCTAssertEqual(nonce[10], 0x02)
-        XCTAssertEqual(nonce[11], 0x03)
     }
 
     // MARK: - IV Counter Tests
@@ -201,6 +201,36 @@ final class NanoTDFCollectionTests: XCTestCase {
         let decryptor = try await NanoTDFCollectionDecryptor.withKeyStore(
             header: header,
             keyStore: keyStore,
+        )
+
+        // Decrypt
+        let decryptedPlaintext = try await decryptor.decryptItem(item)
+
+        XCTAssertEqual(decryptedPlaintext, originalPlaintext)
+    }
+
+    func testPrivateKeyDecryptor() async throws {
+        let policyLocator = ResourceLocator(protocolEnum: .https, body: "kas.example.com/policy")!
+        let collection = try await NanoTDFCollectionBuilder()
+            .kasMetadata(kasMetadata)
+            .policy(.remote(policyLocator))
+            .build()
+
+        let originalPlaintext = "Private-key decryption test".data(using: .utf8)!
+
+        // Encrypt
+        let item = try await collection.encryptItem(plaintext: originalPlaintext)
+        let header = await collection.header
+
+        // Retrieve the KAS private key directly from the KeyStore
+        let kasPrivateKey = await keyStore.getPrivateKey(forPublicKey: header.payloadKeyAccess.kasPublicKey)
+        let kasPrivateKeyData = try XCTUnwrap(kasPrivateKey)
+
+        // Create KAS-side decryptor using raw private key
+        let decryptor = try await NanoTDFCollectionDecryptor.withPrivateKey(
+            header: header,
+            kasPrivateKeyData: kasPrivateKeyData,
+            curve: .secp256r1,
         )
 
         // Decrypt
