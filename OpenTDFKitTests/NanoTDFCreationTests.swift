@@ -32,7 +32,7 @@ class NanoTDFCreationTests: XCTestCase {
         // round trip - parse
         let parser = BinaryParser(data: serializedData)
         let header = try parser.parseHeader()
-        XCTAssertEqual(header.toData(), header.toData(), "Header should serialize consistently")
+        XCTAssertEqual(header.toData(), nanoTDF.header.toData(), "Header should serialize consistently")
         let payload = try parser.parsePayload(config: header.payloadSignatureConfig)
         let snanoTDF = NanoTDF(header: header, payload: payload, signature: nil)
         XCTAssertEqual(snanoTDF.toData(), serializedData, "Round-tripped NanoTDF should equal original")

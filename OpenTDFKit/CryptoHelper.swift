@@ -220,6 +220,10 @@ public actor CryptoHelper {
     func createGMACBinding(policyBody: Data, symmetricKey: SymmetricKey) throws -> Data {
         // Seal empty data, authenticating the policyBody. The tag is the GMAC binding.
         // Use a deterministic zero nonce so the binding can be recomputed and verified later.
+        // Security note: this is safe only because every NanoTDF derives a unique symmetric key
+        // from a fresh ephemeral ECDH key. Reusing a symmetric key with a fixed zero nonce while
+        // also encrypting payloads under the same key would create a catastrophic AES-GCM nonce-reuse
+        // condition. Do not cache or reuse symmetric keys across NanoTDFs.
         let nonce = try CryptoKit.AES.GCM.Nonce(data: Data(count: CryptoConstants.aesGcmNonceSize))
         let sealedBox = try CryptoKit.AES.GCM.seal(Data(), using: symmetricKey, nonce: nonce, authenticating: policyBody)
         // Truncate to 64 bits (8 bytes) per spec section 3.3.1.3
