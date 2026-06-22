@@ -171,39 +171,10 @@ public class BinaryParser {
         return PolicyKeyAccess(resourceLocator: resourceLocator, ephemeralPublicKey: ephemeralPublicKey)
     }
 
-    /// Reads a PayloadKeyAccess structure and advances the cursor.
-    /// - Parameter version: The version of the NanoTDF format (v12 or v13)
-    /// - Returns: An initialized `PayloadKeyAccess` object if parsing is successful, otherwise `nil`.
-    func readPayloadKeyAccess(version: UInt8? = nil) -> PayloadKeyAccess? {
-        // 1. Parse KAS Endpoint Locator (ResourceLocator)
-        guard let kasEndpointLocator = readResourceLocator() else {
-            return nil
-        }
-
-        // 2. Read the curve byte
-        guard let curveRaw = readByte(),
-              let curve = Curve(rawValue: curveRaw)
-        else {
-            return nil
-        }
-
-        // For v12 format, we don't have a public key
-        if version == 0x4C { // v12 "L1L"
-            return PayloadKeyAccess(kasEndpointLocator: kasEndpointLocator, kasPublicKey: Data())
-        }
-
-        // For v13 format, read the key based on the curve size
-        let expectedPublicKeyLength = curve.publicKeyLength
-        guard expectedPublicKeyLength > 0 else { return nil }
-
-        // Read the public key
-        guard let kasPublicKey = read(length: expectedPublicKeyLength) else {
-            return nil
-        }
-
-        return PayloadKeyAccess(kasEndpointLocator: kasEndpointLocator, kasPublicKey: kasPublicKey)
-    }
-
+    /// Parses a NanoTDF header and advances the cursor.
+    /// Only v12 ("L1L") headers are accepted; v13 ("L1M") headers are rejected.
+    /// - Returns: An initialized `Header` object.
+    /// - Throws: `ParsingError` if the header is malformed or uses an unsupported version.
     public func parseHeader() throws -> Header {
         // Read the Magic Number first
         guard let magicNumber = read(length: FieldSize.magicNumberSize) else {
@@ -218,12 +189,13 @@ public class BinaryParser {
             throw ParsingError.invalidFormat
         }
 
-        // Branch based on version
+        // Branch based on version. v13 ("L1M") creation and rewrap support has been
+        // removed; only v12 ("L1L") NanoTDFs are supported.
         switch version {
         case 0x4C: // v12 "L1L"
             return try parseHeaderV12()
-        case 0x4D: // v13 "L1M"
-            return try parseHeaderV13()
+        case 0x4D: // v13 "L1M" — no longer supported
+            throw ParsingError.invalidVersion
         default:
             throw ParsingError.invalidVersion
         }
@@ -261,43 +233,6 @@ public class BinaryParser {
             kasEndpointLocator: kas,
             kasPublicKey: Data(), // For v12, KAS public key is empty.
         )
-
-        return Header(
-            payloadKeyAccess: payloadKeyAccess,
-            policyBindingConfig: policyBindingConfig,
-            payloadSignatureConfig: payloadSignatureConfig,
-            policy: policy,
-            ephemeralPublicKey: ephemeralPublicKey,
-        )
-    }
-
-    private func parseHeaderV13() throws -> Header {
-        // Parse the new three-field PayloadKeyAccess structure for v13
-        guard let payloadKeyAccess = readPayloadKeyAccess(version: 0x4D) else {
-            throw ParsingError.invalidKAS
-        }
-
-        guard let policyBindingConfig = readEccAndBindingMode(),
-              let payloadSignatureConfig = readSymmetricAndPayloadConfig()
-        else {
-            throw ParsingError.invalidFormat
-        }
-
-        guard let policy = try readPolicyField(bindingMode: policyBindingConfig) else {
-            throw ParsingError.invalidFormat
-        }
-
-        let ephemeralPublicKeySize = switch policyBindingConfig.curve {
-        case .secp256r1:
-            33
-        case .secp384r1:
-            49
-        case .secp521r1:
-            67
-        }
-        guard let ephemeralPublicKey = read(length: ephemeralPublicKeySize) else {
-            throw ParsingError.invalidFormat
-        }
 
         return Header(
             payloadKeyAccess: payloadKeyAccess,

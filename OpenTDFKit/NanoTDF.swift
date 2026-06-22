@@ -334,8 +334,7 @@ public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signi
     nanoTDF.header.payloadSignatureConfig.signatureCurve = config.signatureCurve
 }
 
-/// Represents the KAS (Key Access Service) information structure in the NanoTDF header,
-/// as per NanoTDF Spec v13 ("L1M").
+/// Represents the KAS (Key Access Service) information structure in the NanoTDF header.
 public struct PayloadKeyAccess: Sendable {
     /// Locator for the KAS endpoint.
     public let kasLocator: ResourceLocator
@@ -392,10 +391,7 @@ public struct Header: Sendable {
     /// Version identifier for NanoTDF v12 ("L1L").
     public static let versionV12: UInt8 = 0x4C
 
-    /// Version identifier for NanoTDF v13 ("L1M").
-    public static let version: UInt8 = 0x4D
-
-    /// Key Access Service information, as per NanoTDF Spec v13.
+    /// Key Access Service information.
     public let payloadKeyAccess: PayloadKeyAccess
 
     /// Configuration for the policy binding (e.g., curve used, binding type).

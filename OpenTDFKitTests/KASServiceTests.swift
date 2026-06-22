@@ -228,8 +228,8 @@ final class KASServiceTests: XCTestCase {
          let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
 
          // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec
-         // Using v13 (L1M) since createNanoTDF uses v13 by default
-         let salt = CryptoHelper.computeHKDFSalt(version: Header.version)
+         // Using v12 (L1L) since createNanoTDF uses v12 only
+         let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
 
          let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
              using: SHA256.self,

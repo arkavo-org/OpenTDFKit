@@ -70,7 +70,7 @@ final class IntegrationTests: XCTestCase {
         )
 
         XCTAssertNotNil(nanoTDF)
-        XCTAssertEqual(nanoTDF.header.toData()[2], Header.version, "NanoTDF should use latest version")
+        XCTAssertEqual(nanoTDF.header.toData()[2], Header.versionV12, "NanoTDF should use v12")
 
         let token = try await getOAuthToken()
 
@@ -205,7 +205,7 @@ final class IntegrationTests: XCTestCase {
         let clientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: nanoTDF.header.ephemeralPublicKey)
 
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
-        let salt = CryptoHelper.computeHKDFSalt(version: Header.version)
+        let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
 
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,

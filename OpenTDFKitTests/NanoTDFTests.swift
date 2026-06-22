@@ -124,10 +124,10 @@ final class NanoTDFTests: XCTestCase {
             }.joined()
             print("Actual:")
             print(serializedNanoTDFHexString)
-            // We now generate v13 format TDFs (4c 31 4d) but the test was written for v12 (4c 31 4c)
-            // Just check that the serialized data starts with the magic number and has a version
+            // NanoTDF creation now only generates v12 format (4c 31 4c).
+            // Just check that the serialized data starts with the magic number and version.
             XCTAssertEqual(serializedNanoTDF.prefix(2), Data([0x4C, 0x31]), "Magic number should match")
-            XCTAssertTrue(serializedNanoTDF[2] == 0x4C || serializedNanoTDF[2] == 0x4D, "Version should be either 0x4C (v12) or 0x4D (v13)")
+            XCTAssertEqual(serializedNanoTDF[2], 0x4C, "Version should be 0x4C (v12)")
             print("NanoTDF has correct magic number and version.")
             // back again
             let bparser = BinaryParser(data: serializedNanoTDF)

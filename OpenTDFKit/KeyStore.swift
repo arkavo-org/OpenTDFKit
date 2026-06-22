@@ -251,7 +251,7 @@ public actor KeyStore {
         }
     }
 
-    /// Derives the symmetric key for NanoTDF v13 payload decryption using ECDH.
+    /// Derives the symmetric key for NanoTDF payload decryption using ECDH.
     /// This function assumes the KeyStore holds the KAS's private key.
     ///
     /// - Parameters:
@@ -265,7 +265,7 @@ public actor KeyStore {
         return try await derivePayloadSymmetricKey(kasPublicKey: kasPublicKey, tdfEphemeralPublicKey: tdfEphemeralPublicKey)
     }
 
-    /// Derives the symmetric key for NanoTDF v13 payload decryption using ECDH.
+    /// Derives the symmetric key for NanoTDF payload decryption using ECDH.
     /// This function assumes the KeyStore holds the KAS's private key.
     ///
     /// - Parameters:

@@ -295,7 +295,7 @@ final class KASRewrapClientTests: XCTestCase {
     }
 
     func testRewrapRequestStructureSerialization() throws {
-        let header = Data([0x4C, 0x31, 0x4D])
+        let header = Data([0x4C, 0x31, 0x4C])
         let keyAccess = KASRewrapClient.KeyAccessObject(
             header: header.base64EncodedString(),
             url: "https://kas.example.com",
