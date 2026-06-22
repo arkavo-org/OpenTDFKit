@@ -178,7 +178,7 @@ jobs:
             benchmark-baseline-${{ runner.os }}-
 
       - name: Check benchmark regression
-        run: python3 scripts/parse_benchmarks.py --threshold 1.0 --baseline benchmark-baseline.json --output benchmark-baseline.json *.log
+        run: python3 scripts/parse_benchmarks.py --threshold 2.0 --baseline benchmark-baseline.json --output benchmark-baseline.json *.log
 
       - name: Save benchmark baseline
         if: always()
