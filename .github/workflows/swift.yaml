@@ -178,6 +178,9 @@ jobs:
             benchmark-baseline-${{ runner.os }}-
 
       - name: Check benchmark regression
+        # GitHub-hosted macOS runners are noisy, so this step reports regressions
+        # without blocking the workflow while the baseline stabilizes.
+        continue-on-error: true
         run: python3 scripts/parse_benchmarks.py --threshold 2.0 --baseline benchmark-baseline.json --output benchmark-baseline.json *.log
 
       - name: Save benchmark baseline
