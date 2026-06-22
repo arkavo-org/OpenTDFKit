@@ -219,7 +219,9 @@ public actor CryptoHelper {
     /// - Throws: `CryptoKitError` if the AES-GCM seal operation fails.
     func createGMACBinding(policyBody: Data, symmetricKey: SymmetricKey) throws -> Data {
         // Seal empty data, authenticating the policyBody. The tag is the GMAC binding.
-        let sealedBox = try CryptoKit.AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyBody)
+        // Use a deterministic zero nonce so the binding can be recomputed and verified later.
+        let nonce = try CryptoKit.AES.GCM.Nonce(data: Data(count: CryptoConstants.aesGcmNonceSize))
+        let sealedBox = try CryptoKit.AES.GCM.seal(Data(), using: symmetricKey, nonce: nonce, authenticating: policyBody)
         // Truncate to 64 bits (8 bytes) per spec section 3.3.1.3
         return Data(sealedBox.tag.prefix(8))
     }
