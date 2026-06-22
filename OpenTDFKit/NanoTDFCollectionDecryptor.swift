@@ -100,8 +100,8 @@ public actor NanoTDFCollectionDecryptor {
             throw NanoTDFCollectionError.keyDerivationFailed("Failed to derive shared secret")
         }
 
-        // Derive symmetric key via HKDF
-        let salt = CryptoHelper.computeHKDFSalt(version: Header.version)
+        // Derive symmetric key via HKDF using v12 salt
+        let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
         let symmetricKey = await cryptoHelper.deriveSymmetricKey(
             sharedSecret: sharedSecret,
             salt: salt,
@@ -129,11 +129,11 @@ public actor NanoTDFCollectionDecryptor {
     /// - Returns: The decrypted plaintext data
     /// - Throws: `NanoTDFCollectionError.decryptionFailed` if decryption fails
     public func decryptItem(_ item: CollectionItem) throws -> Data {
-        // Update nonce buffer with item's IV
+        // Update nonce buffer with item's IV (first 3 bytes)
         let iv = item.ivCounter
-        nonceBuffer[9] = UInt8((iv >> 16) & 0xFF)
-        nonceBuffer[10] = UInt8((iv >> 8) & 0xFF)
-        nonceBuffer[11] = UInt8(iv & 0xFF)
+        nonceBuffer[0] = UInt8((iv >> 16) & 0xFF)
+        nonceBuffer[1] = UInt8((iv >> 8) & 0xFF)
+        nonceBuffer[2] = UInt8(iv & 0xFF)
 
         // Use CryptoKit for 128-bit tags (fastest path)
         if cipher == .aes256GCM128 {

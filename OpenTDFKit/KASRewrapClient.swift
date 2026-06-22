@@ -26,7 +26,7 @@ public protocol KASRewrapClientProtocol {
 }
 
 /// Client for interacting with KAS rewrap endpoint for NanoTDF
-public class KASRewrapClient: KASRewrapClientProtocol {
+public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     // MARK: - Request/Response Structures
 
     /// Key Access Object for NanoTDF rewrap
@@ -352,7 +352,7 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         )
 
         // Build the unsigned request with clientPublicKey at top level
-        let clientPublicKeyPEM = String(data: clientKeyPair.publicKey, encoding: .utf8) ?? ""
+        let clientPublicKeyPEM = try Self.pemRepresentation(compressedPublicKey: clientKeyPair.publicKey)
         let unsignedRequest = UnsignedRewrapRequest(
             clientPublicKey: clientPublicKeyPEM,
             requests: [requestEntry],
@@ -439,6 +439,9 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         let clientPublicKeyPEM = clientPrivateKey.publicKey.pemRepresentation
 
         let policyBody = manifest.encryptionInformation.policy
+        guard !policyBody.isEmpty, Data(base64Encoded: policyBody) != nil else {
+            throw KASRewrapError.invalidTDFRequest("Policy must be non-empty base64")
+        }
         let keyAccessEntries = manifest.encryptionInformation.keyAccess.filter { matchesKasURL($0.url) }
 
         guard !keyAccessEntries.isEmpty else {
@@ -562,8 +565,8 @@ public class KASRewrapClient: KASRewrapClientProtocol {
     public func fetchKasEcPublicKey(
         algorithm: RewrapAlgorithm = .ecP256,
     ) async throws -> KasEcPublicKeyResult {
-        // Validate algorithm is EC-based
-        guard algorithm == .ecP256 || algorithm == .ecP384 || algorithm == .ecP521 else {
+        // Only P-256 validation/parsing is currently implemented.
+        guard algorithm == .ecP256 else {
             throw KASRewrapError.unsupportedKeyAlgorithm(algorithm.rawValue)
         }
 
@@ -836,6 +839,29 @@ public class KASRewrapClient: KASRewrapClientProtocol {
         let sealedBox = try AES.GCM.SealedBox(combined: wrappedKey)
         let decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKey)
         return SymmetricKey(data: decryptedKey)
+    }
+
+    /// Convert a 33-byte compressed P-256 public key to PEM (SubjectPublicKeyInfo) format.
+    /// - Parameter compressedPublicKey: The 33-byte compressed EC point.
+    /// - Returns: A PEM-encoded public key string.
+    /// - Throws: KASRewrapError if the input is not a valid compressed P-256 key.
+    public static func pemRepresentation(compressedPublicKey: Data) throws -> String {
+        guard compressedPublicKey.count == 33 else {
+            throw KASRewrapError.invalidEcPublicKey("Expected 33-byte compressed P-256 key, got \(compressedPublicKey.count)")
+        }
+
+        let publicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: compressedPublicKey)
+        let derData = publicKey.derRepresentation
+        let base64String = derData.base64EncodedString(options: [
+            .lineLength64Characters,
+            .endLineWithLineFeed,
+        ])
+
+        return """
+        -----BEGIN PUBLIC KEY-----
+        \(base64String)
+        -----END PUBLIC KEY-----
+        """
     }
 
     /// Extract compressed P256 public key from PEM format

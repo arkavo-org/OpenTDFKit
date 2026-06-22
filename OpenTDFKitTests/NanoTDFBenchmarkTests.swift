@@ -121,7 +121,7 @@ final class NanoTDFBenchmarkTests: XCTestCase {
                     info: Data("benchmark".utf8),
                 )
 
-                let nonce = await cryptoHelper.generateNonce()
+                let nonce = try await cryptoHelper.generateNonce()
                 _ = try await cryptoHelper.encryptPayload(
                     plaintext: plaintext,
                     symmetricKey: symmetricKey,
@@ -142,7 +142,7 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         let plaintext = String(repeating: "Test message for decryption benchmark. ", count: 100).data(using: .utf8)!
 
         let symmetricKey = SymmetricKey(size: .bits256)
-        let nonce = await cryptoHelper.generateNonce()
+        let nonce = try await cryptoHelper.generateNonce()
         let (ciphertext, tag) = try await cryptoHelper.encryptPayload(
             plaintext: plaintext,
             symmetricKey: symmetricKey,
@@ -234,7 +234,7 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         let binding = try await cryptoHelper.createGMACBinding(policyBody: policyBody, symmetricKey: symmetricKey)
 
         // 4. Encrypt payload
-        let nonce = await cryptoHelper.generateNonce()
+        let nonce = try await cryptoHelper.generateNonce()
         let (ciphertext, tag) = try await cryptoHelper.encryptPayload(
             plaintext: plaintext,
             symmetricKey: symmetricKey,

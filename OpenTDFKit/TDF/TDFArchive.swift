@@ -98,7 +98,7 @@ public struct TDFArchiveReader {
 public struct TDFArchiveWriter {
     public var compressionMethod: ZIPFoundation.CompressionMethod
 
-    public init(compressionMethod: ZIPFoundation.CompressionMethod = .deflate) {
+    public init(compressionMethod: ZIPFoundation.CompressionMethod = .none) {
         self.compressionMethod = compressionMethod
     }
 

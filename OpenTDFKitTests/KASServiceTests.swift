@@ -38,7 +38,7 @@ final class KASServiceTests: XCTestCase {
 
         // Verify the NanoTDF was created successfully
         XCTAssertNotNil(nanoTDF)
-        XCTAssertEqual(nanoTDF.header.toData()[2], Header.version, "NanoTDF header should be v13")
+        XCTAssertEqual(nanoTDF.header.toData()[2], Header.versionV12, "NanoTDF header should be v12")
         XCTAssertEqual(nanoTDF.header.payloadKeyAccess.kasLocator.body, kasMetadata.resourceLocator.body)
         XCTAssertNotNil(nanoTDF.payload.ciphertext)
 
@@ -63,7 +63,7 @@ final class KASServiceTests: XCTestCase {
 
         // Derive symmetric key using the same parameters as in createNanoTDF
         // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec
-        let salt = CryptoHelper.computeHKDFSalt(version: Header.version)
+        let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
 
         let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
@@ -126,7 +126,7 @@ final class KASServiceTests: XCTestCase {
             policy: &policy,
             plaintext: plaintext,
         )
-        XCTAssertEqual(nanoTDF.header.toData()[2], Header.version, "NanoTDF header should be v13")
+        XCTAssertEqual(nanoTDF.header.toData()[2], Header.versionV12, "NanoTDF header should be v12")
 
         // Extract the ephemeral public key from the NanoTDF
         let ephemeralPublicKey = nanoTDF.header.ephemeralPublicKey
@@ -144,8 +144,8 @@ final class KASServiceTests: XCTestCase {
         let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData!)
         let clientPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
 
-        // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec
-        let salt = CryptoHelper.computeHKDFSalt(version: Header.version)
+        // Compute salt as SHA256(MAGIC_NUMBER + VERSION) per spec (v12 only)
+        let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
 
         // Derive the same shared secret that would be used in the TDF creation
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
@@ -259,9 +259,33 @@ final class KASServiceTests: XCTestCase {
      }
      */
 
-    func testRewrapKeyWithVersionHinting() async throws {
-        // Test that version hinting reduces cryptographic operations
+    func testRewrapKeyEndpointPath() async throws {
+        // Use a mock URLSession to capture the request URL without network I/O
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RewrapURLProtocol.self]
+        let session = URLSession(configuration: config)
 
+        let baseURL = URL(string: "https://kas.example.com")!
+        let kasService = KASService(keyStore: keyStore, baseURL: baseURL, urlSession: session)
+
+        let clientKey = P256.KeyAgreement.PrivateKey()
+        let wrappedKey = Data(count: 44) // enough bytes to pass initial length check
+
+        do {
+            _ = try await kasService.rewrapKey(
+                ephemeralPublicKey: clientKey.publicKey.compressedRepresentation,
+                encryptedSessionKey: wrappedKey,
+            )
+        } catch {
+            // We expect an error because the mock returns no valid response body
+        }
+
+        let requestURL = RewrapURLProtocol.lastRequestURL
+        XCTAssertNotNil(requestURL)
+        XCTAssertEqual(requestURL?.absoluteString, "https://kas.example.com/kas/v2/rewrap")
+    }
+
+    func testRewrapKeyInternalV12() async throws {
         // Create KAS service with P-256 keys
         let baseURL = URL(string: "https://kas.example.com")!
         let kasService = KASService(keyStore: keyStore, baseURL: baseURL)
@@ -281,18 +305,18 @@ final class KASServiceTests: XCTestCase {
         let kasPrivateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: kasKeyPair.privateKey)
         let sharedSecret = try kasPrivateKey.sharedSecretFromKeyAgreement(with: clientPrivateKey.publicKey)
 
-        // Test with v13 version hint
-        let saltV13 = CryptoHelper.computeHKDFSalt(version: Header.version)
-        let symmetricKeyV13 = sharedSecret.hkdfDerivedSymmetricKey(
+        // Use v12 salt (the only supported salt after v13 removal)
+        let saltV12 = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
+        let symmetricKeyV12 = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: saltV13,
+            salt: saltV12,
             sharedInfo: Data(),
             outputByteCount: 32,
         )
 
         // Encrypt the test key
         let gcmNonce = AES.GCM.Nonce()
-        let sealedBox = try AES.GCM.seal(testKeyData, using: symmetricKeyV13, nonce: gcmNonce)
+        let sealedBox = try AES.GCM.seal(testKeyData, using: symmetricKeyV12, nonce: gcmNonce)
 
         // Format encrypted key as expected by rewrapKeyInternal: nonce + ciphertext + tag
         var encryptedKey = Data()
@@ -302,37 +326,45 @@ final class KASServiceTests: XCTestCase {
         encryptedKey.append(sealedBox.ciphertext)
         encryptedKey.append(sealedBox.tag)
 
-        // Test rewrap with v13 hint - should succeed on first try
-        let (rewrappedKeyV13, newKeyPairV13) = try await kasService.rewrapKeyInternal(
+        // Test rewrap with v12 salt
+        let (rewrappedKey, newKeyPair) = try await kasService.rewrapKeyInternal(
             ephemeralPublicKey: clientPublicKey,
             encryptedKey: encryptedKey,
             privateKeyData: kasKeyPair.privateKey,
-            version: Header.version, // v13 hint
         )
 
-        XCTAssertNotNil(rewrappedKeyV13)
-        XCTAssertNotNil(newKeyPairV13)
-
-        // Test rewrap with v12 hint - should fallback to v13
-        let (rewrappedKeyV12, newKeyPairV12) = try await kasService.rewrapKeyInternal(
-            ephemeralPublicKey: clientPublicKey,
-            encryptedKey: encryptedKey,
-            privateKeyData: kasKeyPair.privateKey,
-            version: Header.versionV12, // v12 hint
-        )
-
-        XCTAssertNotNil(rewrappedKeyV12)
-        XCTAssertNotNil(newKeyPairV12)
-
-        // Test rewrap with no hint - should try v13 first
-        let (rewrappedKeyNoHint, newKeyPairNoHint) = try await kasService.rewrapKeyInternal(
-            ephemeralPublicKey: clientPublicKey,
-            encryptedKey: encryptedKey,
-            privateKeyData: kasKeyPair.privateKey,
-            version: nil, // No hint
-        )
-
-        XCTAssertNotNil(rewrappedKeyNoHint)
-        XCTAssertNotNil(newKeyPairNoHint)
+        XCTAssertFalse(rewrappedKey.isEmpty)
+        XCTAssertFalse(newKeyPair.publicKey.isEmpty)
+        XCTAssertFalse(newKeyPair.privateKey.isEmpty)
     }
+}
+
+// MARK: - Mock URLProtocol for rewrap endpoint verification
+
+final class RewrapURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var lastRequestURL: URL?
+
+    override class func canInit(with _: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        RewrapURLProtocol.lastRequestURL = request.url
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"],
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        let body = Data("{\"rewrapped_key\":\"dGVzdA==\"}".utf8)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

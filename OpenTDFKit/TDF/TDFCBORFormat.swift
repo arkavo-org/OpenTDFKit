@@ -57,15 +57,20 @@ public enum TDFCBOREnums {
     public static let encryptionTypeSplit: UInt64 = 0
     public static let encryptionTypeRemote: UInt64 = 1
 
-    // Key access type: 0=wrapped, 1=remote
+    // Key access type: 0=wrapped, 1=remote, 2=remoteWrapped, 3=ecWrapped
     public static let keyAccessTypeWrapped: UInt64 = 0
     public static let keyAccessTypeRemote: UInt64 = 1
+    public static let keyAccessTypeRemoteWrapped: UInt64 = 2
+    public static let keyAccessTypeEcWrapped: UInt64 = 3
 
     /// Key protocol: 0=kas
     public static let keyProtocolKas: UInt64 = 0
 
-    /// Symmetric algorithm: 0=AES-256-GCM
+    /// Symmetric algorithm: 0=AES-256-GCM, 1=AES-128-GCM, 2=AES-256-CBC, 3=AES-128-CBC
     public static let symmetricAlgAes256Gcm: UInt64 = 0
+    public static let symmetricAlgAes128Gcm: UInt64 = 1
+    public static let symmetricAlgAes256Cbc: UInt64 = 2
+    public static let symmetricAlgAes128Cbc: UInt64 = 3
 
     // Hash/Signature algorithm
     public static let hashAlgHS256: UInt64 = 0
@@ -408,7 +413,12 @@ extension TDFCBOREnvelope {
     /// Encode a single key access object to CBOR
     private func encodeKeyAccessToCBOR(_ ka: TDFKeyAccessObject) throws -> CBOR {
         // Key access type enum
-        let kaTypeEnum: UInt64 = ka.type == .wrapped ? TDFCBOREnums.keyAccessTypeWrapped : TDFCBOREnums.keyAccessTypeRemote
+        let kaTypeEnum: UInt64 = switch ka.type {
+        case .wrapped: TDFCBOREnums.keyAccessTypeWrapped
+        case .remote: TDFCBOREnums.keyAccessTypeRemote
+        case .remoteWrapped: TDFCBOREnums.keyAccessTypeRemoteWrapped
+        case .ecWrapped: TDFCBOREnums.keyAccessTypeEcWrapped
+        }
 
         // Protocol enum: "kas" -> 0 (currently only kas is supported)
         let protocolEnum: UInt64 = TDFCBOREnums.keyProtocolKas
@@ -419,7 +429,7 @@ extension TDFCBOREnvelope {
         }
 
         // Encode policy binding
-        let bindingAlgEnum = hashAlgToEnum(ka.policyBinding.alg)
+        let bindingAlgEnum = try hashAlgToEnum(ka.policyBinding.alg)
         guard let bindingHashData = Data(base64Encoded: ka.policyBinding.hash) else {
             throw TDFCBORError.cborEncodingFailed("Invalid policy binding hash base64")
         }
@@ -455,8 +465,15 @@ extension TDFCBOREnvelope {
 
     /// Encode method to CBOR
     private func encodeMethodToCBOR(_ method: TDFMethodDescriptor) throws -> CBOR {
-        // Algorithm enum: "AES-256-GCM" -> 0 (currently only AES-256-GCM is supported)
-        let algEnum: UInt64 = TDFCBOREnums.symmetricAlgAes256Gcm
+        // Algorithm enum mapping
+        let algEnum: UInt64 = switch method.algorithm {
+        case "AES-256-GCM": TDFCBOREnums.symmetricAlgAes256Gcm
+        case "AES-128-GCM": TDFCBOREnums.symmetricAlgAes128Gcm
+        case "AES-256-CBC": TDFCBOREnums.symmetricAlgAes256Cbc
+        case "AES-128-CBC": TDFCBOREnums.symmetricAlgAes128Cbc
+        default:
+            throw TDFCBORError.cborEncodingFailed("Unsupported symmetric algorithm: \(method.algorithm)")
+        }
 
         // Decode IV from base64 to raw bytes
         guard let ivData = Data(base64Encoded: method.iv) else {
@@ -475,7 +492,7 @@ extension TDFCBOREnvelope {
     /// Encode integrity information to CBOR
     private func encodeIntegrityToCBOR(_ integrity: TDFIntegrityInformation) throws -> CBOR {
         // Encode root signature
-        let rootAlgEnum = hashAlgToEnum(integrity.rootSignature.alg)
+        let rootAlgEnum = try hashAlgToEnum(integrity.rootSignature.alg)
         guard let rootSigData = Data(base64Encoded: integrity.rootSignature.sig) else {
             throw TDFCBORError.cborEncodingFailed("Invalid root signature base64")
         }
@@ -486,7 +503,7 @@ extension TDFCBOREnvelope {
         ]
 
         // Segment hash algorithm enum
-        let segHashAlgEnum = hashAlgToEnum(integrity.segmentHashAlg)
+        let segHashAlgEnum = try hashAlgToEnum(integrity.segmentHashAlg)
 
         // Encode segments
         let segmentsArray: [CBOR] = try integrity.segments.map { seg in
@@ -522,7 +539,7 @@ extension TDFCBOREnvelope {
     }
 
     /// Convert hash algorithm string to enum value
-    private func hashAlgToEnum(_ alg: String) -> UInt64 {
+    private func hashAlgToEnum(_ alg: String) throws -> UInt64 {
         switch alg {
         case "HS256": TDFCBOREnums.hashAlgHS256
         case "HS384": TDFCBOREnums.hashAlgHS384
@@ -532,12 +549,13 @@ extension TDFCBOREnvelope {
         case "ES256": TDFCBOREnums.hashAlgES256
         case "ES384": TDFCBOREnums.hashAlgES384
         case "ES512": TDFCBOREnums.hashAlgES512
-        default: TDFCBOREnums.hashAlgHS256
+        default:
+            throw TDFCBORError.cborEncodingFailed("Unsupported hash algorithm: \(alg)")
         }
     }
 
     /// Convert enum value to hash algorithm string
-    private static func enumToHashAlg(_ val: UInt64) -> String {
+    private static func enumToHashAlg(_ val: UInt64) throws -> String {
         switch val {
         case TDFCBOREnums.hashAlgHS256: "HS256"
         case TDFCBOREnums.hashAlgHS384: "HS384"
@@ -547,7 +565,8 @@ extension TDFCBOREnvelope {
         case TDFCBOREnums.hashAlgES256: "ES256"
         case TDFCBOREnums.hashAlgES384: "ES384"
         case TDFCBOREnums.hashAlgES512: "ES512"
-        default: "HS256"
+        default:
+            throw TDFCBORError.cborDecodingFailed("Unsupported hash algorithm enum: \(val)")
         }
     }
 
@@ -803,7 +822,13 @@ extension TDFCBOREnvelope {
         if let typeValue = kaMap[.unsignedInt(UInt64(TDFCBORKeyAccessKey.type.rawValue))],
            case let .unsignedInt(typeEnum) = typeValue
         {
-            accessType = typeEnum == TDFCBOREnums.keyAccessTypeWrapped ? .wrapped : .remote
+            accessType = switch typeEnum {
+            case TDFCBOREnums.keyAccessTypeWrapped: .wrapped
+            case TDFCBOREnums.keyAccessTypeRemote: .remote
+            case TDFCBOREnums.keyAccessTypeRemoteWrapped: .remoteWrapped
+            case TDFCBOREnums.keyAccessTypeEcWrapped: .ecWrapped
+            default: .wrapped
+            }
         }
 
         // URL
@@ -875,7 +900,7 @@ extension TDFCBOREnvelope {
         if let algValue = pbMap[.unsignedInt(UInt64(TDFCBORPolicyBindingKey.alg.rawValue))],
            case let .unsignedInt(algEnum) = algValue
         {
-            alg = enumToHashAlg(algEnum)
+            alg = try enumToHashAlg(algEnum)
         }
 
         var hash = ""
@@ -890,8 +915,19 @@ extension TDFCBOREnvelope {
 
     /// Decode method from CBOR
     private static func decodeMethod(_ methodMap: [CBOR: CBOR]) throws -> TDFMethodDescriptor {
-        // Currently only AES-256-GCM is supported
-        let algorithm = "AES-256-GCM"
+        var algorithm = "AES-256-GCM"
+        if let algValue = methodMap[.unsignedInt(UInt64(TDFCBORMethodKey.algorithm.rawValue))],
+           case let .unsignedInt(algEnum) = algValue
+        {
+            algorithm = switch algEnum {
+            case TDFCBOREnums.symmetricAlgAes256Gcm: "AES-256-GCM"
+            case TDFCBOREnums.symmetricAlgAes128Gcm: "AES-128-GCM"
+            case TDFCBOREnums.symmetricAlgAes256Cbc: "AES-256-CBC"
+            case TDFCBOREnums.symmetricAlgAes128Cbc: "AES-128-CBC"
+            default:
+                throw TDFCBORError.cborDecodingFailed("Unsupported symmetric algorithm enum: \(algEnum)")
+            }
+        }
 
         var iv = ""
         if let ivValue = methodMap[.unsignedInt(UInt64(TDFCBORMethodKey.iv.rawValue))],
@@ -925,7 +961,7 @@ extension TDFCBOREnvelope {
         if let segAlgValue = intMap[.unsignedInt(UInt64(TDFCBORIntegrityKey.segmentHashAlg.rawValue))],
            case let .unsignedInt(segAlgEnum) = segAlgValue
         {
-            segmentHashAlg = enumToHashAlg(segAlgEnum)
+            segmentHashAlg = try enumToHashAlg(segAlgEnum)
         }
 
         // Segments
@@ -970,7 +1006,7 @@ extension TDFCBOREnvelope {
         if let algValue = sigMap[.unsignedInt(UInt64(TDFCBORRootSigKey.alg.rawValue))],
            case let .unsignedInt(algEnum) = algValue
         {
-            alg = enumToHashAlg(algEnum)
+            alg = try enumToHashAlg(algEnum)
         }
 
         var sig = ""

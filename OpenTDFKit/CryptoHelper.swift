@@ -229,10 +229,18 @@ public actor CryptoHelper {
     /// Generates a cryptographically secure random nonce (IV) of the specified length.
     /// - Parameter length: The desired length of the nonce in bytes. Defaults to `CryptoConstants.aesGcmNonceSize` (12 bytes).
     /// - Returns: The generated nonce as `Data`.
-    func generateNonce(length: Int = CryptoConstants.aesGcmNonceSize) -> Data {
+    func generateNonce(length: Int = CryptoConstants.aesGcmNonceSize) throws -> Data {
         var nonce = Data(count: length)
         // Use SecRandomCopyBytes for generating secure random data.
-        _ = nonce.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, length, $0.baseAddress!) }
+        let status = nonce.withUnsafeMutableBytes { buffer -> OSStatus in
+            guard let baseAddress = buffer.baseAddress else {
+                return errSecAllocate
+            }
+            return SecRandomCopyBytes(kSecRandomDefault, length, baseAddress)
+        }
+        guard status == errSecSuccess else {
+            throw CryptoHelperError.keyGenerationFailed
+        }
         return nonce
     }
 

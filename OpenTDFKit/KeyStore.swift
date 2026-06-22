@@ -23,15 +23,14 @@ public struct StoredKeyPair: Sendable {
 
     public var publicKey: Data {
         bytes.withUnsafeBufferPointer { buffer in
-            Data(bytes: buffer.baseAddress!, count: publicKeyLength)
+            Data(buffer.prefix(publicKeyLength))
         }
     }
 
     var privateKey: Data {
         bytes.withUnsafeBufferPointer { buffer in
-            let privateKeyStart = buffer.baseAddress!.advanced(by: publicKeyLength)
-            let privateKeyLength = buffer.count - publicKeyLength
-            return Data(bytes: privateKeyStart, count: privateKeyLength)
+            let privateKeyStart = buffer.index(buffer.startIndex, offsetBy: publicKeyLength)
+            return Data(buffer.suffix(from: privateKeyStart))
         }
     }
 

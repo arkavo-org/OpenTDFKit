@@ -262,6 +262,31 @@ final class NanoTDFTests: XCTestCase {
         }
     }
 
+    func testZeroLengthEmbeddedPolicyBodyFails() throws {
+        // Build a minimal v12 header with an embedded plaintext policy whose body length is 0.
+        // Magic + version + KAS locator + binding config + payload config + policy type (embeddedPlaintext=0x01)
+        // + 2-byte body length 0x0000.
+        let kasLocator = ResourceLocator(protocolEnum: .http, body: "kas.example.com")!
+        var data = Data()
+        data.append(Header.magicNumber)
+        data.append(Header.versionV12)
+        data.append(kasLocator.toData())
+        data.append(PolicyBindingConfig(ecdsaBinding: false, curve: .secp256r1).toData())
+        data.append(SignatureAndPayloadConfig(signed: false, signatureCurve: nil, payloadCipher: .aes256GCM128).toData())
+        data.append(Policy.PolicyType.embeddedPlaintext.rawValue)
+        data.append(contentsOf: [0x00, 0x00]) // zero-length body
+
+        let parser = BinaryParser(data: data)
+        XCTAssertThrowsError(try parser.parseHeader()) { error in
+            guard let parsingError = error as? ParsingError,
+                  case .invalidPolicy = parsingError
+            else {
+                XCTFail("Expected ParsingError.invalidPolicy, got \(error)")
+                return
+            }
+        }
+    }
+
     func testNoPolicyBinaryParser() throws {
         let stringWithSpaces = """
         4c 31 4c 01 1a 70 6c 61 74 66 6f 72 6d 2e 76 69 72 74 72 75

@@ -201,7 +201,7 @@ public extension TDFJSONEnvelope {
             payload: TDFPayloadDescriptor(
                 type: .reference,
                 url: "inline",
-                protocolValue: .zip,
+                protocolValue: .https,
                 isEncrypted: true,
                 mimeType: payload.mimeType,
             ),

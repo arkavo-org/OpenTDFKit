@@ -5,11 +5,10 @@ import Foundation
 /// Detects the format of TDF data by examining magic bytes and structure.
 /// Detection order: CBOR (magic bytes) → ZIP (magic bytes) → JSON (starts with '{')
 public enum TDFFormatDetector {
-    /// CBOR magic bytes: self-describe CBOR tag + map + key 1
-    /// D9 D9F7 = tag(55799) for self-describe CBOR
-    /// A5 = map(5) for 5 elements
-    /// 01 = unsigned int 1 (first key)
-    public static let cborMagic: [UInt8] = [0xD9, 0xD9, 0xF7, 0xA5]
+    /// CBOR magic bytes: self-describe CBOR tag.
+    /// D9 D9F7 = tag(55799) for self-describe CBOR.
+    /// The following byte must be a CBOR map (0xA0-0xBF).
+    public static let cborMagic: [UInt8] = [0xD9, 0xD9, 0xF7]
 
     /// ZIP magic bytes (PK signature)
     public static let zipMagic: [UInt8] = [0x50, 0x4B, 0x03, 0x04]
@@ -30,7 +29,9 @@ public enum TDFFormatDetector {
         // Check CBOR magic bytes first (definitive)
         if data.count >= 4 {
             let header = [UInt8](data.prefix(4))
-            if header == cborMagic {
+            let prefix = [UInt8](data.prefix(cborMagic.count))
+            // Match the self-describe CBOR tag and ensure the next byte is a CBOR map.
+            if prefix == cborMagic, header[cborMagic.count] & 0xE0 == 0xA0 {
                 return .cbor
             }
         }

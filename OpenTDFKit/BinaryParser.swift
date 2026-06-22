@@ -9,9 +9,8 @@ public class BinaryParser {
     }
 
     func read(length: Int) -> Data? {
-        guard length > 0 else { return nil }
+        guard length >= 0 else { return nil }
         guard cursor >= 0 else { return nil }
-        guard !data.isEmpty else { return nil }
         guard cursor + length <= data.count else { return nil }
         let range = cursor ..< (cursor + length)
         cursor += length
@@ -62,7 +61,7 @@ public class BinaryParser {
         return ResourceLocator(protocolEnum: protocolEnumValue, body: bodyString, identifier: identifier)
     }
 
-    private func readPolicyField(bindingMode: PolicyBindingConfig) -> Policy? {
+    private func readPolicyField(bindingMode: PolicyBindingConfig) throws -> Policy? {
         guard let policyTypeByte = readByte(),
               let policyType = Policy.PolicyType(rawValue: policyTypeByte)
         else {
@@ -72,46 +71,40 @@ public class BinaryParser {
         switch policyType {
         case .remote:
             guard let resourceLocator = readResourceLocator() else {
-                print("Failed to read Remote Policy resource locator")
-                return nil
+                throw ParsingError.invalidPolicy
             }
             // Binding
             guard let binding = readPolicyBinding(bindingMode: bindingMode) else {
-                print("Failed to read Remote Policy binding")
-                return nil
+                throw ParsingError.invalidPolicy
             }
             return Policy(type: .remote, body: nil, remote: resourceLocator, binding: binding)
         case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
-            let policyData = readEmbeddedPolicyBody(policyType: policyType, bindingMode: bindingMode)
+            let policyData = try readEmbeddedPolicyBody(policyType: policyType, bindingMode: bindingMode)
             // Binding
             guard let binding = readPolicyBinding(bindingMode: bindingMode) else {
-                print("Failed to read Remote Policy binding")
-                return nil
+                throw ParsingError.invalidPolicy
             }
             return Policy(type: policyType, body: policyData, remote: nil, binding: binding)
         }
     }
 
-    private func readEmbeddedPolicyBody(policyType: Policy.PolicyType, bindingMode: PolicyBindingConfig) -> EmbeddedPolicyBody? {
+    private func readEmbeddedPolicyBody(policyType: Policy.PolicyType, bindingMode: PolicyBindingConfig) throws -> EmbeddedPolicyBody? {
         guard let contentLengthData = read(length: 2)
         else {
-            print("Failed to read Embedded Policy content length")
-            return nil
+            throw ParsingError.invalidPolicy
         }
         let plaintextCiphertextLengthData = contentLengthData.prefix(2)
 
         let bytes = Array(plaintextCiphertextLengthData)
         let contentLength = (UInt16(bytes[0]) << 8) | UInt16(bytes[1])
 
-        // if no policy added then no read
         // Note 3.4.2.3.2 Body for Embedded Policy states Minimum Length is 1
         if contentLength == 0 {
-            return EmbeddedPolicyBody(body: Data([0x00]), keyAccess: nil)
+            throw ParsingError.invalidPolicy
         }
 
         guard let plaintextCiphertext = read(length: Int(contentLength)) else {
-            print("Failed to read Embedded Policy plaintext / ciphertext")
-            return nil
+            throw ParsingError.invalidPolicy
         }
         // Policy Key Access
         let keyAccess = policyType == .embeddedEncryptedWithPolicyKeyAccess ? readPolicyKeyAccess(bindingMode: bindingMode) : nil
@@ -121,14 +114,12 @@ public class BinaryParser {
 
     func readEccAndBindingMode() -> PolicyBindingConfig? {
         guard let eccAndBindingMode = readByte() else {
-            print("Failed to read BindingMode")
             return nil
         }
         let ecdsaBinding = (eccAndBindingMode & (1 << 7)) != 0
         let ephemeralECCParamsEnumValue = Curve(rawValue: eccAndBindingMode & 0x7)
 
         guard let ephemeralECCParamsEnum = ephemeralECCParamsEnumValue else {
-            print("Unsupported Ephemeral ECC Params Enum value")
             return nil
         }
 
@@ -242,10 +233,19 @@ public class BinaryParser {
         // Parse the legacy single-field ResourceLocator KAS for v12
         guard let kas = readResourceLocator(),
               let policyBindingConfig = readEccAndBindingMode(),
-              let payloadSignatureConfig = readSymmetricAndPayloadConfig(),
-              let policy = readPolicyField(bindingMode: policyBindingConfig)
+              let payloadSignatureConfig = readSymmetricAndPayloadConfig()
         else {
             throw ParsingError.invalidFormat
+        }
+
+        let policy: Policy
+        do {
+            guard let p = try readPolicyField(bindingMode: policyBindingConfig) else {
+                throw ParsingError.invalidFormat
+            }
+            policy = p
+        } catch {
+            throw error
         }
 
         let ephemeralPublicKeySize = switch policyBindingConfig.curve {
@@ -284,10 +284,19 @@ public class BinaryParser {
         }
 
         guard let policyBindingConfig = readEccAndBindingMode(),
-              let payloadSignatureConfig = readSymmetricAndPayloadConfig(),
-              let policy = readPolicyField(bindingMode: policyBindingConfig)
+              let payloadSignatureConfig = readSymmetricAndPayloadConfig()
         else {
             throw ParsingError.invalidFormat
+        }
+
+        let policy: Policy
+        do {
+            guard let p = try readPolicyField(bindingMode: policyBindingConfig) else {
+                throw ParsingError.invalidFormat
+            }
+            policy = p
+        } catch {
+            throw error
         }
 
         let ephemeralPublicKeySize = switch policyBindingConfig.curve {
@@ -379,14 +388,12 @@ public class BinaryParser {
             publicKeyLength = 67
             signatureLength = 132
         case .none:
-            print("signatureECCMode not found")
             throw ParsingError.invalidFormat
         }
 
         guard let publicKey = read(length: publicKeyLength),
               let signature = read(length: signatureLength)
         else {
-            print("publicKey or signatureLength read error")
             throw ParsingError.invalidFormat
         }
         return Signature(publicKey: publicKey, signature: signature)

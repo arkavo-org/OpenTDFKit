@@ -152,13 +152,13 @@ public struct CollectionItem: Sendable {
         3 + storage.count
     }
 
-    /// Convert 3-byte IV to 12-byte GCM nonce: [0,0,0,0,0,0,0,0,0,b1,b2,b3]
-    /// This matches the NanoTDF nonce padding convention
+    /// Convert 3-byte IV to 12-byte GCM nonce: [b1,b2,b3,0,0,0,0,0,0,0,0,0]
+    /// This matches CryptoHelper.adjustNonce and standard NanoTDF nonce padding.
     public func toGCMNonce() -> Data {
         var nonce = Data(count: 12)
-        nonce[9] = UInt8((ivCounter >> 16) & 0xFF)
-        nonce[10] = UInt8((ivCounter >> 8) & 0xFF)
-        nonce[11] = UInt8(ivCounter & 0xFF)
+        nonce[0] = UInt8((ivCounter >> 16) & 0xFF)
+        nonce[1] = UInt8((ivCounter >> 8) & 0xFF)
+        nonce[2] = UInt8(ivCounter & 0xFF)
         return nonce
     }
 
@@ -268,7 +268,7 @@ public actor NanoTDFCollection {
     private var ivCounter: UInt32 = 1
 
     /// Pre-allocated 12-byte nonce buffer (reused for each encryption)
-    /// Format: [0,0,0,0,0,0,0,0,0, iv[0], iv[1], iv[2]]
+    /// Format: [iv[0], iv[1], iv[2], 0,0,0,0,0,0,0,0,0]
     private var nonceBuffer: ContiguousArray<UInt8>
 
     // MARK: - Properties
@@ -338,10 +338,10 @@ public actor NanoTDFCollection {
             throw NanoTDFCollectionError.ivExhausted
         }
 
-        // Update nonce buffer with new IV (last 3 bytes)
-        nonceBuffer[9] = UInt8((iv >> 16) & 0xFF)
-        nonceBuffer[10] = UInt8((iv >> 8) & 0xFF)
-        nonceBuffer[11] = UInt8(iv & 0xFF)
+        // Update nonce buffer with new IV (first 3 bytes)
+        nonceBuffer[0] = UInt8((iv >> 16) & 0xFF)
+        nonceBuffer[1] = UInt8((iv >> 8) & 0xFF)
+        nonceBuffer[2] = UInt8(iv & 0xFF)
 
         // Use CryptoKit for 128-bit tags (fastest path)
         if configuration.cipher == .aes256GCM128 {
