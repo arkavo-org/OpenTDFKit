@@ -88,7 +88,6 @@ final class InitializationTests: XCTestCase {
         XCTAssertNotNil(locator)
         let nanoTDF = initializeSmallNanoTDF(kasResourceLocator: locator!)
         let data = nanoTDF.toData()
-        print("data.count", data.count)
         XCTAssertLessThan(data.count, 240)
     }
 

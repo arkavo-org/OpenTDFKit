@@ -344,8 +344,10 @@ public actor KASService {
         policyData: Data,
         symmetricKey: SymmetricKey,
     ) async throws -> Bool {
-        // For GMAC binding verification, create a tag with empty ciphertext and the policy data as authenticated data
-        let fullTag = try AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyData).tag
+        // For GMAC binding verification, create a tag with empty ciphertext and the policy data as authenticated data.
+        // Use the same deterministic zero nonce that createGMACBinding uses so the tag can be reproduced.
+        let nonce = try AES.GCM.Nonce(data: Data(count: 12))
+        let fullTag = try AES.GCM.seal(Data(), using: symmetricKey, nonce: nonce, authenticating: policyData).tag
         guard policyBinding.count == 8 || policyBinding.count == fullTag.count else {
             return false
         }

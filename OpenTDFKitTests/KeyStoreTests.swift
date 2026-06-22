@@ -26,7 +26,7 @@ final class KeyStoreTests: XCTestCase {
 
         // Serialize all keys
         let serializedData = await keyStore.serialize()
-        print("Total serialized size: \(serializedData.count) bytes")
+        XCTAssertGreaterThan(serializedData.count, 0, "Serialized data should not be empty")
 
         // Create new store and deserialize
         let restoredStore = KeyStore(curve: .secp256r1)

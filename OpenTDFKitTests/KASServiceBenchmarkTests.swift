@@ -129,8 +129,17 @@ final class KASServiceBenchmarkTests: XCTestCase {
             let policyData = Data(repeating: 0x42, count: size)
             let symmetricKey = SymmetricKey(size: .bits256)
 
-            // Create a GMAC binding
-            let policyBinding = try AES.GCM.seal(Data(), using: symmetricKey, authenticating: policyData).tag
+            // Create a deterministic GMAC binding using the same zero nonce as production.
+            let nonce = try AES.GCM.Nonce(data: Data(count: 12))
+            let policyBinding = try AES.GCM.seal(Data(), using: symmetricKey, nonce: nonce, authenticating: policyData).tag
+
+            // Sanity-check that verification succeeds before benchmarking.
+            let isValid = try await kasService.verifyPolicyBinding(
+                policyBinding: policyBinding,
+                policyData: policyData,
+                symmetricKey: symmetricKey,
+            )
+            XCTAssertTrue(isValid, "Benchmark binding should be valid")
 
             // Start benchmark
             let startTime = DispatchTime.now()

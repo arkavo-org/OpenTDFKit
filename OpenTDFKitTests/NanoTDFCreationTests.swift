@@ -27,40 +27,15 @@ class NanoTDFCreationTests: XCTestCase {
         XCTAssertNotNil(nanoTDF.payload.iv, "Payload nonce should not be nil")
         XCTAssertNotNil(nanoTDF.payload.ciphertext, "Payload ciphertext should not be nil")
         XCTAssertEqual(nanoTDF.payload.length, 43)
-        print(nanoTDF)
         // round trip - serialize
         let serializedData = nanoTDF.toData()
-        var counter = 0
-        let serializedHexString = serializedData.map { byte -> String in
-            counter += 1
-            let newline = counter % 20 == 0 ? "\n" : " "
-            return String(format: "%02x", byte) + newline
-        }.joined()
-        print("Created:")
-        print(serializedHexString)
         // round trip - parse
         let parser = BinaryParser(data: serializedData)
         let header = try parser.parseHeader()
-        print("Parsed Header:", header)
-        let pheader = header.toData()
-        counter = 0
-        let pheaderHexString = pheader.map { byte -> String in
-            counter += 1
-            let newline = counter % 20 == 0 ? "\n" : " "
-            return String(format: "%02x", byte) + newline
-        }.joined()
-        print("Parsed Header:")
-        print(pheaderHexString)
-        // Policy
-        let policyHexString = header.policy.toData().map { String(format: "%02x", $0) }.joined(separator: " ")
-        print("Policy:", policyHexString)
-        // Ephemeral Key
-        let ephemeralKeyHexString = header.ephemeralPublicKey.map { String(format: "%02x", $0) }.joined(separator: " ")
-        print("Ephemeral Key:", ephemeralKeyHexString)
+        XCTAssertEqual(header.toData(), nanoTDF.header.toData(), "Header should serialize consistently")
         let payload = try parser.parsePayload(config: header.payloadSignatureConfig)
         let snanoTDF = NanoTDF(header: header, payload: payload, signature: nil)
-        // Print final the signature NanoTDF
-        print(snanoTDF)
+        XCTAssertEqual(snanoTDF.toData(), serializedData, "Round-tripped NanoTDF should equal original")
         XCTAssertEqual(payload.length, 43)
     }
 }
