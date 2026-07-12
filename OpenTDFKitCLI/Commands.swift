@@ -492,9 +492,10 @@ enum Commands {
 
     /// Resolve an OpenTDFConfiguration for the platform hosting `kasURL`.
     /// Tries well-known discovery at the platform root (PLATFORMURL env, else
-    /// the scheme/host/port of `kasURL`), falling back to synthesized Connect
-    /// endpoints. The well-known doc and Connect endpoints live at the platform
-    /// root, not under the KAS `/kas` path.
+    /// the scheme/host/port of `kasURL`). If well-known is missing **or**
+    /// present without a usable `kas` block, fall back to synthesized Connect
+    /// endpoints at the default KAS base. Connect paths live at the platform
+    /// root, not under the KAS `/kas` identity path.
     static func resolveConfiguration(kasURL: URL, token _: String) async -> OpenTDFConfiguration {
         let platformBase: String
         if let env = ProcessInfo.processInfo.environment["PLATFORMURL"], !env.isEmpty {
@@ -506,10 +507,39 @@ enum Commands {
             comps.port = kasURL.port
             platformBase = comps.string ?? kasURL.absoluteString
         }
+        let fallbackBase = defaultKasConnectBase(kasURL: kasURL, platformBase: platformBase)
         if let cfg = try? await fetchWellKnown(platformURL: platformBase) {
-            return cfg
+            // Incomplete well-known (e.g. IdP only, no kas) → keep IdP, fill kas.
+            return cfg.withKasFallback(baseURL: fallbackBase)
         }
-        return OpenTDFConfiguration.forKasConnect(platformBase)
+        return OpenTDFConfiguration.forKasConnect(fallbackBase)
+    }
+
+    /// Connect endpoints attach to the platform root. Prefer `PLATFORMURL`,
+    /// then `KASURL`/`TDF_KAS_URL` with a trailing `/kas` stripped, then the
+    /// scheme/host/port derived from the manifest `kasURL`.
+    static func defaultKasConnectBase(kasURL: URL, platformBase: String) -> String {
+        func stripKasPath(_ raw: String) -> String {
+            var s = raw
+            while s.hasSuffix("/") {
+                s.removeLast()
+            }
+            if s.hasSuffix("/kas") {
+                s = String(s.dropLast(4))
+            }
+            while s.hasSuffix("/") {
+                s.removeLast()
+            }
+            return s
+        }
+        let env = ProcessInfo.processInfo.environment
+        if let platform = env["PLATFORMURL"], !platform.isEmpty {
+            return stripKasPath(platform)
+        }
+        if let kas = env["KASURL"] ?? env["TDF_KAS_URL"], !kas.isEmpty {
+            return stripKasPath(kas)
+        }
+        return stripKasPath(platformBase.isEmpty ? kasURL.absoluteString : platformBase)
     }
 
     /// Fetch KAS public key

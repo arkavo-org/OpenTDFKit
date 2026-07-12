@@ -65,6 +65,26 @@ public struct OpenTDFConfiguration: Codable, Sendable {
             platformIssuer: nil,
         )
     }
+
+    /// If this document already exposes usable KAS endpoints, return self.
+    /// Otherwise synthesize Connect endpoints for `fallbackBaseURL` while
+    /// preserving any `idp` / `platformIssuer` discovered from well-known.
+    ///
+    /// Local platforms often serve `/.well-known/opentdf-configuration` with
+    /// IdP metadata but no `kas` block; Stage-1 clients must fall back to the
+    /// default KAS URL (typically `PLATFORMURL` / stripped `KASURL`) rather
+    /// than fail with "missing a 'kas' block".
+    public func withKasFallback(baseURL: String) -> OpenTDFConfiguration {
+        if (try? KasEndpoints.from(self)) != nil {
+            return self
+        }
+        let synthesized = OpenTDFConfiguration.forKasConnect(baseURL)
+        return OpenTDFConfiguration(
+            kas: synthesized.kas,
+            idp: idp,
+            platformIssuer: platformIssuer,
+        )
+    }
 }
 
 public struct KasConfig: Codable, Sendable {
