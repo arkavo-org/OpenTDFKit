@@ -195,6 +195,12 @@ public enum TDFCrypto {
         return Data(sealed.tag)
     }
 
+    /// Wrap the payload DEK with the KAS RSA public key.
+    ///
+    /// Uses RSA-OAEP with **SHA-1** to match the OpenTDF platform / go SDK
+    /// (`rsa.EncryptOAEP(sha1.New(), …)`). SHA-256 OAEP is not interoperable
+    /// with current KAS unwrap and surfaces as rewrap failures ("access denied"
+    /// / "bad request" after DEK decrypt fails).
     public static func wrapSymmetricKeyWithRSA(publicKeyPEM: String, symmetricKey: SymmetricKey) throws -> String {
         let keyData = symmetricKey.withUnsafeBytes { rawBuffer -> Data in
             Data(rawBuffer)
@@ -203,7 +209,7 @@ public enum TDFCrypto {
         var error: Unmanaged<CFError>?
         guard let encrypted = SecKeyCreateEncryptedData(
             publicKey,
-            .rsaEncryptionOAEPSHA256,
+            .rsaEncryptionOAEPSHA1,
             keyData as CFData,
             &error,
         ) as Data? else {
@@ -212,6 +218,7 @@ public enum TDFCrypto {
         return encrypted.base64EncodedString()
     }
 
+    /// Unwrap a KAS RSA-wrapped DEK (OAEP-SHA1, matching go platform).
     public static func unwrapSymmetricKeyWithRSA(privateKeyPEM: String, wrappedKey: String) throws -> SymmetricKey {
         let privateKey = try loadRSAPrivateKey(fromPEM: privateKeyPEM)
         guard let wrappedData = Data(base64Encoded: wrappedKey) else {
@@ -220,7 +227,7 @@ public enum TDFCrypto {
         var error: Unmanaged<CFError>?
         guard var decrypted = SecKeyCreateDecryptedData(
             privateKey,
-            .rsaEncryptionOAEPSHA256,
+            .rsaEncryptionOAEPSHA1,
             wrappedData as CFData,
             &error,
         ) as Data? else {

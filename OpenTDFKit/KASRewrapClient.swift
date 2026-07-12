@@ -302,6 +302,27 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         return Data(hasher.finalize())
     }
 
+    /// Flatten rewrap metadata for deny/fail diagnostics when no `error` string is present.
+    private static func rewrapDenyReason(_ metadata: [String: RewrapMetadataValue]?) -> String? {
+        guard let metadata, !metadata.isEmpty else { return nil }
+        let parts = metadata.keys.sorted().compactMap { key -> String? in
+            guard let value = metadata[key] else { return nil }
+            switch value {
+            case let .string(s): return "\(key)=\(s)"
+            case let .number(n):
+                if n == n.rounded(), abs(n) < 1e15 {
+                    return "\(key)=\(Int64(n))"
+                }
+                return "\(key)=\(n)"
+            case let .bool(b): return "\(key)=\(b)"
+            case let .array(a): return "\(key)=[\(a.count)]"
+            case .object: return "\(key)={…}"
+            case .null: return "\(key)=null"
+            }
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "; ")
+    }
+
     // MARK: - KAS Public Key Response
 
     /// Response structure for KAS EC public key endpoint
@@ -487,7 +508,9 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
             }
 
             guard firstResult.status == "permit" else {
-                let reason = firstResult.metadata?["error"]?.stringValue ?? "Access denied by policy"
+                let reason = firstResult.metadata?["error"]?.stringValue
+                    ?? Self.rewrapDenyReason(firstResult.metadata)
+                    ?? "status=\(firstResult.status)"
                 throw KASRewrapError.accessDenied(reason)
             }
 
@@ -618,7 +641,9 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
             for policyEntry in rewrapResponse.responses {
                 for result in policyEntry.results {
                     guard result.status == "permit" else {
-                        let reason = result.metadata?["error"]?.stringValue ?? "Access denied by policy"
+                        let reason = result.metadata?["error"]?.stringValue
+                            ?? Self.rewrapDenyReason(result.metadata)
+                            ?? "status=\(result.status)"
                         throw KASRewrapError.accessDenied(reason)
                     }
 
