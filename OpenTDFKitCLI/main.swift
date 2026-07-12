@@ -277,7 +277,7 @@ struct OpenTDFKitCLI {
             try await Commands.encryptFileToCollection(inputURL: inputURL, outputURL: outputURL)
             return
         case .tdf, .ztdf:
-            let configuration = try buildTDFConfiguration(for: inputURL)
+            let configuration = try await buildTDFConfiguration(for: inputURL)
 
             if let segmentString = segmentsFlag.value {
                 let segmentSizes = try parseSegmentSizes(segmentString)
@@ -379,14 +379,26 @@ struct OpenTDFKitCLI {
 
             if symmetricKey == nil {
                 let env = ProcessInfo.processInfo.environment
-                let tokenPath = env["TDF_OAUTH_TOKEN_PATH"] ?? env["OAUTH_TOKEN_PATH"] ?? "fresh_token.txt"
-                oauthToken = try? Commands.resolveOAuthToken(
-                    providedToken: env["TDF_OAUTH_TOKEN"],
-                    tokenPath: tokenPath,
-                )
+                // Prefer client-credentials (Stage-1 / xtest); fall back to token file/env.
+                if let clientID = env["CLIENTID"],
+                   let clientSecret = env["CLIENTSECRET"],
+                   let platformURL = env["PLATFORMURL"]
+                {
+                    oauthToken = try await Commands.getOAuthToken(
+                        platformURL: platformURL,
+                        clientID: clientID,
+                        clientSecret: clientSecret,
+                    )
+                } else {
+                    let tokenPath = env["TDF_OAUTH_TOKEN_PATH"] ?? env["OAUTH_TOKEN_PATH"] ?? "fresh_token.txt"
+                    oauthToken = try? Commands.resolveOAuthToken(
+                        providedToken: env["TDF_OAUTH_TOKEN"],
+                        tokenPath: tokenPath,
+                    )
+                }
 
-                if privateKey == nil {
-                    throw DecryptError.missingSymmetricMaterial
+                if oauthToken == nil || oauthToken?.isEmpty == true {
+                    throw DecryptError.missingOAuthToken
                 }
             }
 
@@ -476,7 +488,7 @@ struct OpenTDFKitCLI {
                 try? FileManager.default.removeItem(at: tempDecrypted)
             }
 
-            let configuration = try buildTDFConfiguration(for: inputURL)
+            let configuration = try await buildTDFConfiguration(for: inputURL)
             let encryptor = TDFEncryptor()
 
             let encryptStart = Date()
@@ -520,25 +532,61 @@ struct OpenTDFKitCLI {
 
     // MARK: - Standard TDF Helpers
 
-    private static func buildTDFConfiguration(for inputURL: URL) throws -> TDFEncryptionConfiguration {
+    /// Build Standard TDF encryption config.
+    ///
+    /// KAS RSA public key resolution:
+    /// 1. `TDF_KAS_PUBLIC_KEY` / `TDF_KAS_PUBLIC_KEY_PATH` (offline override)
+    /// 2. Live fetch via client-credentials + Connect/REST PublicKey (Stage-1 / xtest)
+    private static func buildTDFConfiguration(for inputURL: URL) async throws -> TDFEncryptionConfiguration {
         let env = ProcessInfo.processInfo.environment
 
         guard let kasURLString = env["TDF_KAS_URL"] ?? env["KASURL"], let kasURL = URL(string: kasURLString) else {
             throw CLIError.missingEnvironmentVariable("TDF_KAS_URL or KASURL")
         }
 
-        let publicKeyPEM = try loadPEMString(valueKey: "TDF_KAS_PUBLIC_KEY", pathKey: "TDF_KAS_PUBLIC_KEY_PATH")
+        let publicKeyPEM: String
+        var kid = env["TDF_KAS_KID"]
+
+        if let offline = try? loadPEMString(valueKey: "TDF_KAS_PUBLIC_KEY", pathKey: "TDF_KAS_PUBLIC_KEY_PATH") {
+            publicKeyPEM = offline
+        } else {
+            guard let clientID = env["CLIENTID"],
+                  let clientSecret = env["CLIENTSECRET"],
+                  let platformURL = env["PLATFORMURL"]
+            else {
+                throw CLIError.missingEnvironmentVariable(
+                    "TDF_KAS_PUBLIC_KEY(_PATH) or CLIENTID+CLIENTSECRET+PLATFORMURL",
+                )
+            }
+            let token = try await Commands.getOAuthToken(
+                platformURL: platformURL,
+                clientID: clientID,
+                clientSecret: clientSecret,
+            )
+            let fetched = try await Commands.fetchKASRSAPublicKey(
+                kasURL: kasURL,
+                platformURL: platformURL,
+                token: token,
+            )
+            publicKeyPEM = fetched.pem
+            if kid == nil {
+                kid = fetched.kid
+            }
+            print("Fetched KAS RSA public key (kid=\(kid ?? "none"))")
+        }
+
         let policyData = try loadPolicyData()
-        let mimeType = env["TDF_MIME_TYPE"] ?? inferMimeType(for: inputURL)
+        let mimeType = env["TDF_MIME_TYPE"] ?? env["XT_WITH_MIME_TYPE"] ?? inferMimeType(for: inputURL)
 
         let kasInfo = TDFKasInfo(
             url: kasURL,
             publicKeyPEM: publicKeyPEM,
-            kid: env["TDF_KAS_KID"],
+            kid: kid,
             schemaVersion: env["TDF_KAS_SCHEMA_VERSION"],
         )
 
         let policy = try TDFPolicy(json: policyData)
+        // Do not fall back to XT_WITH_TARGET_MODE — that is a target-mode name (nano/zip/hexless), not a schema version.
         let specVersion = env["TDF_SPEC_VERSION"] ?? "4.3.0"
 
         // Parse key size from environment (default: 256-bit)
@@ -688,24 +736,33 @@ struct OpenTDFKitCLI {
 
         let feature = args[2]
 
-        // Return 0 for supported features, 1 for unsupported
+        // Official xtest feature_type catalog: advertise only proven Stage-1 basics.
+        // Formats are not official feature_type probes; keep format names for local tooling.
         switch feature {
         case "nano", "nano_ecdsa", "nano_collection":
             return 0
         case "tdf", "ztdf":
+            // Stage-1 KAS path: OAuth + RSA wrap encrypt + ephemeral rewrap decrypt
             return 0
-        case "json", "tdf-json", "tdfjson":
+        case "json", "tdf-json", "tdfjson", "cbor", "tdf-cbor", "tdfcbor":
             return 0
-        case "cbor", "tdf-cbor", "tdfcbor":
+        case "hexless":
+            // Default TDF spec 4.3.0 emits hexless manifests
+            return 0
+        case "connectrpc":
             return 0
         case "ztdf-ecwrap", "assertions", "assertion_verification",
-             "autoconfigure", "better-messages-2024", "bulk_rewrap",
-             "connectrpc", "ecwrap", "hexless", "hexaflexible",
-             "kasallowlist", "key_management", "nano_attribute_bug",
-             "nano_policymode_plaintext", "ns_grants":
+             "attribute_traversal", "audit_logging", "autoconfigure",
+             "better-messages-2024", "bulk_rewrap", "dpop", "dpop_nonce_challenge",
+             "ecwrap", "hexaflexible", "kasallowlist", "key_management",
+             "mechanism-rsa-4096", "mechanism-ec-curves-384-521",
+             "mechanism-xwing", "mechanism-secpmlkem", "mechanism-mlkem",
+             "nano_attribute_bug", "nano_policymode_plaintext", "ns_grants",
+             "obligations":
             return 1
         default:
-            return 1
+            // xtest contract: 0 = supported, 1 = unsupported, 2 = unknown feature name
+            return 2
         }
     }
 }

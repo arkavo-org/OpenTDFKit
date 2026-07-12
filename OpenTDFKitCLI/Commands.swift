@@ -118,7 +118,14 @@ enum Commands {
         print("\n✓ Standard TDF structure validated")
     }
 
-    /// Load a ZIP-based TDF container without decrypting payload contents.
+    /// Load a ZIP-based TDF container and decrypt payload.
+    ///
+    /// Stage-1 KAS path (preferred when no offline symmetric key):
+    /// 1. Client-credentials OAuth (caller supplies token)
+    /// 2. Ephemeral P-256 session keypair + `rewrapTDF`
+    /// 3. `unwrapKey(salt: Data())` for Standard TDF (empty salt — not Nano default)
+    ///
+    /// Offline shortcuts: `symmetricKey` or legacy RSA `privateKeyPEM` after rewrap.
     static func decryptTDF(
         data: Data,
         filename: String,
@@ -145,20 +152,16 @@ enum Commands {
             return try decryptor.decrypt(container: container, symmetricKey: symmetricKey)
         }
 
-        guard let privateKeyPEM else {
-            throw DecryptError.missingSymmetricMaterial
-        }
-
         guard let oauthToken, !oauthToken.isEmpty else {
             throw DecryptError.missingOAuthToken
         }
 
-        print("  Requesting rewrap from KAS")
+        print("  Requesting rewrap from KAS (ephemeral P-256 session key)")
 
-        // Generate ephemeral P-256 key pair for JWT signing in rewrap request
+        // Ephemeral P-256 key pair for rewrap ECDH (Stage-1 / modern KAS)
         let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
 
-        var aggregatedWrappedKeys: [String: Data] = [:]
+        var keyShares: [Data] = []
         let uniqueKasURLs = Set(container.manifest.encryptionInformation.keyAccess.map(\.url))
 
         for kasURLString in uniqueKasURLs {
@@ -173,42 +176,172 @@ enum Commands {
                 clientPrivateKey: ephemeralPrivateKey,
             )
 
-            for (kaoIdentifier, wrappedKey) in result.wrappedKeys {
-                aggregatedWrappedKeys[kaoIdentifier] = wrappedKey
+            // Prefer Stage-1 path: EC session unwrap with empty salt (Standard TDF).
+            if let sessionPEM = result.sessionPublicKeyPEM, !sessionPEM.isEmpty {
+                let (compressedSessionKey, _) = try KASRewrapClient.validateEcPublicKeyPEM(sessionPEM)
+                for (_, wrappedKeyData) in result.wrappedKeys.sorted(by: { $0.key < $1.key }) {
+                    let share = try KASRewrapClient.unwrapKey(
+                        wrappedKey: wrappedKeyData,
+                        sessionPublicKey: compressedSessionKey,
+                        clientPrivateKey: ephemeralPrivateKey.rawRepresentation,
+                        salt: Data(), // Standard TDF HKDF salt is empty
+                    )
+                    keyShares.append(TDFCrypto.data(from: share))
+                }
+            } else if let privateKeyPEM {
+                // Legacy offline RSA unwrap of rewrap response (older KAS shapes)
+                print("  Falling back to RSA private-key unwrap of rewrap response")
+                for (_, wrappedKeyData) in result.wrappedKeys.sorted(by: { $0.key < $1.key }) {
+                    let base64 = wrappedKeyData.base64EncodedString()
+                    let share = try TDFCrypto.unwrapSymmetricKeyWithRSA(
+                        privateKeyPEM: privateKeyPEM,
+                        wrappedKey: base64,
+                    )
+                    keyShares.append(TDFCrypto.data(from: share))
+                }
+            } else {
+                throw DecryptError.missingWrappedKey
             }
         }
 
-        guard !aggregatedWrappedKeys.isEmpty else {
+        guard !keyShares.isEmpty else {
             throw DecryptError.missingWrappedKey
         }
 
-        var combinedKeyData: Data?
-        let sortedEntries = aggregatedWrappedKeys.sorted { $0.key < $1.key }
+        var combinedKeyData = keyShares[0]
+        for share in keyShares.dropFirst() {
+            guard combinedKeyData.count == share.count else {
+                throw DecryptError.invalidWrappedKeyFormat
+            }
+            combinedKeyData = xorKeyData(combinedKeyData, share)
+        }
 
-        for (_, wrappedKeyData) in sortedEntries {
-            let base64 = wrappedKeyData.base64EncodedString()
-            let symmetricKeyPart = try TDFCrypto.unwrapSymmetricKeyWithRSA(
-                privateKeyPEM: privateKeyPEM,
-                wrappedKey: base64,
+        let finalSymmetricKey = SymmetricKey(data: combinedKeyData)
+        return try decryptor.decrypt(container: container, symmetricKey: finalSymmetricKey)
+    }
+
+    /// Acquire an OAuth access token via client_credentials.
+    ///
+    /// Resolution order for token URL:
+    /// 1. `TOKENENDPOINT` env
+    /// 2. `KCFULLURL` + `/protocol/openid-connect/token`
+    /// 3. `platformURL` + `/token` (local platform convenience)
+    static func getOAuthToken(
+        platformURL: String,
+        clientID: String,
+        clientSecret: String,
+    ) async throws -> String {
+        let env = ProcessInfo.processInfo.environment
+        let tokenURLString: String = if let explicit = env["TOKENENDPOINT"], !explicit.isEmpty {
+            explicit
+        } else if let kc = env["KCFULLURL"], !kc.isEmpty {
+            kc.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                + "/protocol/openid-connect/token"
+        } else {
+            platformURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/token"
+        }
+
+        guard let tokenURL = URL(string: tokenURLString) else {
+            throw DecryptError.missingOAuthToken
+        }
+
+        var request = URLRequest(url: tokenURL)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        let body =
+            "grant_type=client_credentials&client_id=\(urlEncode(clientID))&client_secret=\(urlEncode(clientSecret))"
+        request.httpBody = body.data(using: .utf8)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw NSError(
+                domain: "OpenTDFKitCLI",
+                code: status,
+                userInfo: [NSLocalizedDescriptionKey: "OAuth token request failed (HTTP \(status)) at \(tokenURLString)"],
             )
-            let keyData = TDFCrypto.data(from: symmetricKeyPart)
+        }
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let token = json?["access_token"] as? String, !token.isEmpty else {
+            throw DecryptError.missingOAuthToken
+        }
+        return token
+    }
 
-            if let existing = combinedKeyData {
-                guard existing.count == keyData.count else {
-                    throw DecryptError.invalidWrappedKeyFormat
-                }
-                combinedKeyData = xorKeyData(existing, keyData)
-            } else {
-                combinedKeyData = keyData
+    /// Fetch RSA public key PEM (+ optional kid) from KAS for Standard TDF wrap.
+    static func fetchKASRSAPublicKey(
+        kasURL: URL,
+        platformURL: String?,
+        token: String,
+    ) async throws -> (pem: String, kid: String?) {
+        // Prefer Connect PublicKey on platform root (strip trailing /kas).
+        let base: URL = {
+            if let platformURL, let u = URL(string: platformURL) {
+                return u
+            }
+            var s = kasURL.absoluteString
+            if s.hasSuffix("/kas") {
+                s = String(s.dropLast(4))
+            }
+            return URL(string: s) ?? kasURL
+        }()
+
+        // Try Connect first: POST {base}/kas.AccessService/PublicKey
+        if let connectURL = URL(string: base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            + "/kas.AccessService/PublicKey")
+        {
+            var request = URLRequest(url: connectURL)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["algorithm": "rsa:2048"])
+            if let (data, response) = try? await URLSession.shared.data(for: request),
+               let http = response as? HTTPURLResponse,
+               http.statusCode == 200,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let pem = json["publicKey"] as? String ?? json["public_key"] as? String
+            {
+                let kid = json["kid"] as? String
+                return (pem, kid)
             }
         }
 
-        guard let finalKeyData = combinedKeyData else {
-            throw DecryptError.missingSymmetricMaterial
+        // Legacy REST: GET {platform}/kas/v2/kas_public_key
+        let restBase = base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if let restURL = URL(string: restBase + "/kas/v2/kas_public_key") {
+            var request = URLRequest(url: restURL)
+            request.httpMethod = "GET"
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                throw NSError(
+                    domain: "OpenTDFKitCLI",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Failed to fetch KAS RSA public key"],
+                )
+            }
+            // try? so non-JSON bodies fall through to the raw-PEM fallback below.
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let pem = json["publicKey"] as? String ?? json["public_key"] as? String
+            {
+                return (pem, json["kid"] as? String)
+            }
+            // Some deployments return raw PEM
+            if let pem = String(data: data, encoding: .utf8), pem.contains("BEGIN PUBLIC KEY") {
+                return (pem, nil)
+            }
         }
 
-        let finalSymmetricKey = SymmetricKey(data: finalKeyData)
-        return try decryptor.decrypt(container: container, symmetricKey: finalSymmetricKey)
+        throw NSError(
+            domain: "OpenTDFKitCLI",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Unable to fetch KAS RSA public key via Connect or REST"],
+        )
+    }
+
+    private static func urlEncode(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
     }
 
     private static func xorKeyData(_ lhs: Data, _ rhs: Data) -> Data {
@@ -493,9 +626,13 @@ enum Commands {
         let header: Header
         do {
             header = try parser.parseHeader()
-            if verbose { print("✓ Header parsed successfully") }
+            if verbose {
+                print("✓ Header parsed successfully")
+            }
         } catch {
-            if verbose { print("❌ Failed to parse header: \(error)") }
+            if verbose {
+                print("❌ Failed to parse header: \(error)")
+            }
             throw DecryptError.invalidFormat
         }
 
@@ -509,10 +646,14 @@ enum Commands {
             "http://\(kasURLString)/kas"
         }
         guard let kasURL = URL(string: kasURLWithPath) else {
-            if verbose { print("❌ Invalid KAS URL: \(kasURLString)") }
+            if verbose {
+                print("❌ Invalid KAS URL: \(kasURLString)")
+            }
             throw DecryptError.invalidKASURL
         }
-        if verbose { print("KAS URL: \(kasURL)") }
+        if verbose {
+            print("KAS URL: \(kasURL)")
+        }
 
         // Get OAuth token (from parameter or file)
         let oauthToken: String
@@ -536,14 +677,18 @@ enum Commands {
             publicKey: publicKeyPEM.data(using: String.Encoding.utf8)!,
             curve: .secp256r1,
         )
-        if verbose { print("✓ Generated client ephemeral key pair") }
+        if verbose {
+            print("✓ Generated client ephemeral key pair")
+        }
 
         // Find header boundary
         let headerSize = calculateHeaderSize(from: data, parsedHeader: header, verbose: verbose)
         let rawHeader = data.prefix(headerSize)
 
         // Call KAS rewrap endpoint
-        if verbose { print("\nCalling KAS rewrap endpoint...") }
+        if verbose {
+            print("\nCalling KAS rewrap endpoint...")
+        }
         let configuration = await resolveConfiguration(kasURL: kasURL, token: oauthToken)
         let kasClient = try KASRewrapClient(configuration: configuration, oauthToken: oauthToken)
 
@@ -554,9 +699,13 @@ enum Commands {
                 parsedHeader: header,
                 clientKeyPair: pemKeyPair,
             )
-            if verbose { print("✓ KAS rewrap successful") }
+            if verbose {
+                print("✓ KAS rewrap successful")
+            }
         } catch {
-            if verbose { print("❌ KAS rewrap failed: \(error)") }
+            if verbose {
+                print("❌ KAS rewrap failed: \(error)")
+            }
             throw error
         }
 
@@ -568,9 +717,13 @@ enum Commands {
                 sessionPublicKey: sessionPublicKey,
                 clientPrivateKey: clientKeyPair.privateKey,
             )
-            if verbose { print("✓ Key unwrapped successfully") }
+            if verbose {
+                print("✓ Key unwrapped successfully")
+            }
         } catch {
-            if verbose { print("❌ Key unwrap failed: \(error)") }
+            if verbose {
+                print("❌ Key unwrap failed: \(error)")
+            }
             throw error
         }
 
@@ -621,7 +774,9 @@ enum Commands {
                 if i + 2 < data.count {
                     let potentialLength = Int(data[i + 2])
                     if potentialLength > 0, potentialLength < 100, (i + 3 + potentialLength) <= data.count {
-                        if verbose { print("Found payload at offset \(i)") }
+                        if verbose {
+                            print("Found payload at offset \(i)")
+                        }
                         return i
                     }
                 }
@@ -630,7 +785,9 @@ enum Commands {
 
         // Fallback to reconstructed header size
         let reconstructed = parsedHeader.toData().count
-        if verbose { print("Using reconstructed header size: \(reconstructed) bytes") }
+        if verbose {
+            print("Using reconstructed header size: \(reconstructed) bytes")
+        }
         return reconstructed
     }
 }
