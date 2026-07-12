@@ -1,13 +1,12 @@
-# Stage-1 community cross-test: OpenTDFKit (this repo) ↔ go peer via opentdf-tests.
+# Community cross-test: OpenTDFKit (this repo) ↔ go peer via opentdf-tests.
 #
-# Pulls a floating latest *release* of arkavo-org/opentdf-tests (falls back to
-# the community-xtest-stage1 branch until a release exists). Runs native macOS
-# platform deps (Postgres + Keycloak + platform) and pytest -m stage1 for
-# swift × go Base TDF only.
+# Pulls arkavo-org/opentdf-tests (default: community-xtest-stage1 branch tip).
+# Runs native macOS platform deps (Postgres + Keycloak + platform) and pytest
+# for swift × go Base TDF only.
 #
-# Cross-repo: opentdf-tests community-xtest.yml pins OpenTDFKit floating latest
-# the other direction. Coordinate release tags when Stage-1 is green.
-name: X-Test Stage-1
+# Cross-repo: opentdf-tests community-xtest.yml exercises OpenTDFKit the other
+# direction.
+name: X-Test
 
 on:
   pull_request:
@@ -18,7 +17,7 @@ on:
       - "Package.swift"
       - "Package.resolved"
       - "xtest/**"
-      - ".github/workflows/xtest-stage1.yml"
+      - ".github/workflows/xtest.yml"
   push:
     branches: [main]
   workflow_dispatch:
@@ -29,7 +28,7 @@ on:
         default: latest
         description: >-
           arkavo-org/opentdf-tests ref: 'latest' (tracks community-xtest-stage1
-          branch tip while Stage-1 is in flux), branch, tag, or SHA.
+          branch tip), branch, tag, or SHA.
       platform-ref:
         required: false
         type: string
@@ -66,8 +65,7 @@ jobs:
       PLATFORM_REF_IN: ${{ inputs.platform-ref || 'latest' }}
       OTDFCTL_REF_IN: ${{ inputs.otdfctl-ref || 'latest' }}
       GH_TOKEN: ${{ github.token }}
-      # Prefer the live Stage-1 branch while the suite is still iterating; float
-      # on GitHub Releases when tests-ref is an explicit release tag.
+      # Live community branch while the suite is still iterating.
       TESTS_FALLBACK_REF: community-xtest-stage1
     steps:
       - name: Resolve pins
@@ -81,9 +79,8 @@ jobs:
               echo "$input"
               return 0
             fi
-            # Stage-1 suite is still moving quickly on the branch. Prefer the
-            # branch tip over a stale "latest" release so SDK PRs pick up
-            # infra fixes (Keycloak host alignment, etc.) without a re-tag.
+            # Prefer the branch tip over a stale release so SDK PRs pick up
+            # infra fixes without a re-tag.
             echo "Using live branch ${TESTS_FALLBACK_REF} for floating latest" >&2
             echo "${TESTS_FALLBACK_REF}"
           }
@@ -144,8 +141,8 @@ jobs:
 
           echo "tests=${TESTS_REF} platform=${PLATFORM_REF} go=${GO_REF}"
 
-  stage1-swift:
-    name: "swift ↔ go stage1"
+  community-swift:
+    name: "swift ↔ go"
     needs: [resolve-refs]
     runs-on: macos-latest
     timeout-minutes: 90
@@ -264,7 +261,7 @@ jobs:
       - run: uv sync
         working-directory: otdftests/xtest
 
-      - name: Run Stage-1 (swift × go, Base TDF)
+      - name: Run community xtest (swift × go, Base TDF)
         working-directory: otdftests/xtest
         env:
           PLATFORM_DIR: "../../${{ steps.run-platform.outputs.platform-working-dir }}"
@@ -286,9 +283,9 @@ jobs:
           fi
           echo "Using go channel: ${GO_CH}"
           uv run pytest -n auto --dist loadscope \
-            --html=test-results/opentdfkit-stage1.html \
+            --html=test-results/opentdfkit-xtest.html \
             --self-contained-html \
-            --junitxml=test-results/opentdfkit-stage1.junit.xml \
+            --junitxml=test-results/opentdfkit-xtest.junit.xml \
             --sdks-encrypt "swift@main go@${GO_CH}" \
             --sdks-decrypt "swift@main go@${GO_CH}" \
             --containers tdf \
@@ -296,19 +293,19 @@ jobs:
             -m stage1 \
             -ra -v \
             test_tdfs.py \
-            | tee test-results/opentdfkit-stage1.log
+            | tee test-results/opentdfkit-xtest.log
 
       - name: Upload results
         if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ job.status == 'success' && '✅' || '❌' }} opentdfkit-stage1
+          name: ${{ job.status == 'success' && '✅' || '❌' }} opentdfkit-xtest
           path: otdftests/xtest/test-results/**
 
       - name: Upload platform logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: opentdfkit-stage1-platform-logs
+          name: opentdfkit-xtest-platform-logs
           path: ${{ steps.run-platform.outputs.platform-log-file }}
           if-no-files-found: ignore
