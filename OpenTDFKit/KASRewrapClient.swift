@@ -278,14 +278,28 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         }
 
         /// Scalar string form for error messages; nil for arrays/objects/null.
+        /// Integral doubles render without a trailing `.0` (JSON integers decode as Double).
         public var stringValue: String? {
             switch self {
             case let .string(s): s
-            case let .number(n): String(n)
+            case let .number(n):
+                if n == n.rounded(), abs(n) < 1e15 {
+                    String(Int64(n))
+                } else {
+                    String(n)
+                }
             case let .bool(b): String(b)
             case .array, .object, .null: nil
             }
         }
+    }
+
+    /// HKDF salt for Standard TDF (ZTDF) EC session unwrap — matches go SDK `tdfSalt()`:
+    /// `SHA256("TDF")`.
+    public static var standardTDFSessionSalt: Data {
+        var hasher = SHA256()
+        hasher.update(data: Data("TDF".utf8))
+        return Data(hasher.finalize())
     }
 
     // MARK: - KAS Public Key Response

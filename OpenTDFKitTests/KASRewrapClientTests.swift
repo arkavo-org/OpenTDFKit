@@ -33,7 +33,8 @@ final class KASRewrapClientTests: XCTestCase {
               "kasWrappedKey": "dGVzdA==",
               "metadata": {
                 "error": "none",
-                "X-Required-Obligations": ["https://example.com/obl/a", "https://example.com/obl/b"]
+                "X-Required-Obligations": ["https://example.com/obl/a", "https://example.com/obl/b"],
+                "count": 2
               }
             }]
           }],
@@ -47,6 +48,8 @@ final class KASRewrapClientTests: XCTestCase {
         let result = try XCTUnwrap(response.responses.first?.results.first)
         XCTAssertEqual(result.status, "permit")
         XCTAssertEqual(result.metadata?["error"]?.stringValue, "none")
+        // Integral JSON numbers must not render as "2.0"
+        XCTAssertEqual(result.metadata?["count"]?.stringValue, "2")
         if case let .array(vals)? = result.metadata?["X-Required-Obligations"] {
             XCTAssertEqual(vals.count, 2)
         } else {

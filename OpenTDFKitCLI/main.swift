@@ -621,11 +621,19 @@ struct OpenTDFKitCLI {
             return data
         }
 
+        // XT_WITH_ATTRIBUTES is the Stage-1 / xtest attribute list (comma-separated FQNs).
+        // Shape matches go SDK attributeObject: {"attribute":"<fqn>"}.
+        let attributeObjects: [[String: String]] = (env["XT_WITH_ATTRIBUTES"] ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .map { ["attribute": $0] }
+
         let policy: [String: Any] = [
             "uuid": UUID().uuidString.lowercased(),
             "body": [
-                "dataAttributes": [],
-                "dissem": [],
+                "dataAttributes": attributeObjects,
+                "dissem": [] as [Any],
             ],
         ]
 

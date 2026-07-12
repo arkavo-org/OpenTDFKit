@@ -176,7 +176,7 @@ enum Commands {
                 clientPrivateKey: ephemeralPrivateKey,
             )
 
-            // Prefer Stage-1 path: EC session unwrap with empty salt (Standard TDF).
+            // Prefer Stage-1 path: EC session unwrap with go `tdfSalt()` = SHA256("TDF").
             if let sessionPEM = result.sessionPublicKeyPEM, !sessionPEM.isEmpty {
                 let (compressedSessionKey, _) = try KASRewrapClient.validateEcPublicKeyPEM(sessionPEM)
                 for (_, wrappedKeyData) in result.wrappedKeys.sorted(by: { $0.key < $1.key }) {
@@ -184,7 +184,7 @@ enum Commands {
                         wrappedKey: wrappedKeyData,
                         sessionPublicKey: compressedSessionKey,
                         clientPrivateKey: ephemeralPrivateKey.rawRepresentation,
-                        salt: Data(), // Standard TDF HKDF salt is empty
+                        salt: KASRewrapClient.standardTDFSessionSalt,
                     )
                     keyShares.append(TDFCrypto.data(from: share))
                 }
@@ -1503,11 +1503,17 @@ extension Commands {
             return try TDFPolicy(json: data)
         }
 
-        // Create default policy
+        // XT_WITH_ATTRIBUTES: Stage-1 / xtest attribute FQNs (go attributeObject shape).
+        let attributeObjects: [[String: String]] = (env["XT_WITH_ATTRIBUTES"] ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .map { ["attribute": $0] }
+
         let policy: [String: Any] = [
             "uuid": UUID().uuidString.lowercased(),
             "body": [
-                "dataAttributes": [] as [Any],
+                "dataAttributes": attributeObjects,
                 "dissem": [] as [Any],
             ],
         ]
