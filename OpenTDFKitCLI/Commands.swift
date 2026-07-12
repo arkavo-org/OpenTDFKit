@@ -226,13 +226,17 @@ enum Commands {
     /// 1. `TOKENENDPOINT` env
     /// 2. `KCFULLURL` + `/protocol/openid-connect/token`
     /// 3. `platformURL` + `/token` (local platform convenience)
+    ///
+    /// Loopback hosts are normalized to `127.0.0.1` so the JWT `iss` claim
+    /// matches platform `server.auth.issuer` (CI often sets issuer to
+    /// `http://127.0.0.1:8888/...` while test.env still says `localhost`).
     static func getOAuthToken(
         platformURL: String,
         clientID: String,
         clientSecret: String,
     ) async throws -> String {
         let env = ProcessInfo.processInfo.environment
-        let tokenURLString: String = if let explicit = env["TOKENENDPOINT"], !explicit.isEmpty {
+        let rawTokenURL: String = if let explicit = env["TOKENENDPOINT"], !explicit.isEmpty {
             explicit
         } else if let kc = env["KCFULLURL"], !kc.isEmpty {
             kc.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -240,6 +244,7 @@ enum Commands {
         } else {
             platformURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/token"
         }
+        let tokenURLString = normalizeLoopbackHost(rawTokenURL)
 
         guard let tokenURL = URL(string: tokenURLString) else {
             throw DecryptError.missingOAuthToken
@@ -248,17 +253,20 @@ enum Commands {
         var request = URLRequest(url: tokenURL)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        // application/x-www-form-urlencoded: encode as form fields (not query allow-list).
         let body =
-            "grant_type=client_credentials&client_id=\(urlEncode(clientID))&client_secret=\(urlEncode(clientSecret))"
+            "grant_type=client_credentials&client_id=\(formURLEncode(clientID))&client_secret=\(formURLEncode(clientSecret))"
         request.httpBody = body.data(using: .utf8)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let detail = String(data: data, encoding: .utf8) ?? ""
             throw NSError(
                 domain: "OpenTDFKitCLI",
                 code: status,
-                userInfo: [NSLocalizedDescriptionKey: "OAuth token request failed (HTTP \(status)) at \(tokenURLString)"],
+                userInfo: [NSLocalizedDescriptionKey:
+                    "OAuth token request failed (HTTP \(status)) at \(tokenURLString): \(detail)"],
             )
         }
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -266,6 +274,24 @@ enum Commands {
             throw DecryptError.missingOAuthToken
         }
         return token
+    }
+
+    /// Rewrite `localhost` → `127.0.0.1` in URLs so OIDC `iss` matches platform issuer.
+    static func normalizeLoopbackHost(_ urlString: String) -> String {
+        var s = urlString
+        s = s.replacingOccurrences(of: "://localhost:", with: "://127.0.0.1:")
+        s = s.replacingOccurrences(of: "://localhost/", with: "://127.0.0.1/")
+        if s.hasSuffix("://localhost") {
+            s = s.replacingOccurrences(of: "://localhost", with: "://127.0.0.1")
+        }
+        return s
+    }
+
+    /// Form-urlencoded encoding for OAuth token POST bodies.
+    private static func formURLEncode(_ value: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
     /// Fetch RSA public key PEM (+ optional kid) from KAS for Standard TDF wrap.
@@ -338,10 +364,6 @@ enum Commands {
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: "Unable to fetch KAS RSA public key via Connect or REST"],
         )
-    }
-
-    private static func urlEncode(_ value: String) -> String {
-        value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
     }
 
     private static func xorKeyData(_ lhs: Data, _ rhs: Data) -> Data {

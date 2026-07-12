@@ -28,9 +28,8 @@ on:
         type: string
         default: latest
         description: >-
-          arkavo-org/opentdf-tests ref: 'latest' (floating GitHub release),
-          branch, tag, or SHA. Falls back to community-xtest-stage1 when no
-          release exists.
+          arkavo-org/opentdf-tests ref: 'latest' (tracks community-xtest-stage1
+          branch tip while Stage-1 is in flux), branch, tag, or SHA.
       platform-ref:
         required: false
         type: string
@@ -67,7 +66,8 @@ jobs:
       PLATFORM_REF_IN: ${{ inputs.platform-ref || 'latest' }}
       OTDFCTL_REF_IN: ${{ inputs.otdfctl-ref || 'latest' }}
       GH_TOKEN: ${{ github.token }}
-      # Until arkavo-org/opentdf-tests ships a GitHub Release, latest falls back here.
+      # Prefer the live Stage-1 branch while the suite is still iterating; float
+      # on GitHub Releases when tests-ref is an explicit release tag.
       TESTS_FALLBACK_REF: community-xtest-stage1
     steps:
       - name: Resolve pins
@@ -81,14 +81,10 @@ jobs:
               echo "$input"
               return 0
             fi
-            local tag=""
-            if tag=$(gh api "repos/arkavo-org/opentdf-tests/releases/latest" --jq .tag_name 2>/dev/null); then
-              if [[ -n "$tag" && "$tag" != "null" ]]; then
-                echo "$tag"
-                return 0
-              fi
-            fi
-            echo "No opentdf-tests release found; using fallback ${TESTS_FALLBACK_REF}" >&2
+            # Stage-1 suite is still moving quickly on the branch. Prefer the
+            # branch tip over a stale "latest" release so SDK PRs pick up
+            # infra fixes (Keycloak host alignment, etc.) without a re-tag.
+            echo "Using live branch ${TESTS_FALLBACK_REF} for floating latest" >&2
             echo "${TESTS_FALLBACK_REF}"
           }
 
