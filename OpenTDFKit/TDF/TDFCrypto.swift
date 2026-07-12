@@ -162,9 +162,21 @@ public enum TDFCrypto {
         return Data(plaintext)
     }
 
+    /// Compute the Standard TDF policy binding hash (OpenTDF / go SDK format).
+    ///
+    /// 1. Base64-encode the raw policy JSON bytes
+    /// 2. HMAC-SHA256 the base64 string as UTF-8 using the payload DEK
+    /// 3. Hex-encode the 32-byte HMAC (64 lowercase hex chars)
+    /// 4. Base64-encode that hex string for the manifest `policyBinding.hash`
+    ///
+    /// Using raw HMAC base64 (previous behavior) fails KAS rewrap with
+    /// "tamper detected" when go/java decrypt a Swift-produced TDF.
     public static func policyBinding(policy: Data, symmetricKey: SymmetricKey) -> TDFPolicyBinding {
-        let hmac = HMAC<SHA256>.authenticationCode(for: policy, using: symmetricKey)
-        let hash = Data(hmac).base64EncodedString()
+        let policyBase64 = policy.base64EncodedString()
+        let policyBase64Bytes = Data(policyBase64.utf8)
+        let hmac = HMAC<SHA256>.authenticationCode(for: policyBase64Bytes, using: symmetricKey)
+        let hex = Data(hmac).map { String(format: "%02x", $0) }.joined()
+        let hash = Data(hex.utf8).base64EncodedString()
         return TDFPolicyBinding(alg: "HS256", hash: hash)
     }
 

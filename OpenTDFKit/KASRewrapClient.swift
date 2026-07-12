@@ -204,7 +204,9 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         let status: String // "permit" or "fail"
         let kasWrappedKey: String?
         let entityWrappedKey: String? // Legacy field
-        let metadata: [String: String]?
+        /// Platform may return string, array, or object metadata values
+        /// (e.g. `X-Required-Obligations` is a string array).
+        let metadata: [String: RewrapMetadataValue]?
     }
 
     /// Response policy entry
@@ -218,8 +220,72 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         let responses: [ResponsePolicyEntry]
         let sessionPublicKey: String?
         let entityWrappedKey: String? // Legacy field at top level
-        let metadata: [String: String]?
+        let metadata: [String: RewrapMetadataValue]?
         let schemaVersion: String?
+    }
+
+    /// Heterogeneous JSON value in KAS rewrap `metadata` maps.
+    public enum RewrapMetadataValue: Codable, Equatable, Sendable {
+        case string(String)
+        case number(Double)
+        case bool(Bool)
+        case array([RewrapMetadataValue])
+        case object([String: RewrapMetadataValue])
+        case null
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if container.decodeNil() {
+                self = .null
+                return
+            }
+            if let s = try? container.decode(String.self) {
+                self = .string(s)
+                return
+            }
+            if let b = try? container.decode(Bool.self) {
+                self = .bool(b)
+                return
+            }
+            if let n = try? container.decode(Double.self) {
+                self = .number(n)
+                return
+            }
+            if let a = try? container.decode([RewrapMetadataValue].self) {
+                self = .array(a)
+                return
+            }
+            if let o = try? container.decode([String: RewrapMetadataValue].self) {
+                self = .object(o)
+                return
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unsupported rewrap metadata JSON value",
+            )
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            switch self {
+            case let .string(s): try container.encode(s)
+            case let .number(n): try container.encode(n)
+            case let .bool(b): try container.encode(b)
+            case let .array(a): try container.encode(a)
+            case let .object(o): try container.encode(o)
+            case .null: try container.encodeNil()
+            }
+        }
+
+        /// Scalar string form for error messages; nil for arrays/objects/null.
+        public var stringValue: String? {
+            switch self {
+            case let .string(s): s
+            case let .number(n): String(n)
+            case let .bool(b): String(b)
+            case .array, .object, .null: nil
+            }
+        }
     }
 
     // MARK: - KAS Public Key Response
@@ -407,7 +473,7 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
             }
 
             guard firstResult.status == "permit" else {
-                let reason = firstResult.metadata?["error"] ?? "Access denied by policy"
+                let reason = firstResult.metadata?["error"]?.stringValue ?? "Access denied by policy"
                 throw KASRewrapError.accessDenied(reason)
             }
 
@@ -538,7 +604,7 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
             for policyEntry in rewrapResponse.responses {
                 for result in policyEntry.results {
                     guard result.status == "permit" else {
-                        let reason = result.metadata?["error"] ?? "Access denied by policy"
+                        let reason = result.metadata?["error"]?.stringValue ?? "Access denied by policy"
                         throw KASRewrapError.accessDenied(reason)
                     }
 
