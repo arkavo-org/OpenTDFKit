@@ -136,13 +136,8 @@ public struct TDFCBORBuilder: Sendable {
             symmetricKey: symmetricKey,
         )
 
-        // Calculate segment signature (GMAC)
-        let segmentSignature = try TDFCrypto.segmentSignatureGMAC(
-            segmentCiphertext: payloadData,
-            symmetricKey: symmetricKey,
-        )
-
-        // Calculate root signature
+        // OpenTDF GMAC = AES-GCM tag (last 16 bytes of encrypted segment)
+        let segmentSignature = try TDFCrypto.segmentSignatureGMAC(encryptedSegment: payloadData)
         let rootSignature = TDFCrypto.segmentSignature(
             segmentCiphertext: segmentSignature,
             symmetricKey: symmetricKey,

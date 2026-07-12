@@ -1503,27 +1503,10 @@ extension Commands {
             return try TDFPolicy(json: data)
         }
 
-        // XT_WITH_ATTRIBUTES: Stage-1 / xtest attribute FQNs (go attributeObject shape).
-        let attributeObjects: [[String: String]] = (env["XT_WITH_ATTRIBUTES"] ?? "")
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .map { ["attribute": $0] }
-
-        let policy: [String: Any] = [
-            "uuid": UUID().uuidString.lowercased(),
-            "body": [
-                "dataAttributes": attributeObjects,
-                "dissem": [] as [Any],
-            ],
-        ]
-
-        guard JSONSerialization.isValidJSONObject(policy),
-              let data = try? JSONSerialization.data(withJSONObject: policy, options: [.sortedKeys])
-        else {
+        do {
+            return try TDFPolicy(json: Config.defaultPolicyData(env: env))
+        } catch {
             throw EncryptError.missingConfiguration("Unable to create default policy")
         }
-
-        return try TDFPolicy(json: data)
     }
 }

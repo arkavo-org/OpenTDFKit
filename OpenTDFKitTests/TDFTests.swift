@@ -76,6 +76,33 @@ final class StandardTDFTests: XCTestCase {
         XCTAssertEqual(KASRewrapClient.standardTDFSessionSalt, expected)
     }
 
+    func testSegmentGMACIsLast16BytesOfEncryptedSegment() throws {
+        // go calculateSignature(GMAC, hexless): last 16 bytes of segment (AES-GCM tag).
+        let tag = Data((0 ..< 16).map { UInt8($0) })
+        let encrypted = Data(repeating: 0xAB, count: 40) + tag
+        let gmac = try TDFCrypto.segmentSignatureGMAC(encryptedSegment: encrypted)
+        XCTAssertEqual(gmac, tag)
+        XCTAssertEqual(
+            try TDFCrypto.segmentHashBase64GMAC(encryptedSegment: encrypted),
+            tag.base64EncodedString(),
+        )
+    }
+
+    func testRootSignatureIsHMACOfConcatenatedRawSegmentSigs() throws {
+        let key = try TDFCrypto.generateSymmetricKey()
+        let s1 = Data(repeating: 0x11, count: 16)
+        let s2 = Data(repeating: 0x22, count: 16)
+        let root = TDFCrypto.rootSignatureBase64(rawSegmentSignatures: [s1, s2], symmetricKey: key)
+        let expected = TDFCrypto.segmentSignature(
+            segmentCiphertext: s1 + s2,
+            symmetricKey: key,
+        ).base64EncodedString()
+        XCTAssertEqual(root, expected)
+        // Hexless: root is base64 of raw HMAC (not base64(hex(...)))
+        let raw = try XCTUnwrap(Data(base64Encoded: root))
+        XCTAssertEqual(raw.count, 32)
+    }
+
     func testSegmentSignature() throws {
         let symmetricKey = try TDFCrypto.generateSymmetricKey()
         let segmentData = "Segment data".data(using: .utf8)!

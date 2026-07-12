@@ -49,16 +49,14 @@ public enum StreamingTDFCrypto {
 
         let totalEncrypted = Int64(encryptedPayload.count)
 
-        let segmentHash = try TDFCrypto.segmentSignatureGMAC(
-            segmentCiphertext: encryptedPayload,
-            symmetricKey: symmetricKey,
-        )
+        // OpenTDF GMAC integrity = last 16 bytes of segment (AES-GCM tag), base64.
+        let segmentHash = try TDFCrypto.segmentHashBase64GMAC(encryptedSegment: encryptedPayload)
 
         let segment = EncryptedSegment(
             segmentIndex: 0,
             plaintextSize: totalPlaintextRead,
             encryptedSize: totalEncrypted,
-            hash: segmentHash.base64EncodedString(),
+            hash: segmentHash,
         )
 
         let result = StreamingEncryptionResult(
@@ -131,16 +129,13 @@ public enum StreamingTDFCrypto {
             let segmentEncryptedSize = Int64(segmentEnd - segmentStart)
 
             let segmentData = encryptedPayload.subdata(in: segmentStart ..< segmentEnd)
-            let segmentHash = try TDFCrypto.segmentSignatureGMAC(
-                segmentCiphertext: segmentData,
-                symmetricKey: symmetricKey,
-            )
+            let segmentHash = try TDFCrypto.segmentHashBase64GMAC(encryptedSegment: segmentData)
 
             let segment = EncryptedSegment(
                 segmentIndex: segmentIndex,
                 plaintextSize: segmentPlaintextSize,
                 encryptedSize: segmentEncryptedSize,
-                hash: segmentHash.base64EncodedString(),
+                hash: segmentHash,
             )
             segments.append(segment)
 
@@ -241,16 +236,14 @@ public enum StreamingTDFCrypto {
 
         let totalEncrypted = Int64(nonceData.count + sealed.ciphertext.count + sealed.tag.count)
 
-        let segmentHash = try TDFCrypto.segmentSignatureGMAC(
-            segmentCiphertext: Data(nonce) + sealed.ciphertext + Data(sealed.tag),
-            symmetricKey: symmetricKey,
-        )
+        let segmentPayload = Data(nonce) + sealed.ciphertext + Data(sealed.tag)
+        let segmentHash = try TDFCrypto.segmentHashBase64GMAC(encryptedSegment: segmentPayload)
 
         let segment = EncryptedSegment(
             segmentIndex: 0,
             plaintextSize: totalPlaintextRead,
             encryptedSize: totalEncrypted,
-            hash: segmentHash.base64EncodedString(),
+            hash: segmentHash,
         )
 
         return StreamingEncryptionResult(
@@ -317,16 +310,14 @@ public enum StreamingTDFCrypto {
 
             let segmentEncryptedSize = Int64(segmentEndOffset - segmentStartOffset)
 
-            let segmentHash = try TDFCrypto.segmentSignatureGMAC(
-                segmentCiphertext: Data(nonce) + sealed.ciphertext + Data(sealed.tag),
-                symmetricKey: symmetricKey,
-            )
+            let segmentPayload = Data(nonce) + sealed.ciphertext + Data(sealed.tag)
+            let segmentHash = try TDFCrypto.segmentHashBase64GMAC(encryptedSegment: segmentPayload)
 
             let segment = EncryptedSegment(
                 segmentIndex: segmentIndex,
                 plaintextSize: segmentPlaintextSize,
                 encryptedSize: segmentEncryptedSize,
-                hash: segmentHash.base64EncodedString(),
+                hash: segmentHash,
             )
             segments.append(segment)
 

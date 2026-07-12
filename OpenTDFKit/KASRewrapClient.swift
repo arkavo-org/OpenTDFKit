@@ -294,7 +294,7 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         }
     }
 
-    /// HKDF salt for Standard TDF (ZTDF) EC session unwrap — matches go SDK `tdfSalt()`:
+    /// HKDF salt for Standard TDF EC session unwrap — matches go SDK `tdfSalt()`:
     /// `SHA256("TDF")`.
     public static var standardTDFSessionSalt: Data {
         var hasher = SHA256()

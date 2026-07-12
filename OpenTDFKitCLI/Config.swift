@@ -37,16 +37,10 @@ struct Config {
             throw ConfigError.missingRequired("PLATFORMURL")
         }
 
-        // Parse attributes and allowlist from comma-separated strings
-        let attributes = (env["XT_WITH_ATTRIBUTES"] ?? "")
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-
-        let kasAllowlist = (env["XT_WITH_KAS_ALLOWLIST"] ?? env["XT_WITH_KAS_ALLOW_LIST"] ?? "")
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
+        let attributes = parseCommaSeparated(env["XT_WITH_ATTRIBUTES"])
+        let kasAllowlist = parseCommaSeparated(
+            env["XT_WITH_KAS_ALLOWLIST"] ?? env["XT_WITH_KAS_ALLOW_LIST"],
+        )
 
         return Config(
             clientId: clientId,
@@ -66,31 +60,72 @@ struct Config {
             withIgnoreKasAllowlist: env["XT_WITH_IGNORE_KAS_ALLOWLIST"] == "true",
         )
     }
+
+    /// Comma-separated env list → trimmed non-empty tokens.
+    static func parseCommaSeparated(_ raw: String?) -> [String] {
+        (raw ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// `XT_WITH_ATTRIBUTES` FQNs as go SDK `attributeObject` entries: `{"attribute":"<fqn>"}`.
+    static func attributeObjectsFromEnvironment(
+        env: [String: String] = ProcessInfo.processInfo.environment,
+    ) -> [[String: String]] {
+        parseCommaSeparated(env["XT_WITH_ATTRIBUTES"]).map { ["attribute": $0] }
+    }
+
+    /// Default TDF policy JSON body for encrypt when no TDF_POLICY_* override is set.
+    static func defaultPolicyData(
+        env: [String: String] = ProcessInfo.processInfo.environment,
+    ) throws -> Data {
+        let policy: [String: Any] = [
+            "uuid": UUID().uuidString.lowercased(),
+            "body": [
+                "dataAttributes": attributeObjectsFromEnvironment(env: env),
+                "dissem": [] as [Any],
+            ],
+        ]
+        guard JSONSerialization.isValidJSONObject(policy),
+              let data = try? JSONSerialization.data(withJSONObject: policy, options: [.sortedKeys])
+        else {
+            throw ConfigError.invalidPolicy
+        }
+        return data
+    }
 }
 
 enum ConfigError: Error, CustomStringConvertible {
     case missingRequired(String)
+    case invalidPolicy
 
     var description: String {
         switch self {
         case let .missingRequired(name):
             "Required environment variable '\(name)' is not set"
+        case .invalidPolicy:
+            "Unable to create default policy JSON"
         }
     }
 }
 
-/// TDF format types supported by xtest
+/// TDF format types supported by xtest (Base / standard TDF ZIP, not NATO ZTDF).
 enum TDFFormat: String {
     case nano
-    case ztdf
-    case ztdfECWrap = "ztdf-ecwrap"
+    case tdf
+    /// Legacy wire name used by some xtest shims for Base TDF ZIP — treated as `tdf`.
+    case tdfLegacyWire = "ztdf"
+    case tdfECWrap = "tdf-ecwrap"
+    /// Legacy alias for `tdf-ecwrap`.
+    case tdfECWrapLegacy = "ztdf-ecwrap"
     case nanoWithECDSA = "nano-with-ecdsa"
 
     var isNano: Bool {
         switch self {
         case .nano, .nanoWithECDSA:
             true
-        case .ztdf, .ztdfECWrap:
+        case .tdf, .tdfLegacyWire, .tdfECWrap, .tdfECWrapLegacy:
             false
         }
     }
@@ -100,6 +135,15 @@ enum TDFFormat: String {
     }
 
     var useECWrap: Bool {
-        self == .ztdfECWrap
+        self == .tdfECWrap || self == .tdfECWrapLegacy
+    }
+
+    /// Canonical format for CLI dispatch (legacy wire names collapse to Base TDF).
+    var canonical: TDFFormat {
+        switch self {
+        case .tdfLegacyWire: .tdf
+        case .tdfECWrapLegacy: .tdfECWrap
+        default: self
+        }
     }
 }

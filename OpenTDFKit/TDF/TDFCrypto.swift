@@ -184,15 +184,48 @@ public enum TDFCrypto {
         symmetricKey.withUnsafeBytes { Data($0) }
     }
 
+    /// HS256 root/segment signature: raw HMAC-SHA256 digest (32 bytes).
     public static func segmentSignature(segmentCiphertext: Data, symmetricKey: SymmetricKey) -> Data {
         let hmac = HMAC<SHA256>.authenticationCode(for: segmentCiphertext, using: symmetricKey)
         return Data(hmac)
     }
 
-    public static func segmentSignatureGMAC(segmentCiphertext: Data, symmetricKey: SymmetricKey) throws -> Data {
-        let nonce = try AES.GCM.Nonce(data: Data(count: 12))
-        let sealed = try AES.GCM.seal(Data(), using: symmetricKey, nonce: nonce, authenticating: segmentCiphertext)
-        return Data(sealed.tag)
+    /// OpenTDF "GMAC" segment integrity for AES-GCM payloads is **not** a separate
+    /// MAC — it is the last 16 bytes of the encrypted segment (the AES-GCM tag).
+    /// Matches go SDK `calculateSignature` with GMAC + hexless (4.3.0).
+    ///
+    /// - Parameter encryptedSegment: IV (12) + ciphertext + tag (16)
+    /// - Returns: 16-byte GCM tag
+    public static func segmentSignatureGMAC(encryptedSegment: Data) throws -> Data {
+        let tagSize = 16
+        guard encryptedSegment.count >= tagSize else {
+            throw TDFCryptoError.decryptionFailed(
+                "Encrypted segment too short for GMAC (\(encryptedSegment.count) < \(tagSize))",
+            )
+        }
+        return Data(encryptedSegment.suffix(tagSize))
+    }
+
+    /// Manifest segment hash string for hexless TDF 4.3.0: `base64(raw GMAC/tag)`.
+    public static func segmentHashBase64GMAC(encryptedSegment: Data) throws -> String {
+        try segmentSignatureGMAC(encryptedSegment: encryptedSegment).base64EncodedString()
+    }
+
+    /// Root signature for hexless TDF 4.3.0: `base64(HMAC-SHA256(DEK, concat(raw segment sigs)))`.
+    public static func rootSignatureBase64(
+        rawSegmentSignatures: [Data],
+        symmetricKey: SymmetricKey,
+    ) -> String {
+        let aggregate = rawSegmentSignatures.reduce(into: Data()) { $0.append($1) }
+        let hmac = HMAC<SHA256>.authenticationCode(for: aggregate, using: symmetricKey)
+        return Data(hmac).base64EncodedString()
+    }
+
+    /// Legacy helper kept for call sites that previously computed a synthetic GMAC.
+    /// Prefer `segmentSignatureGMAC(encryptedSegment:)` for OpenTDF interop.
+    @available(*, deprecated, message: "Use segmentSignatureGMAC(encryptedSegment:) — OpenTDF GMAC is the AES-GCM tag")
+    public static func segmentSignatureGMAC(segmentCiphertext: Data, symmetricKey _: SymmetricKey) throws -> Data {
+        try segmentSignatureGMAC(encryptedSegment: segmentCiphertext)
     }
 
     /// Wrap the payload DEK with the KAS RSA public key.
