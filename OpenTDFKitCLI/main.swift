@@ -586,7 +586,8 @@ struct OpenTDFKitCLI {
         )
 
         let policy = try TDFPolicy(json: policyData)
-        let specVersion = env["TDF_SPEC_VERSION"] ?? env["XT_WITH_TARGET_MODE"] ?? "4.3.0"
+        // Do not fall back to XT_WITH_TARGET_MODE — that is a target-mode name (nano/zip/hexless), not a schema version.
+        let specVersion = env["TDF_SPEC_VERSION"] ?? "4.3.0"
 
         // Parse key size from environment (default: 256-bit)
         let keySize: TDFKeySize = {
@@ -760,7 +761,8 @@ struct OpenTDFKitCLI {
              "obligations":
             return 1
         default:
-            return 2 // unknown feature
+            // xtest contract: 0 = supported, 1 = unsupported, 2 = unknown feature name
+            return 2
         }
     }
 }

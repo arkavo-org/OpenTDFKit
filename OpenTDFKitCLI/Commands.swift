@@ -232,14 +232,13 @@ enum Commands {
         clientSecret: String,
     ) async throws -> String {
         let env = ProcessInfo.processInfo.environment
-        let tokenURLString: String
-        if let explicit = env["TOKENENDPOINT"], !explicit.isEmpty {
-            tokenURLString = explicit
+        let tokenURLString: String = if let explicit = env["TOKENENDPOINT"], !explicit.isEmpty {
+            explicit
         } else if let kc = env["KCFULLURL"], !kc.isEmpty {
-            tokenURLString = kc.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            kc.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                 + "/protocol/openid-connect/token"
         } else {
-            tokenURLString = platformURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/token"
+            platformURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/token"
         }
 
         guard let tokenURL = URL(string: tokenURLString) else {
@@ -322,7 +321,8 @@ enum Commands {
                     userInfo: [NSLocalizedDescriptionKey: "Failed to fetch KAS RSA public key"],
                 )
             }
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            // try? so non-JSON bodies fall through to the raw-PEM fallback below.
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let pem = json["publicKey"] as? String ?? json["public_key"] as? String
             {
                 return (pem, json["kid"] as? String)
@@ -626,9 +626,13 @@ enum Commands {
         let header: Header
         do {
             header = try parser.parseHeader()
-            if verbose { print("✓ Header parsed successfully") }
+            if verbose {
+                print("✓ Header parsed successfully")
+            }
         } catch {
-            if verbose { print("❌ Failed to parse header: \(error)") }
+            if verbose {
+                print("❌ Failed to parse header: \(error)")
+            }
             throw DecryptError.invalidFormat
         }
 
@@ -642,10 +646,14 @@ enum Commands {
             "http://\(kasURLString)/kas"
         }
         guard let kasURL = URL(string: kasURLWithPath) else {
-            if verbose { print("❌ Invalid KAS URL: \(kasURLString)") }
+            if verbose {
+                print("❌ Invalid KAS URL: \(kasURLString)")
+            }
             throw DecryptError.invalidKASURL
         }
-        if verbose { print("KAS URL: \(kasURL)") }
+        if verbose {
+            print("KAS URL: \(kasURL)")
+        }
 
         // Get OAuth token (from parameter or file)
         let oauthToken: String
@@ -669,14 +677,18 @@ enum Commands {
             publicKey: publicKeyPEM.data(using: String.Encoding.utf8)!,
             curve: .secp256r1,
         )
-        if verbose { print("✓ Generated client ephemeral key pair") }
+        if verbose {
+            print("✓ Generated client ephemeral key pair")
+        }
 
         // Find header boundary
         let headerSize = calculateHeaderSize(from: data, parsedHeader: header, verbose: verbose)
         let rawHeader = data.prefix(headerSize)
 
         // Call KAS rewrap endpoint
-        if verbose { print("\nCalling KAS rewrap endpoint...") }
+        if verbose {
+            print("\nCalling KAS rewrap endpoint...")
+        }
         let configuration = await resolveConfiguration(kasURL: kasURL, token: oauthToken)
         let kasClient = try KASRewrapClient(configuration: configuration, oauthToken: oauthToken)
 
@@ -687,9 +699,13 @@ enum Commands {
                 parsedHeader: header,
                 clientKeyPair: pemKeyPair,
             )
-            if verbose { print("✓ KAS rewrap successful") }
+            if verbose {
+                print("✓ KAS rewrap successful")
+            }
         } catch {
-            if verbose { print("❌ KAS rewrap failed: \(error)") }
+            if verbose {
+                print("❌ KAS rewrap failed: \(error)")
+            }
             throw error
         }
 
@@ -701,9 +717,13 @@ enum Commands {
                 sessionPublicKey: sessionPublicKey,
                 clientPrivateKey: clientKeyPair.privateKey,
             )
-            if verbose { print("✓ Key unwrapped successfully") }
+            if verbose {
+                print("✓ Key unwrapped successfully")
+            }
         } catch {
-            if verbose { print("❌ Key unwrap failed: \(error)") }
+            if verbose {
+                print("❌ Key unwrap failed: \(error)")
+            }
             throw error
         }
 
@@ -754,7 +774,9 @@ enum Commands {
                 if i + 2 < data.count {
                     let potentialLength = Int(data[i + 2])
                     if potentialLength > 0, potentialLength < 100, (i + 3 + potentialLength) <= data.count {
-                        if verbose { print("Found payload at offset \(i)") }
+                        if verbose {
+                            print("Found payload at offset \(i)")
+                        }
                         return i
                     }
                 }
@@ -763,7 +785,9 @@ enum Commands {
 
         // Fallback to reconstructed header size
         let reconstructed = parsedHeader.toData().count
-        if verbose { print("Using reconstructed header size: \(reconstructed) bytes") }
+        if verbose {
+            print("Using reconstructed header size: \(reconstructed) bytes")
+        }
         return reconstructed
     }
 }
