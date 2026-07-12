@@ -162,9 +162,21 @@ public enum TDFCrypto {
         return Data(plaintext)
     }
 
+    /// Compute the Standard TDF policy binding hash (OpenTDF / go SDK format).
+    ///
+    /// 1. Base64-encode the raw policy JSON bytes
+    /// 2. HMAC-SHA256 the base64 string as UTF-8 using the payload DEK
+    /// 3. Hex-encode the 32-byte HMAC (64 lowercase hex chars)
+    /// 4. Base64-encode that hex string for the manifest `policyBinding.hash`
+    ///
+    /// Using raw HMAC base64 (previous behavior) fails KAS rewrap with
+    /// "tamper detected" when go/java decrypt a Swift-produced TDF.
     public static func policyBinding(policy: Data, symmetricKey: SymmetricKey) -> TDFPolicyBinding {
-        let hmac = HMAC<SHA256>.authenticationCode(for: policy, using: symmetricKey)
-        let hash = Data(hmac).base64EncodedString()
+        let policyBase64 = policy.base64EncodedString()
+        let policyBase64Bytes = Data(policyBase64.utf8)
+        let hmac = HMAC<SHA256>.authenticationCode(for: policyBase64Bytes, using: symmetricKey)
+        let hex = Data(hmac).map { String(format: "%02x", $0) }.joined()
+        let hash = Data(hex.utf8).base64EncodedString()
         return TDFPolicyBinding(alg: "HS256", hash: hash)
     }
 
@@ -172,17 +184,56 @@ public enum TDFCrypto {
         symmetricKey.withUnsafeBytes { Data($0) }
     }
 
+    /// HS256 root/segment signature: raw HMAC-SHA256 digest (32 bytes).
     public static func segmentSignature(segmentCiphertext: Data, symmetricKey: SymmetricKey) -> Data {
         let hmac = HMAC<SHA256>.authenticationCode(for: segmentCiphertext, using: symmetricKey)
         return Data(hmac)
     }
 
-    public static func segmentSignatureGMAC(segmentCiphertext: Data, symmetricKey: SymmetricKey) throws -> Data {
-        let nonce = try AES.GCM.Nonce(data: Data(count: 12))
-        let sealed = try AES.GCM.seal(Data(), using: symmetricKey, nonce: nonce, authenticating: segmentCiphertext)
-        return Data(sealed.tag)
+    /// OpenTDF "GMAC" segment integrity for AES-GCM payloads is **not** a separate
+    /// MAC — it is the last 16 bytes of the encrypted segment (the AES-GCM tag).
+    /// Matches go SDK `calculateSignature` with GMAC + hexless (4.3.0).
+    ///
+    /// - Parameter encryptedSegment: IV (12) + ciphertext + tag (16)
+    /// - Returns: 16-byte GCM tag
+    public static func segmentSignatureGMAC(encryptedSegment: Data) throws -> Data {
+        let tagSize = 16
+        guard encryptedSegment.count >= tagSize else {
+            throw TDFCryptoError.decryptionFailed(
+                "Encrypted segment too short for GMAC (\(encryptedSegment.count) < \(tagSize))",
+            )
+        }
+        return Data(encryptedSegment.suffix(tagSize))
     }
 
+    /// Manifest segment hash string for hexless TDF 4.3.0: `base64(raw GMAC/tag)`.
+    public static func segmentHashBase64GMAC(encryptedSegment: Data) throws -> String {
+        try segmentSignatureGMAC(encryptedSegment: encryptedSegment).base64EncodedString()
+    }
+
+    /// Root signature for hexless TDF 4.3.0: `base64(HMAC-SHA256(DEK, concat(raw segment sigs)))`.
+    public static func rootSignatureBase64(
+        rawSegmentSignatures: [Data],
+        symmetricKey: SymmetricKey,
+    ) -> String {
+        let aggregate = rawSegmentSignatures.reduce(into: Data()) { $0.append($1) }
+        let hmac = HMAC<SHA256>.authenticationCode(for: aggregate, using: symmetricKey)
+        return Data(hmac).base64EncodedString()
+    }
+
+    /// Legacy helper kept for call sites that previously computed a synthetic GMAC.
+    /// Prefer `segmentSignatureGMAC(encryptedSegment:)` for OpenTDF interop.
+    @available(*, deprecated, message: "Use segmentSignatureGMAC(encryptedSegment:) — OpenTDF GMAC is the AES-GCM tag")
+    public static func segmentSignatureGMAC(segmentCiphertext: Data, symmetricKey _: SymmetricKey) throws -> Data {
+        try segmentSignatureGMAC(encryptedSegment: segmentCiphertext)
+    }
+
+    /// Wrap the payload DEK with the KAS RSA public key.
+    ///
+    /// Uses RSA-OAEP with **SHA-1** to match the OpenTDF platform / go SDK
+    /// (`rsa.EncryptOAEP(sha1.New(), …)`). SHA-256 OAEP is not interoperable
+    /// with current KAS unwrap and surfaces as rewrap failures ("access denied"
+    /// / "bad request" after DEK decrypt fails).
     public static func wrapSymmetricKeyWithRSA(publicKeyPEM: String, symmetricKey: SymmetricKey) throws -> String {
         let keyData = symmetricKey.withUnsafeBytes { rawBuffer -> Data in
             Data(rawBuffer)
@@ -191,7 +242,7 @@ public enum TDFCrypto {
         var error: Unmanaged<CFError>?
         guard let encrypted = SecKeyCreateEncryptedData(
             publicKey,
-            .rsaEncryptionOAEPSHA256,
+            .rsaEncryptionOAEPSHA1,
             keyData as CFData,
             &error,
         ) as Data? else {
@@ -200,6 +251,7 @@ public enum TDFCrypto {
         return encrypted.base64EncodedString()
     }
 
+    /// Unwrap a KAS RSA-wrapped DEK (OAEP-SHA1, matching go platform).
     public static func unwrapSymmetricKeyWithRSA(privateKeyPEM: String, wrappedKey: String) throws -> SymmetricKey {
         let privateKey = try loadRSAPrivateKey(fromPEM: privateKeyPEM)
         guard let wrappedData = Data(base64Encoded: wrappedKey) else {
@@ -208,7 +260,7 @@ public enum TDFCrypto {
         var error: Unmanaged<CFError>?
         guard var decrypted = SecKeyCreateDecryptedData(
             privateKey,
-            .rsaEncryptionOAEPSHA256,
+            .rsaEncryptionOAEPSHA1,
             wrappedData as CFData,
             &error,
         ) as Data? else {

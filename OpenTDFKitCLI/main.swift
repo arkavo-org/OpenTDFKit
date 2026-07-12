@@ -9,7 +9,6 @@ enum CLIDataFormat: String {
     case nanoWithECDSA = "nano-with-ecdsa"
     case nanoCollection = "nano-collection"
     case tdf
-    case ztdf
     case json
     case cbor
 
@@ -26,6 +25,10 @@ enum CLIDataFormat: String {
         }
         if normalized == "tdf-cbor" || normalized == "tdfcbor" {
             return .cbor
+        }
+        // Legacy wire name used by some xtest shims for Base TDF ZIP containers.
+        if normalized == "ztdf" {
+            return .tdf
         }
         guard let format = CLIDataFormat(rawValue: normalized) else {
             throw CLIError.unsupportedFormat(rawValue)
@@ -131,8 +134,7 @@ struct OpenTDFKitCLI {
           nano               Standard NanoTDF
           nano-with-ecdsa    NanoTDF with ECDSA binding
           nano-collection    NanoTDF Collection (single key, multiple payloads)
-          tdf                Standard ZIP-based TDF (supports streaming)
-          ztdf               ZTDF alias for standard TDF
+          tdf                Base / standard ZIP-based TDF (supports streaming)
           json               TDF-JSON format (inline base64 payload)
           cbor               TDF-CBOR format (binary payload)
 
@@ -141,7 +143,7 @@ struct OpenTDFKitCLI {
           --segments <sizes>     Comma-separated segment sizes (e.g., 2m,5m,2m)
 
         Features (for supports command):
-          nano, nano_ecdsa, nano_collection, ztdf, json, cbor, etc.
+          nano, nano_ecdsa, nano_collection, tdf, json, cbor, hexless, etc.
 
         Environment Variables:
           CLIENTID           OAuth client ID
@@ -276,7 +278,7 @@ struct OpenTDFKitCLI {
         case .nanoCollection:
             try await Commands.encryptFileToCollection(inputURL: inputURL, outputURL: outputURL)
             return
-        case .tdf, .ztdf:
+        case .tdf:
             let configuration = try await buildTDFConfiguration(for: inputURL)
 
             if let segmentString = segmentsFlag.value {
@@ -372,7 +374,7 @@ struct OpenTDFKitCLI {
         case .nanoCollection:
             try await Commands.decryptCollectionToFile(inputURL: inputURL, outputURL: outputURL)
             return
-        case .tdf, .ztdf:
+        case .tdf:
             let symmetricKey = try loadSymmetricKeyFromEnvironment()
             let privateKey = try loadPrivateKeyPEMFromEnvironment()
             var oauthToken: String? = nil
@@ -454,7 +456,7 @@ struct OpenTDFKitCLI {
             throw CLIError.fileNotFound(inputURL.path)
         }
 
-        guard format == .tdf || format == .ztdf else {
+        guard format == .tdf else {
             throw CLIError.notYetSupported("Benchmark only supports TDF format currently")
         }
 
@@ -621,21 +623,11 @@ struct OpenTDFKitCLI {
             return data
         }
 
-        let policy: [String: Any] = [
-            "uuid": UUID().uuidString.lowercased(),
-            "body": [
-                "dataAttributes": [],
-                "dissem": [],
-            ],
-        ]
-
-        guard JSONSerialization.isValidJSONObject(policy),
-              let data = try? JSONSerialization.data(withJSONObject: policy, options: [.sortedKeys])
-        else {
+        do {
+            return try Config.defaultPolicyData(env: env)
+        } catch {
             throw CLIError.invalidPolicy
         }
-
-        return data
     }
 
     private static func loadPEMString(valueKey: String, pathKey: String) throws -> String {
@@ -736,13 +728,14 @@ struct OpenTDFKitCLI {
 
         let feature = args[2]
 
-        // Official xtest feature_type catalog: advertise only proven Stage-1 basics.
+        // Official xtest feature_type catalog: advertise only proven basics.
         // Formats are not official feature_type probes; keep format names for local tooling.
         switch feature {
         case "nano", "nano_ecdsa", "nano_collection":
             return 0
         case "tdf", "ztdf":
-            // Stage-1 KAS path: OAuth + RSA wrap encrypt + ephemeral rewrap decrypt
+            // Base TDF ZIP: OAuth + RSA wrap encrypt + ephemeral rewrap decrypt.
+            // "ztdf" remains accepted as a legacy wire alias only (not NATO ZTDF).
             return 0
         case "json", "tdf-json", "tdfjson", "cbor", "tdf-cbor", "tdfcbor":
             return 0
@@ -751,7 +744,7 @@ struct OpenTDFKitCLI {
             return 0
         case "connectrpc":
             return 0
-        case "ztdf-ecwrap", "assertions", "assertion_verification",
+        case "tdf-ecwrap", "ztdf-ecwrap", "assertions", "assertion_verification",
              "attribute_traversal", "audit_logging", "autoconfigure",
              "better-messages-2024", "bulk_rewrap", "dpop", "dpop_nonce_challenge",
              "ecwrap", "hexaflexible", "kasallowlist", "key_management",

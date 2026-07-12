@@ -20,6 +20,43 @@ final class KASRewrapClientTests: XCTestCase {
         super.tearDown()
     }
 
+    func testRewrapMetadataDecodesArrayValues() throws {
+        // Platform returns X-Required-Obligations as a JSON array; [String:String]
+        // decoding used to fail the whole rewrap response.
+        let json = """
+        {
+          "responses": [{
+            "policyId": "policy",
+            "results": [{
+              "keyAccessObjectId": "kao-0",
+              "status": "permit",
+              "kasWrappedKey": "dGVzdA==",
+              "metadata": {
+                "error": "none",
+                "X-Required-Obligations": ["https://example.com/obl/a", "https://example.com/obl/b"],
+                "count": 2
+              }
+            }]
+          }],
+          "sessionPublicKey": "-----BEGIN PUBLIC KEY-----\\nMFkwEwYH\\n-----END PUBLIC KEY-----"
+        }
+        """
+        let response = try JSONDecoder().decode(
+            KASRewrapClient.RewrapResponse.self,
+            from: Data(json.utf8),
+        )
+        let result = try XCTUnwrap(response.responses.first?.results.first)
+        XCTAssertEqual(result.status, "permit")
+        XCTAssertEqual(result.metadata?["error"]?.stringValue, "none")
+        // Integral JSON numbers must not render as "2.0"
+        XCTAssertEqual(result.metadata?["count"]?.stringValue, "2")
+        if case let .array(vals)? = result.metadata?["X-Required-Obligations"] {
+            XCTAssertEqual(vals.count, 2)
+        } else {
+            XCTFail("expected array metadata for X-Required-Obligations")
+        }
+    }
+
     func testJWTSigningWithValidKey() throws {
         let signingKey = P256.Signing.PrivateKey()
         let requestBody = "test request body".data(using: .utf8)!

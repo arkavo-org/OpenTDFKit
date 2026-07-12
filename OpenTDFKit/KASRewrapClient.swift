@@ -204,7 +204,9 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         let status: String // "permit" or "fail"
         let kasWrappedKey: String?
         let entityWrappedKey: String? // Legacy field
-        let metadata: [String: String]?
+        /// Platform may return string, array, or object metadata values
+        /// (e.g. `X-Required-Obligations` is a string array).
+        let metadata: [String: RewrapMetadataValue]?
     }
 
     /// Response policy entry
@@ -218,8 +220,107 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         let responses: [ResponsePolicyEntry]
         let sessionPublicKey: String?
         let entityWrappedKey: String? // Legacy field at top level
-        let metadata: [String: String]?
+        let metadata: [String: RewrapMetadataValue]?
         let schemaVersion: String?
+    }
+
+    /// Heterogeneous JSON value in KAS rewrap `metadata` maps.
+    public enum RewrapMetadataValue: Codable, Equatable, Sendable {
+        case string(String)
+        case number(Double)
+        case bool(Bool)
+        case array([RewrapMetadataValue])
+        case object([String: RewrapMetadataValue])
+        case null
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if container.decodeNil() {
+                self = .null
+                return
+            }
+            if let s = try? container.decode(String.self) {
+                self = .string(s)
+                return
+            }
+            if let b = try? container.decode(Bool.self) {
+                self = .bool(b)
+                return
+            }
+            if let n = try? container.decode(Double.self) {
+                self = .number(n)
+                return
+            }
+            if let a = try? container.decode([RewrapMetadataValue].self) {
+                self = .array(a)
+                return
+            }
+            if let o = try? container.decode([String: RewrapMetadataValue].self) {
+                self = .object(o)
+                return
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unsupported rewrap metadata JSON value",
+            )
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            switch self {
+            case let .string(s): try container.encode(s)
+            case let .number(n): try container.encode(n)
+            case let .bool(b): try container.encode(b)
+            case let .array(a): try container.encode(a)
+            case let .object(o): try container.encode(o)
+            case .null: try container.encodeNil()
+            }
+        }
+
+        /// Scalar string form for error messages; nil for arrays/objects/null.
+        /// Integral doubles render without a trailing `.0` (JSON integers decode as Double).
+        public var stringValue: String? {
+            switch self {
+            case let .string(s): s
+            case let .number(n):
+                if n == n.rounded(), abs(n) < 1e15 {
+                    String(Int64(n))
+                } else {
+                    String(n)
+                }
+            case let .bool(b): String(b)
+            case .array, .object, .null: nil
+            }
+        }
+    }
+
+    /// HKDF salt for Standard TDF EC session unwrap — matches go SDK `tdfSalt()`:
+    /// `SHA256("TDF")`.
+    public static var standardTDFSessionSalt: Data {
+        var hasher = SHA256()
+        hasher.update(data: Data("TDF".utf8))
+        return Data(hasher.finalize())
+    }
+
+    /// Flatten rewrap metadata for deny/fail diagnostics when no `error` string is present.
+    private static func rewrapDenyReason(_ metadata: [String: RewrapMetadataValue]?) -> String? {
+        guard let metadata, !metadata.isEmpty else { return nil }
+        let parts = metadata.keys.sorted().compactMap { key -> String? in
+            guard let value = metadata[key] else { return nil }
+            switch value {
+            case let .string(s): return "\(key)=\(s)"
+            case let .number(n):
+                if n == n.rounded(), abs(n) < 1e15 {
+                    return "\(key)=\(Int64(n))"
+                }
+                return "\(key)=\(n)"
+            case let .bool(b): return "\(key)=\(b)"
+            case let .array(a): return "\(key)=[\(a.count)]"
+            case .object: return "\(key)={…}"
+            case .null: return "\(key)=null"
+            }
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "; ")
     }
 
     // MARK: - KAS Public Key Response
@@ -407,7 +508,9 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
             }
 
             guard firstResult.status == "permit" else {
-                let reason = firstResult.metadata?["error"] ?? "Access denied by policy"
+                let reason = firstResult.metadata?["error"]?.stringValue
+                    ?? Self.rewrapDenyReason(firstResult.metadata)
+                    ?? "status=\(firstResult.status)"
                 throw KASRewrapError.accessDenied(reason)
             }
 
@@ -538,7 +641,9 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
             for policyEntry in rewrapResponse.responses {
                 for result in policyEntry.results {
                     guard result.status == "permit" else {
-                        let reason = result.metadata?["error"] ?? "Access denied by policy"
+                        let reason = result.metadata?["error"]?.stringValue
+                            ?? Self.rewrapDenyReason(result.metadata)
+                            ?? "status=\(result.status)"
                         throw KASRewrapError.accessDenied(reason)
                     }
 

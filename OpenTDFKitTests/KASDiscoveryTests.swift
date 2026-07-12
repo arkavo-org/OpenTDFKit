@@ -132,6 +132,99 @@ final class KASDiscoveryTests: XCTestCase {
         XCTAssertThrowsError(try KasEndpoints.from(cfg))
     }
 
+    func testWithKasFallbackSynthesizesWhenKasMissing() throws {
+        // Platform well-known often has IdP metadata without a kas block.
+        let incomplete = OpenTDFConfiguration(
+            kas: nil,
+            idp: nil,
+            platformIssuer: "http://localhost:8888/auth/realms/opentdf",
+        )
+        XCTAssertThrowsError(try KasEndpoints.from(incomplete))
+
+        let filled = incomplete.withKasFallback(baseURL: "http://localhost:8080")
+        let ep = try KasEndpoints.from(filled)
+        XCTAssertEqual(ep.transport, .connect)
+        XCTAssertEqual(ep.rewrapURL, "http://localhost:8080/kas.AccessService/Rewrap")
+        XCTAssertEqual(ep.publicKeyURL, "http://localhost:8080/kas.AccessService/PublicKey")
+        XCTAssertEqual(filled.kas?.uri, "http://localhost:8080")
+        XCTAssertEqual(filled.platformIssuer, "http://localhost:8888/auth/realms/opentdf")
+    }
+
+    func testWithKasFallbackPreservesUsableWellKnown() throws {
+        let cfg = try JSONDecoder().decode(
+            OpenTDFConfiguration.self,
+            from: Data(Self.platformWellKnown.utf8),
+        )
+        let filled = cfg.withKasFallback(baseURL: "http://localhost:8080")
+        // Must keep the well-known Connect endpoints, not the fallback base.
+        let ep = try KasEndpoints.from(filled)
+        XCTAssertEqual(ep.rewrapURL, "https://platform.arkavo.net/kas.AccessService/Rewrap")
+        XCTAssertEqual(filled.kas?.uri, "https://platform.arkavo.net")
+    }
+
+    func testWithKasFallbackWhenKasHasNoEndpoints() throws {
+        let incomplete = OpenTDFConfiguration(
+            kas: KasConfig(
+                uri: "http://localhost:8080",
+                algorithms: [],
+                publicKeyURL: nil,
+                rewrapURL: nil,
+                connectPublicKeyURL: nil,
+                connectRewrapURL: nil,
+            ),
+            idp: nil,
+            platformIssuer: nil,
+        )
+        let filled = incomplete.withKasFallback(baseURL: "http://localhost:8080")
+        let ep = try KasEndpoints.from(filled)
+        XCTAssertEqual(ep.transport, .connect)
+        XCTAssertEqual(ep.rewrapURL, "http://localhost:8080/kas.AccessService/Rewrap")
+    }
+
+    func testWithKasFallbackDoesNotReplaceHostileKasEndpoints() {
+        // Present kas block with SSRF-bait rewrap URL must not be rewritten to
+        // fallbackBase — validation must fail at KasEndpoints.from instead.
+        let hostile = OpenTDFConfiguration(
+            kas: KasConfig(
+                uri: "https://platform.example.com",
+                algorithms: [],
+                publicKeyURL: nil,
+                rewrapURL: nil,
+                connectPublicKeyURL: "https://platform.example.com/kas.AccessService/PublicKey",
+                connectRewrapURL: "https://169.254.169.254/kas.AccessService/Rewrap",
+            ),
+            idp: nil,
+            platformIssuer: nil,
+        )
+        let after = hostile.withKasFallback(baseURL: "http://localhost:8080")
+        XCTAssertEqual(after.kas?.connectRewrapURL, "https://169.254.169.254/kas.AccessService/Rewrap")
+        XCTAssertEqual(after.kas?.uri, "https://platform.example.com")
+        XCTAssertThrowsError(try KasEndpoints.from(after)) { error in
+            guard case KASDiscoveryError.invalidURL = error else {
+                return XCTFail("expected invalidURL (SSRF), got \(error)")
+            }
+        }
+    }
+
+    func testWithKasFallbackWhenUriEmpty() throws {
+        let emptyUri = OpenTDFConfiguration(
+            kas: KasConfig(
+                uri: "",
+                algorithms: [],
+                publicKeyURL: "https://k.example.com/kas/v2/kas_public_key",
+                rewrapURL: "https://k.example.com/kas/v2/rewrap",
+                connectPublicKeyURL: nil,
+                connectRewrapURL: nil,
+            ),
+            idp: nil,
+            platformIssuer: nil,
+        )
+        let filled = emptyUri.withKasFallback(baseURL: "http://localhost:8080")
+        XCTAssertEqual(filled.kas?.uri, "http://localhost:8080")
+        let ep = try KasEndpoints.from(filled)
+        XCTAssertEqual(ep.transport, .connect)
+    }
+
     func testFromConfigThrowsWhenUriEmpty() {
         let cfg = OpenTDFConfiguration(
             kas: KasConfig(uri: "", algorithms: [],

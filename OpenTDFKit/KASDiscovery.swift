@@ -65,6 +65,43 @@ public struct OpenTDFConfiguration: Codable, Sendable {
             platformIssuer: nil,
         )
     }
+
+    /// If well-known omitted a usable `kas` advertisement, synthesize Connect
+    /// endpoints for `fallbackBaseURL` while preserving any `idp` /
+    /// `platformIssuer`. Returns self unchanged when a `kas` block already
+    /// advertises Connect or REST endpoint URLs.
+    ///
+    /// Local platforms often serve `/.well-known/opentdf-configuration` with
+    /// IdP metadata but no `kas` block; Stage-1 clients must fall back to the
+    /// default KAS URL (typically `PLATFORMURL` / stripped `KASURL`) rather
+    /// than fail with "missing a 'kas' block".
+    ///
+    /// **Does not** replace a present kas block whose endpoints fail
+    /// validation (SSRF, non-HTTPS, empty host, etc.). Those failures must
+    /// propagate from `KasEndpoints.from` so hostile well-known documents
+    /// cannot be quietly rewritten to a different KAS identity.
+    public func withKasFallback(baseURL: String) -> OpenTDFConfiguration {
+        guard needsKasEndpointSynthesis else {
+            return self
+        }
+        let synthesized = OpenTDFConfiguration.forKasConnect(baseURL)
+        return OpenTDFConfiguration(
+            kas: synthesized.kas,
+            idp: idp,
+            platformIssuer: platformIssuer,
+        )
+    }
+
+    /// True when well-known has no kas block, an empty kas uri, or advertises
+    /// neither Connect nor REST endpoint pairs. False when endpoint URLs are
+    /// present (even if they would fail later SSRF/scheme validation).
+    var needsKasEndpointSynthesis: Bool {
+        guard let kas else { return true }
+        if kas.uri.isEmpty { return true }
+        let hasConnect = kas.connectRewrapURL != nil && kas.connectPublicKeyURL != nil
+        let hasRest = kas.rewrapURL != nil && kas.publicKeyURL != nil
+        return !hasConnect && !hasRest
+    }
 }
 
 public struct KasConfig: Codable, Sendable {

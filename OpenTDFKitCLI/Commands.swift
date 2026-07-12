@@ -176,7 +176,7 @@ enum Commands {
                 clientPrivateKey: ephemeralPrivateKey,
             )
 
-            // Prefer Stage-1 path: EC session unwrap with empty salt (Standard TDF).
+            // Prefer Stage-1 path: EC session unwrap with go `tdfSalt()` = SHA256("TDF").
             if let sessionPEM = result.sessionPublicKeyPEM, !sessionPEM.isEmpty {
                 let (compressedSessionKey, _) = try KASRewrapClient.validateEcPublicKeyPEM(sessionPEM)
                 for (_, wrappedKeyData) in result.wrappedKeys.sorted(by: { $0.key < $1.key }) {
@@ -184,7 +184,7 @@ enum Commands {
                         wrappedKey: wrappedKeyData,
                         sessionPublicKey: compressedSessionKey,
                         clientPrivateKey: ephemeralPrivateKey.rawRepresentation,
-                        salt: Data(), // Standard TDF HKDF salt is empty
+                        salt: KASRewrapClient.standardTDFSessionSalt,
                     )
                     keyShares.append(TDFCrypto.data(from: share))
                 }
@@ -226,13 +226,17 @@ enum Commands {
     /// 1. `TOKENENDPOINT` env
     /// 2. `KCFULLURL` + `/protocol/openid-connect/token`
     /// 3. `platformURL` + `/token` (local platform convenience)
+    ///
+    /// Loopback hosts are normalized to `127.0.0.1` so the JWT `iss` claim
+    /// matches platform `server.auth.issuer` (CI often sets issuer to
+    /// `http://127.0.0.1:8888/...` while test.env still says `localhost`).
     static func getOAuthToken(
         platformURL: String,
         clientID: String,
         clientSecret: String,
     ) async throws -> String {
         let env = ProcessInfo.processInfo.environment
-        let tokenURLString: String = if let explicit = env["TOKENENDPOINT"], !explicit.isEmpty {
+        let rawTokenURL: String = if let explicit = env["TOKENENDPOINT"], !explicit.isEmpty {
             explicit
         } else if let kc = env["KCFULLURL"], !kc.isEmpty {
             kc.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -240,6 +244,7 @@ enum Commands {
         } else {
             platformURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/token"
         }
+        let tokenURLString = normalizeLoopbackHost(rawTokenURL)
 
         guard let tokenURL = URL(string: tokenURLString) else {
             throw DecryptError.missingOAuthToken
@@ -248,17 +253,20 @@ enum Commands {
         var request = URLRequest(url: tokenURL)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        // application/x-www-form-urlencoded: encode as form fields (not query allow-list).
         let body =
-            "grant_type=client_credentials&client_id=\(urlEncode(clientID))&client_secret=\(urlEncode(clientSecret))"
+            "grant_type=client_credentials&client_id=\(formURLEncode(clientID))&client_secret=\(formURLEncode(clientSecret))"
         request.httpBody = body.data(using: .utf8)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let detail = String(data: data, encoding: .utf8) ?? ""
             throw NSError(
                 domain: "OpenTDFKitCLI",
                 code: status,
-                userInfo: [NSLocalizedDescriptionKey: "OAuth token request failed (HTTP \(status)) at \(tokenURLString)"],
+                userInfo: [NSLocalizedDescriptionKey:
+                    "OAuth token request failed (HTTP \(status)) at \(tokenURLString): \(detail)"],
             )
         }
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -266,6 +274,24 @@ enum Commands {
             throw DecryptError.missingOAuthToken
         }
         return token
+    }
+
+    /// Rewrite `localhost` → `127.0.0.1` in URLs so OIDC `iss` matches platform issuer.
+    static func normalizeLoopbackHost(_ urlString: String) -> String {
+        var s = urlString
+        s = s.replacingOccurrences(of: "://localhost:", with: "://127.0.0.1:")
+        s = s.replacingOccurrences(of: "://localhost/", with: "://127.0.0.1/")
+        if s.hasSuffix("://localhost") {
+            s = s.replacingOccurrences(of: "://localhost", with: "://127.0.0.1")
+        }
+        return s
+    }
+
+    /// Form-urlencoded encoding for OAuth token POST bodies.
+    private static func formURLEncode(_ value: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
     /// Fetch RSA public key PEM (+ optional kid) from KAS for Standard TDF wrap.
@@ -338,10 +364,6 @@ enum Commands {
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: "Unable to fetch KAS RSA public key via Connect or REST"],
         )
-    }
-
-    private static func urlEncode(_ value: String) -> String {
-        value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
     }
 
     private static func xorKeyData(_ lhs: Data, _ rhs: Data) -> Data {
@@ -492,9 +514,10 @@ enum Commands {
 
     /// Resolve an OpenTDFConfiguration for the platform hosting `kasURL`.
     /// Tries well-known discovery at the platform root (PLATFORMURL env, else
-    /// the scheme/host/port of `kasURL`), falling back to synthesized Connect
-    /// endpoints. The well-known doc and Connect endpoints live at the platform
-    /// root, not under the KAS `/kas` path.
+    /// the scheme/host/port of `kasURL`). If well-known is missing **or**
+    /// present without a usable `kas` block, fall back to synthesized Connect
+    /// endpoints at the default KAS base. Connect paths live at the platform
+    /// root, not under the KAS `/kas` identity path.
     static func resolveConfiguration(kasURL: URL, token _: String) async -> OpenTDFConfiguration {
         let platformBase: String
         if let env = ProcessInfo.processInfo.environment["PLATFORMURL"], !env.isEmpty {
@@ -506,10 +529,39 @@ enum Commands {
             comps.port = kasURL.port
             platformBase = comps.string ?? kasURL.absoluteString
         }
+        let fallbackBase = defaultKasConnectBase(kasURL: kasURL, platformBase: platformBase)
         if let cfg = try? await fetchWellKnown(platformURL: platformBase) {
-            return cfg
+            // Incomplete well-known (e.g. IdP only, no kas) → keep IdP, fill kas.
+            return cfg.withKasFallback(baseURL: fallbackBase)
         }
-        return OpenTDFConfiguration.forKasConnect(platformBase)
+        return OpenTDFConfiguration.forKasConnect(fallbackBase)
+    }
+
+    /// Connect endpoints attach to the platform root. Prefer `PLATFORMURL`,
+    /// then `KASURL`/`TDF_KAS_URL` with a trailing `/kas` stripped, then the
+    /// scheme/host/port derived from the manifest `kasURL`.
+    static func defaultKasConnectBase(kasURL: URL, platformBase: String) -> String {
+        func stripKasPath(_ raw: String) -> String {
+            var s = raw
+            while s.hasSuffix("/") {
+                s.removeLast()
+            }
+            if s.hasSuffix("/kas") {
+                s = String(s.dropLast(4))
+            }
+            while s.hasSuffix("/") {
+                s.removeLast()
+            }
+            return s
+        }
+        let env = ProcessInfo.processInfo.environment
+        if let platform = env["PLATFORMURL"], !platform.isEmpty {
+            return stripKasPath(platform)
+        }
+        if let kas = env["KASURL"] ?? env["TDF_KAS_URL"], !kas.isEmpty {
+            return stripKasPath(kas)
+        }
+        return stripKasPath(platformBase.isEmpty ? kasURL.absoluteString : platformBase)
     }
 
     /// Fetch KAS public key
@@ -1451,21 +1503,10 @@ extension Commands {
             return try TDFPolicy(json: data)
         }
 
-        // Create default policy
-        let policy: [String: Any] = [
-            "uuid": UUID().uuidString.lowercased(),
-            "body": [
-                "dataAttributes": [] as [Any],
-                "dissem": [] as [Any],
-            ],
-        ]
-
-        guard JSONSerialization.isValidJSONObject(policy),
-              let data = try? JSONSerialization.data(withJSONObject: policy, options: [.sortedKeys])
-        else {
+        do {
+            return try TDFPolicy(json: Config.defaultPolicyData(env: env))
+        } catch {
             throw EncryptError.missingConfiguration("Unable to create default policy")
         }
-
-        return try TDFPolicy(json: data)
     }
 }

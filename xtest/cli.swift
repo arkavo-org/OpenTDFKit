@@ -81,8 +81,11 @@ enum Command {
 
     enum TDFFormat: String {
         case nano
-        case ztdf
-        case ztdfECWrap = "ztdf-ecwrap"
+        case tdf
+        /// Legacy wire name for Base TDF ZIP (accepted as synonym for `tdf`).
+        case tdfLegacy = "ztdf"
+        case tdfECWrap = "tdf-ecwrap"
+        case tdfECWrapLegacy = "ztdf-ecwrap"
         case nanoWithECDSA = "nano-with-ecdsa"
     }
 }
@@ -170,9 +173,9 @@ func handleEncrypt(plaintext: String, ciphertext: String, format: Command.TDFFor
 
         encryptedData = try nanoTDF.serialize()
 
-    case .ztdf, .ztdfECWrap:
-        // ZTDF not yet implemented
-        print("ZTDF format not yet implemented in Swift SDK")
+    case .tdf, .tdfLegacy, .tdfECWrap, .tdfECWrapLegacy:
+        // Prefer OpenTDFKitCLI for Base TDF; this stub is nano-only.
+        print("Base TDF format: use OpenTDFKitCLI (not this stub)")
         exit(1)
     }
 
@@ -203,8 +206,8 @@ func handleDecrypt(ciphertext: String, recovered: String, format: Command.TDFFor
         // For testing, return a placeholder
         decryptedData = "Decryption requires KAS integration".data(using: .utf8)!
 
-    case .ztdf, .ztdfECWrap:
-        print("ZTDF format not yet implemented in Swift SDK")
+    case .tdf, .tdfLegacy, .tdfECWrap, .tdfECWrapLegacy:
+        print("Base TDF format: use OpenTDFKitCLI (not this stub)")
         exit(1)
     }
 

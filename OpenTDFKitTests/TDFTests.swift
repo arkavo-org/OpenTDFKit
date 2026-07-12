@@ -44,6 +44,63 @@ final class StandardTDFTests: XCTestCase {
 
         XCTAssertFalse(binding.alg.isEmpty, "Policy binding algorithm should not be empty")
         XCTAssertFalse(binding.hash.isEmpty, "Policy binding hash should not be empty")
+        XCTAssertEqual(binding.alg, "HS256")
+        // Go format: base64(hex(HMAC(base64(policyJSON)))) → 88 chars of base64
+        // (64 hex chars of HMAC-SHA256 → 88 base64 chars with padding).
+        XCTAssertEqual(binding.hash.count, 88, "OpenTDF policy binding hash is base64(hex(hmac))")
+        // Must decode as base64 of a 64-char hex string, not raw 32-byte HMAC.
+        let hashData = try XCTUnwrap(Data(base64Encoded: binding.hash))
+        let hex = try XCTUnwrap(String(data: hashData, encoding: .utf8))
+        XCTAssertEqual(hex.count, 64)
+        XCTAssertTrue(hex.allSatisfy(\.isHexDigit))
+    }
+
+    func testPolicyBindingMatchesGoFormatVector() {
+        // Fixed DEK + policy so we can lock the go/rust/python wire format.
+        let keyBytes = Data(repeating: 0x30, count: 32) // ASCII '0' * 32
+        let symmetricKey = SymmetricKey(data: keyBytes)
+        let policyJSON = #"{"uuid":"u","body":{"dataAttributes":[],"dissem":[]}}"#.data(using: .utf8)!
+        let binding = TDFCrypto.policyBinding(policy: policyJSON, symmetricKey: symmetricKey)
+        // Go: base64(hex(HMAC-SHA256(key, base64(policy))))
+        XCTAssertEqual(
+            binding.hash,
+            "OGE3MDAyNmI3OWFiMWVhMTYyMzU4MWViN2E5MmEwNzlmYzJkNWU1OTFhZmU5M2JlMTE3YWJiYjVhYjY5YTE3Yg==",
+        )
+    }
+
+    func testStandardTDFSessionSaltIsSHA256OfTDF() {
+        // go SDK tdfSalt(): sha256.Sum256([]byte("TDF"))
+        var hasher = SHA256()
+        hasher.update(data: Data("TDF".utf8))
+        let expected = Data(hasher.finalize())
+        XCTAssertEqual(KASRewrapClient.standardTDFSessionSalt, expected)
+    }
+
+    func testSegmentGMACIsLast16BytesOfEncryptedSegment() throws {
+        // go calculateSignature(GMAC, hexless): last 16 bytes of segment (AES-GCM tag).
+        let tag = Data((0 ..< 16).map { UInt8($0) })
+        let encrypted = Data(repeating: 0xAB, count: 40) + tag
+        let gmac = try TDFCrypto.segmentSignatureGMAC(encryptedSegment: encrypted)
+        XCTAssertEqual(gmac, tag)
+        XCTAssertEqual(
+            try TDFCrypto.segmentHashBase64GMAC(encryptedSegment: encrypted),
+            tag.base64EncodedString(),
+        )
+    }
+
+    func testRootSignatureIsHMACOfConcatenatedRawSegmentSigs() throws {
+        let key = try TDFCrypto.generateSymmetricKey()
+        let s1 = Data(repeating: 0x11, count: 16)
+        let s2 = Data(repeating: 0x22, count: 16)
+        let root = TDFCrypto.rootSignatureBase64(rawSegmentSignatures: [s1, s2], symmetricKey: key)
+        let expected = TDFCrypto.segmentSignature(
+            segmentCiphertext: s1 + s2,
+            symmetricKey: key,
+        ).base64EncodedString()
+        XCTAssertEqual(root, expected)
+        // Hexless: root is base64 of raw HMAC (not base64(hex(...)))
+        let raw = try XCTUnwrap(Data(base64Encoded: root))
+        XCTAssertEqual(raw.count, 32)
     }
 
     func testSegmentSignature() throws {

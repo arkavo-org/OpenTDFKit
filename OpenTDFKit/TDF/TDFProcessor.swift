@@ -126,11 +126,12 @@ public struct TDFEncryptor {
             )
         }
 
-        let segmentSignatureBase64 = segments.first!.hash
-        let rootSignature = TDFCrypto.segmentSignature(
-            segmentCiphertext: Data(base64Encoded: segmentSignatureBase64)!,
+        // Hexless 4.3.0: root = base64(HMAC-SHA256(DEK, concat(raw GMAC tags))).
+        let rawSegmentSigs = segments.compactMap { Data(base64Encoded: $0.hash) }
+        let rootSignature = TDFCrypto.rootSignatureBase64(
+            rawSegmentSignatures: rawSegmentSigs,
             symmetricKey: symmetricKey,
-        ).base64EncodedString()
+        )
 
         let integrity = TDFIntegrityInformation(
             rootSignature: TDFRootSignature(alg: "HS256", sig: rootSignature),
@@ -237,12 +238,11 @@ public struct TDFEncryptor {
             )
         }
 
-        let segmentHashes = segments.map { Data(base64Encoded: $0.hash)! }
-        let concatenatedHashes = segmentHashes.reduce(Data(), +)
-        let rootSignature = TDFCrypto.segmentSignature(
-            segmentCiphertext: concatenatedHashes,
+        let rawSegmentSigs = segments.compactMap { Data(base64Encoded: $0.hash) }
+        let rootSignature = TDFCrypto.rootSignatureBase64(
+            rawSegmentSignatures: rawSegmentSigs,
             symmetricKey: symmetricKey,
-        ).base64EncodedString()
+        )
 
         let defaultSegmentSize = segmentSizes.first ?? StreamingTDFCrypto.defaultChunkSize
         let integrity = TDFIntegrityInformation(
@@ -314,10 +314,12 @@ public struct TDFEncryptor {
         let policyBinding = TDFCrypto.policyBinding(policy: configuration.policy.json, symmetricKey: symmetricKey)
         let wrappedKey = try TDFCrypto.wrapSymmetricKeyWithRSA(publicKeyPEM: configuration.kas.publicKeyPEM, symmetricKey: symmetricKey)
 
-        let segmentSignature = try TDFCrypto.segmentSignatureGMAC(segmentCiphertext: payloadData, symmetricKey: symmetricKey)
+        let segmentSignature = try TDFCrypto.segmentSignatureGMAC(encryptedSegment: payloadData)
         let segmentSignatureBase64 = segmentSignature.base64EncodedString()
-
-        let rootSignature = TDFCrypto.segmentSignature(segmentCiphertext: segmentSignature, symmetricKey: symmetricKey).base64EncodedString()
+        let rootSignature = TDFCrypto.rootSignatureBase64(
+            rawSegmentSignatures: [segmentSignature],
+            symmetricKey: symmetricKey,
+        )
 
         let method = TDFMethodDescriptor(
             algorithm: configuration.keySize.algorithm,
