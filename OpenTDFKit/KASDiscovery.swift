@@ -66,16 +66,22 @@ public struct OpenTDFConfiguration: Codable, Sendable {
         )
     }
 
-    /// If this document already exposes usable KAS endpoints, return self.
-    /// Otherwise synthesize Connect endpoints for `fallbackBaseURL` while
-    /// preserving any `idp` / `platformIssuer` discovered from well-known.
+    /// If well-known omitted a usable `kas` advertisement, synthesize Connect
+    /// endpoints for `fallbackBaseURL` while preserving any `idp` /
+    /// `platformIssuer`. Returns self unchanged when a `kas` block already
+    /// advertises Connect or REST endpoint URLs.
     ///
     /// Local platforms often serve `/.well-known/opentdf-configuration` with
     /// IdP metadata but no `kas` block; Stage-1 clients must fall back to the
     /// default KAS URL (typically `PLATFORMURL` / stripped `KASURL`) rather
     /// than fail with "missing a 'kas' block".
+    ///
+    /// **Does not** replace a present kas block whose endpoints fail
+    /// validation (SSRF, non-HTTPS, empty host, etc.). Those failures must
+    /// propagate from `KasEndpoints.from` so hostile well-known documents
+    /// cannot be quietly rewritten to a different KAS identity.
     public func withKasFallback(baseURL: String) -> OpenTDFConfiguration {
-        if (try? KasEndpoints.from(self)) != nil {
+        guard needsKasEndpointSynthesis else {
             return self
         }
         let synthesized = OpenTDFConfiguration.forKasConnect(baseURL)
@@ -84,6 +90,17 @@ public struct OpenTDFConfiguration: Codable, Sendable {
             idp: idp,
             platformIssuer: platformIssuer,
         )
+    }
+
+    /// True when well-known has no kas block, an empty kas uri, or advertises
+    /// neither Connect nor REST endpoint pairs. False when endpoint URLs are
+    /// present (even if they would fail later SSRF/scheme validation).
+    var needsKasEndpointSynthesis: Bool {
+        guard let kas else { return true }
+        if kas.uri.isEmpty { return true }
+        let hasConnect = kas.connectRewrapURL != nil && kas.connectPublicKeyURL != nil
+        let hasRest = kas.rewrapURL != nil && kas.publicKeyURL != nil
+        return !hasConnect && !hasRest
     }
 }
 
