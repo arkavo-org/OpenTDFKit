@@ -214,7 +214,7 @@ let builder = TDFManifestBuilder()
 // Before: ~50 lines of manual construction
 let manifest = builder.buildStandardManifest(
     wrappedKey: wrappedDEK,
-    kasURL: URL(string: "https://kas.arkavo.net")!,
+    kasURL: URL(string: "https://platform.arkavo.net")!,
     policy: policyBase64,
     iv: ivBase64,
     mimeType: "video/mp2t",
