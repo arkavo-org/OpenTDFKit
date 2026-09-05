@@ -87,7 +87,7 @@ let decryptedData = try await nanoTDF.getPayloadPlaintext(symmetricKey: symmetri
 ### Create NanoTDF
 
 ```swift
-let kasRL = ResourceLocator(protocolEnum: .http, body: "platform.arkavo.net")
+let kasRL = ResourceLocator(protocolEnum: .https, body: "platform.arkavo.net/kas")
 let kasMetadata = KasMetadata(resourceLocator: kasRL!, publicKey: publicKey, curve: .secp256r1)
 let remotePolicy = ResourceLocator(protocolEnum: .sharedResourceDirectory, body: "5Cqk3ERPToSMuY8UoKJtcmo4fs1iVyQpq6ndzWzpzWezAF1W")
 var policy = Policy(type: .remote, body: nil, remote: remotePolicy, binding: nil)
