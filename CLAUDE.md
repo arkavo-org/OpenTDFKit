@@ -225,7 +225,7 @@ OpenTDFKit is composed of several key components that work together to implement
 
 - **TDFProcessor**: High-level encryption and decryption operations. Handles symmetric key generation, key wrapping, policy binding, segment signatures, and multi-KAS key reconstruction via XOR. Supports both offline decryption (with symmetric key) and KAS rewrap decryption (with RSA key pair).
 
-- **TDFArchive**: ZIP archive I/O using ZIPFoundation. Reads and writes TDF (Archive Envelope) containers with proper `0.manifest.json` and `0.payload` structure. Supports both camelCase (archive) JSON encoding.
+- **TDFArchive**: ZIP archive I/O using ZIPFoundation. Reads and writes TDF (Archive Envelope) containers with spec `manifest.json` and `0.payload` structure (reads legacy `0.manifest.json` too). Supports both camelCase (archive) JSON encoding.
 
 - **TrustedDataFormat**: Format abstraction protocol enabling polymorphic handling of both NanoTDF and TDF (Archive Envelope) containers.
 

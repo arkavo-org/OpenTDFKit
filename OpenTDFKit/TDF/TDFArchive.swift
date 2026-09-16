@@ -1,8 +1,32 @@
 import Foundation
 @preconcurrency import ZIPFoundation
 
-private let manifestEntryName = "0.manifest.json"
-private let payloadEntryName = "0.payload"
+/// Zip member names for the TDF container (opentdf/spec schema/OpenTDF/README.md).
+public enum TDFArchiveEntryNames {
+    /// The manifest MUST be `manifest.json` at the archive root.
+    public static let manifest = "manifest.json"
+    /// Name every SDK wrote before spec compliance; accepted on read forever.
+    public static let legacyManifest = "0.manifest.json"
+    /// Default payload member; writers put this same value in `payload.url`.
+    public static let payload = "0.payload"
+
+    static func isSafe(_ name: String) -> Bool {
+        if name.isEmpty || name.hasPrefix("/") || name.contains("\\") {
+            return false
+        }
+        return !name.split(separator: "/", omittingEmptySubsequences: false).contains("..")
+    }
+
+    /// Payload member for a manifest: `payload.url`, or `0.payload` when empty.
+    static func payloadEntry(for manifest: TDFManifest) throws -> String {
+        let url = manifest.payload.url
+        if url.isEmpty {
+            return payload
+        }
+        guard isSafe(url) else { throw TDFArchiveError.unsafePayloadURL(url) }
+        return url
+    }
+}
 
 public struct TDFArchiveReader {
     public static let defaultManifestMaxSize = 10 * 1024 * 1024
@@ -25,11 +49,30 @@ public struct TDFArchiveReader {
         }
     }
 
-    public func manifestData(maxSize: Int = TDFArchiveReader.defaultManifestMaxSize) throws -> Data {
-        guard let entry = archive[manifestEntryName] else {
-            throw TDFArchiveError.missingManifest
+    private func manifestEntry() throws -> ZIPFoundation.Entry {
+        if let e = archive[TDFArchiveEntryNames.manifest] {
+            return e
         }
+        if let e = archive[TDFArchiveEntryNames.legacyManifest] {
+            return e
+        }
+        throw TDFArchiveError.missingManifest
+    }
 
+    private func payloadEntry() throws -> ZIPFoundation.Entry {
+        let name = try TDFArchiveEntryNames.payloadEntry(for: manifest())
+        guard let entry = archive[name] else {
+            if name == TDFArchiveEntryNames.payload {
+                throw TDFArchiveError.missingPayload
+            }
+            throw TDFArchiveError.missingPayloadEntry(name)
+        }
+        try validateEntryPath(entry.path)
+        return entry
+    }
+
+    public func manifestData(maxSize: Int = TDFArchiveReader.defaultManifestMaxSize) throws -> Data {
+        let entry = try manifestEntry()
         try validateEntryPath(entry.path)
 
         var total = 0
@@ -46,24 +89,15 @@ public struct TDFArchiveReader {
 
     public func manifest(maxSize: Int = TDFArchiveReader.defaultManifestMaxSize) throws -> TDFManifest {
         let data = try manifestData(maxSize: maxSize)
-        let decoder = JSONDecoder()
-        return try decoder.decode(TDFManifest.self, from: data)
+        return try JSONDecoder().decode(TDFManifest.self, from: data)
     }
 
     public func payloadSize() throws -> Int64 {
-        guard let entry = archive[payloadEntryName] else {
-            throw TDFArchiveError.missingPayload
-        }
-        return Int64(entry.uncompressedSize)
+        try Int64(payloadEntry().uncompressedSize)
     }
 
     public func payloadData() throws -> Data {
-        guard let entry = archive[payloadEntryName] else {
-            throw TDFArchiveError.missingPayload
-        }
-
-        try validateEntryPath(entry.path)
-
+        let entry = try payloadEntry()
         var result = Data(capacity: Int(entry.uncompressedSize))
         let _ = try archive.extract(entry) { chunk in
             result.append(chunk)
@@ -72,12 +106,7 @@ public struct TDFArchiveReader {
     }
 
     public func writePayload(to handle: FileHandle) throws {
-        guard let entry = archive[payloadEntryName] else {
-            throw TDFArchiveError.missingPayload
-        }
-
-        try validateEntryPath(entry.path)
-
+        let entry = try payloadEntry()
         _ = try archive.extract(entry) { chunk in
             try handle.write(contentsOf: chunk)
         }
@@ -87,7 +116,6 @@ public struct TDFArchiveReader {
         if path.contains("../") || path.hasPrefix("/") || path.contains("\\") {
             throw TDFArchiveError.maliciousPath
         }
-
         let normalizedPath = path.replacingOccurrences(of: "//", with: "/")
         if normalizedPath != path {
             throw TDFArchiveError.maliciousPath
@@ -112,8 +140,9 @@ public struct TDFArchiveWriter {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let manifestData = try encoder.encode(manifest)
-        try addEntry(named: manifestEntryName, data: manifestData, to: archive)
-        try addEntry(named: payloadEntryName, data: payload, to: archive)
+        let payloadName = try TDFArchiveEntryNames.payloadEntry(for: manifest)
+        try addEntry(named: TDFArchiveEntryNames.manifest, data: manifestData, to: archive)
+        try addEntry(named: payloadName, data: payload, to: archive)
         guard let resultData = archive.data else {
             throw TDFArchiveError.creationFailed
         }
@@ -160,6 +189,8 @@ public enum TDFArchiveError: Error, CustomStringConvertible, Equatable {
     case unreadableArchive
     case missingManifest
     case missingPayload
+    case missingPayloadEntry(String)
+    case unsafePayloadURL(String)
     case manifestTooLarge
     case creationFailed
     case maliciousPath
@@ -169,9 +200,13 @@ public enum TDFArchiveError: Error, CustomStringConvertible, Equatable {
         case .unreadableArchive:
             "Unable to read TDF archive: invalid ZIP format or corrupted file"
         case .missingManifest:
-            "Missing manifest: 0.manifest.json not found in archive"
+            "Missing manifest: neither manifest.json nor 0.manifest.json found in archive"
         case .missingPayload:
             "Missing payload: 0.payload not found in archive"
+        case let .missingPayloadEntry(name):
+            "Missing payload: manifest payload.url names '\(name)', which is not in the archive"
+        case let .unsafePayloadURL(url):
+            "Unsafe payload url in manifest: '\(url)'"
         case .manifestTooLarge:
             "Manifest exceeds maximum allowed size"
         case .creationFailed:

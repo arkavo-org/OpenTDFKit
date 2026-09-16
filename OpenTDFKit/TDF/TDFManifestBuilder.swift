@@ -45,7 +45,7 @@ public struct TDFManifestBuilder {
 
         let payloadDescriptor = TDFPayloadDescriptor(
             type: .reference,
-            url: "0.payload",
+            url: TDFArchiveEntryNames.payload,
             protocolValue: .zip,
             isEncrypted: true,
             mimeType: mimeType,
@@ -85,7 +85,7 @@ public struct TDFManifestBuilder {
 
         let payloadDescriptor = TDFPayloadDescriptor(
             type: .reference,
-            url: "0.payload",
+            url: TDFArchiveEntryNames.payload,
             protocolValue: .zip,
             isEncrypted: true,
             mimeType: mimeType,

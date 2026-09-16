@@ -302,7 +302,7 @@ final class StandardTDFTests: XCTestCase {
             return
         }
 
-        try archive.remove(archive["0.manifest.json"]!)
+        try archive.remove(archive["manifest.json"]!)
 
         guard let corruptedData = archive.data else {
             XCTFail("Could not get corrupted archive data")
@@ -343,6 +343,83 @@ final class StandardTDFTests: XCTestCase {
                 return
             }
             XCTAssertEqual(archiveError, TDFArchiveError.missingPayload)
+        }
+    }
+
+    private func rawZip(_ members: [(String, Data)]) throws -> Data {
+        let archive = try ZIPFoundation.Archive(data: Data(), accessMode: .create)
+        for (name, data) in members {
+            try archive.addEntry(with: name, type: .file, uncompressedSize: Int64(data.count),
+                                 compressionMethod: .none, bufferSize: ZIPFoundation.defaultWriteChunkSize)
+            { pos, size in
+                let s = Int(pos); let e = min(s + size, data.count)
+                return s < data.count ? data.subdata(in: s ..< e) : Data()
+            }
+        }
+        return archive.data!
+    }
+
+    private func entryNames(_ data: Data) throws -> [String] {
+        let a = try ZIPFoundation.Archive(data: data, accessMode: .read)
+        return a.map(\.path)
+    }
+
+    private func manifestData(url: String) throws -> Data {
+        var m = createTestManifest()
+        m.payload.url = url
+        return try JSONEncoder().encode(m)
+    }
+
+    func testWriterEmitsSpecManifestNameAndPayloadFromURL() throws {
+        let data = try TDFArchiveWriter().buildArchive(manifest: createTestManifest(), payload: testPlaintext)
+        let names = try entryNames(data)
+        XCTAssertEqual(Set(names), ["manifest.json", "0.payload"])
+        XCTAssertFalse(names.contains("0.manifest.json"))
+    }
+
+    func testWriterPayloadEntryFollowsManifestURL() throws {
+        var m = createTestManifest()
+        m.payload.url = "data.bin"
+        let data = try TDFArchiveWriter().buildArchive(manifest: m, payload: testPlaintext)
+        XCTAssertEqual(try Set(entryNames(data)), ["manifest.json", "data.bin"])
+        let reader = try TDFArchiveReader(data: data)
+        XCTAssertEqual(try reader.payloadData(), testPlaintext)
+    }
+
+    func testReaderAcceptsLegacyManifestName() throws {
+        let data = try rawZip([("0.manifest.json", manifestData(url: "0.payload")), ("0.payload", testPlaintext)])
+        let reader = try TDFArchiveReader(data: data)
+        XCTAssertEqual(try reader.manifest().payload.url, "0.payload")
+        XCTAssertEqual(try reader.payloadData(), testPlaintext)
+    }
+
+    func testReaderPrefersSpecManifestName() throws {
+        let data = try rawZip([
+            ("0.manifest.json", manifestData(url: "b")),
+            ("manifest.json", manifestData(url: "a")),
+            ("a", Data("A".utf8)), ("b", Data("B".utf8)),
+        ])
+        XCTAssertEqual(try TDFArchiveReader(data: data).payloadData(), Data("A".utf8))
+    }
+
+    func testReaderFallsBackTo0PayloadWhenURLEmpty() throws {
+        let data = try rawZip([("manifest.json", manifestData(url: "")), ("0.payload", testPlaintext)])
+        XCTAssertEqual(try TDFArchiveReader(data: data).payloadData(), testPlaintext)
+    }
+
+    func testReaderErrorsWhenURLNamesMissingEntry() throws {
+        let data = try rawZip([("manifest.json", manifestData(url: "missing.bin")), ("0.payload", testPlaintext)])
+        XCTAssertThrowsError(try TDFArchiveReader(data: data).payloadData()) { error in
+            XCTAssertEqual(error as? TDFArchiveError, .missingPayloadEntry("missing.bin"))
+        }
+    }
+
+    func testReaderRejectsUnsafePayloadURL() throws {
+        for bad in ["../x", "/abs", "a\\b", "x/../y"] {
+            let data = try rawZip([("manifest.json", manifestData(url: bad))])
+            XCTAssertThrowsError(try TDFArchiveReader(data: data).payloadData(), bad) { error in
+                XCTAssertEqual(error as? TDFArchiveError, .unsafePayloadURL(bad))
+            }
         }
     }
 
