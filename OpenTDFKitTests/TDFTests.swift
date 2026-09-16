@@ -1013,4 +1013,53 @@ final class StandardTDFTests: XCTestCase {
         let accessType = try XCTUnwrap(loaded.manifest.encryptionInformation.keyAccess.first?.type)
         XCTAssertEqual(accessType, .ecWrapped)
     }
+
+    private func manifestJSON(top: String, payloadExtra: String) -> Data {
+        """
+        {"payload":{"type":"reference","url":"0.payload","protocol":"zip","isEncrypted":true\(payloadExtra)},
+         "encryptionInformation":{"type":"split","keyAccess":[],
+           "method":{"algorithm":"AES-256-GCM","iv":"","isStreamable":true},
+           "integrityInformation":{"rootSignature":{"alg":"HS256","sig":""},"segmentHashAlg":"GMAC","segmentSizeDefault":0,"segments":[]},
+           "policy":""}\(top)}
+        """.data(using: .utf8)!
+    }
+
+    func testEffectiveSpecVersionPrefersSchemaVersion() throws {
+        let m = try JSONDecoder().decode(TDFManifest.self, from: manifestJSON(
+            top: ",\"schemaVersion\":\"4.3.0\",\"tdf_spec_version\":\"9.9.9\"",
+            payloadExtra: ",\"tdf_spec_version\":\"8.8.8\"",
+        ))
+        XCTAssertEqual(m.effectiveSpecVersion, "4.3.0")
+    }
+
+    func testEffectiveSpecVersionThenTopLevelTdfSpecVersion() throws {
+        let m = try JSONDecoder().decode(TDFManifest.self, from: manifestJSON(
+            top: ",\"tdf_spec_version\":\"9.9.9\"",
+            payloadExtra: ",\"tdf_spec_version\":\"8.8.8\"",
+        ))
+        XCTAssertEqual(m.effectiveSpecVersion, "9.9.9")
+    }
+
+    func testEffectiveSpecVersionThenPayloadTdfSpecVersion() throws {
+        let m = try JSONDecoder().decode(TDFManifest.self, from: manifestJSON(
+            top: "", payloadExtra: ",\"tdf_spec_version\":\"8.8.8\"",
+        ))
+        XCTAssertEqual(m.effectiveSpecVersion, "8.8.8")
+    }
+
+    func testEffectiveSpecVersionAbsentIsNil() throws {
+        let m = try JSONDecoder().decode(TDFManifest.self, from: manifestJSON(top: "", payloadExtra: ""))
+        XCTAssertNil(m.effectiveSpecVersion)
+    }
+
+    func testTdfSpecVersionIsNeverEncoded() throws {
+        var m = createTestManifest()
+        m.tdfSpecVersion = "9.9.9"
+        m.payload.tdfSpecVersion = "8.8.8"
+        let data = try JSONEncoder().encode(m)
+        let obj = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        XCTAssertNil(obj["tdf_spec_version"])
+        XCTAssertNil((obj["payload"] as! [String: Any])["tdf_spec_version"])
+        XCTAssertEqual(obj["schemaVersion"] as? String, "1.0.0")
+    }
 }

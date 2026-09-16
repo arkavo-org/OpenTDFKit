@@ -91,7 +91,7 @@ enum Commands {
         let manifest = container.manifest
 
         print("✓ Manifest parsed successfully")
-        print("  Spec Version: \(manifest.schemaVersion)")
+        print("  Spec Version: \(manifest.effectiveSpecVersion ?? "unknown")")
         print("  Payload URL: \(manifest.payload.url)")
         print("  Payload Protocol: \(manifest.payload.protocolValue.rawValue)")
         print("  Encrypted: \(manifest.payload.isEncrypted)")
@@ -142,7 +142,7 @@ enum Commands {
         let container = try loader.load(from: data)
 
         print("✓ Manifest loaded")
-        print("  Spec Version: \(container.manifest.schemaVersion)")
+        print("  Spec Version: \(container.manifest.effectiveSpecVersion ?? "unknown")")
         print("  Key Access Entries: \(container.manifest.encryptionInformation.keyAccess.count)")
 
         let decryptor = TDFDecryptor()
