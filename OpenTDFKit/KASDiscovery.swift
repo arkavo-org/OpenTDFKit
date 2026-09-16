@@ -97,7 +97,9 @@ public struct OpenTDFConfiguration: Codable, Sendable {
     /// present (even if they would fail later SSRF/scheme validation).
     var needsKasEndpointSynthesis: Bool {
         guard let kas else { return true }
-        if kas.uri.isEmpty { return true }
+        if kas.uri.isEmpty {
+            return true
+        }
         let hasConnect = kas.connectRewrapURL != nil && kas.connectPublicKeyURL != nil
         let hasRest = kas.rewrapURL != nil && kas.publicKeyURL != nil
         return !hasConnect && !hasRest
@@ -225,7 +227,9 @@ private func classifyIP(_ host: String) -> IPLiteral? {
 private func isLoopbackHost(_ host: String) -> Bool {
     // Normalize a trailing FQDN dot ("localhost." resolves to loopback too).
     let host = host.hasSuffix(".") ? String(host.dropLast()) : host
-    if host == "localhost" { return true }
+    if host == "localhost" {
+        return true
+    }
     switch classifyIP(host) {
     case let .v4(o): return o[0] == 127 // 127.0.0.0/8
     case let .v6(b): return b.dropLast() == ArraySlice(repeating: 0, count: 15) && b[15] == 1 // ::1
@@ -234,11 +238,26 @@ private func isLoopbackHost(_ host: String) -> Bool {
 }
 
 private func isBlockedV4(_ o: [UInt8]) -> Bool {
-    if o[0] == 10 { return true } // 10.0.0.0/8
-    if o[0] == 172, (o[1] & 0xF0) == 16 { return true } // 172.16.0.0/12
-    if o[0] == 192, o[1] == 168 { return true } // 192.168.0.0/16
-    if o[0] == 169, o[1] == 254 { return true } // 169.254.0.0/16
-    if o == [0, 0, 0, 0] { return true } // 0.0.0.0
+    // 10.0.0.0/8
+    if o[0] == 10 {
+        return true
+    }
+    // 172.16.0.0/12
+    if o[0] == 172, (o[1] & 0xF0) == 16 {
+        return true
+    }
+    // 192.168.0.0/16
+    if o[0] == 192, o[1] == 168 {
+        return true
+    }
+    // 169.254.0.0/16
+    if o[0] == 169, o[1] == 254 {
+        return true
+    }
+    // 0.0.0.0
+    if o == [0, 0, 0, 0] {
+        return true
+    }
     return false
 }
 
@@ -251,7 +270,10 @@ private func isBlockedIP(_ ip: IPLiteral) -> Bool {
         if b[0 ..< 10].allSatisfy({ $0 == 0 }), b[10] == 0xFF, b[11] == 0xFF {
             return isBlockedV4(Array(b[12 ..< 16]))
         }
-        if b.allSatisfy({ $0 == 0 }) { return true } // :: unspecified
+        // :: unspecified
+        if b.allSatisfy({ $0 == 0 }) {
+            return true
+        }
         let first = (UInt16(b[0]) << 8) | UInt16(b[1])
         return (first & 0xFE00) == 0xFC00 || (first & 0xFFC0) == 0xFE80 // fc00::/7, fe80::/10
     }
