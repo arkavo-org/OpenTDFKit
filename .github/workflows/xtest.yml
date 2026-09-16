@@ -232,10 +232,34 @@ jobs:
           platform-otdfctl-dir: ${{ steps.platform-otdfctl.outputs.dir }}
           platform-otdfctl-sha: ${{ steps.platform-otdfctl.outputs.sha }}
 
-      - name: Build go CLI (head builds only)
-        if: fromJson(steps.configure-go.outputs.heads)[0] != null
-        run: make
+      - name: Build go CLI from source when dist is missing
         working-directory: otdftests/xtest/sdk/go
+        run: |-
+          set -euo pipefail
+          # Artifact installs land in dist/${GO_CHANNEL}. Head builds and
+          # BUILD_FROM_SOURCE fallbacks (tagged otdfctl that failed `go install`)
+          # land in src/ and need `make`. Gating on heads[0] skipped that make
+          # for tagged peers, so pytest's `find sdk/go/dist` then crashed.
+          if [[ -x "dist/${GO_CHANNEL}/cli.sh" ]]; then
+            echo "go CLI already at dist/${GO_CHANNEL}/cli.sh"
+            exit 0
+          fi
+          if [[ -e "src/${GO_CHANNEL}" ]]; then
+            echo "Building go CLI VERSIONS=${GO_CHANNEL}"
+            make "VERSIONS=${GO_CHANNEL}"
+          elif [[ -e src/main ]]; then
+            echo "Building go CLI VERSIONS=main"
+            make VERSIONS=main
+          else
+            echo "::error::go CLI missing: no dist/${GO_CHANNEL}/cli.sh and no src/${GO_CHANNEL} or src/main"
+            ls -la . src dist 2>/dev/null || true
+            exit 1
+          fi
+          if [[ ! -x "dist/${GO_CHANNEL}/cli.sh" && ! -x dist/main/cli.sh ]]; then
+            echo "::error::make finished but dist/${GO_CHANNEL}/cli.sh (and dist/main/cli.sh) still missing"
+            ls -la dist 2>/dev/null || true
+            exit 1
+          fi
 
       - name: Build swift CLI from this checkout
         run: make VERSIONS=main
@@ -274,12 +298,23 @@ jobs:
           GO_CH="${GO_CHANNEL}"
           # go dist may be under tag (release install) or main (head). Prefer
           # the channel from resolve-refs; fall back to whatever exists.
+          # Do not `find` a missing dist dir: with `set -euo pipefail` that is
+          # a hard failure ("find: sdk/go/dist: No such file or directory").
           if [[ ! -x "sdk/go/dist/${GO_CH}/cli.sh" ]]; then
             if [[ -x sdk/go/dist/main/cli.sh ]]; then
               GO_CH=main
+            elif [[ -d sdk/go/dist ]]; then
+              GO_CH=$(find sdk/go/dist -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | head -1 || true)
             else
-              GO_CH=$(find sdk/go/dist -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | head -1)
+              echo "::error::sdk/go/dist does not exist; go CLI was not built"
+              ls -la sdk/go sdk/go/src 2>/dev/null || true
+              exit 1
             fi
+          fi
+          if [[ -z "${GO_CH}" || ! -x "sdk/go/dist/${GO_CH}/cli.sh" ]]; then
+            echo "::error::no executable sdk/go/dist/${GO_CH:-<empty>}/cli.sh"
+            ls -la sdk/go/dist 2>/dev/null || true
+            exit 1
           fi
           echo "Using go channel: ${GO_CH}"
           uv run pytest -n auto --dist loadscope \

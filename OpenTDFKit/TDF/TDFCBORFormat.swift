@@ -604,7 +604,9 @@ extension TDFCBOREnvelope {
             throw TDFCBORError.missingField("version")
         }
         let version: [UInt8] = versionArray.compactMap { cbor -> UInt8? in
-            if case let .unsignedInt(v) = cbor { return UInt8(v) }
+            if case let .unsignedInt(v) = cbor {
+                return UInt8(v)
+            }
             return nil
         }
 
@@ -659,7 +661,9 @@ extension TDFCBOREnvelope {
                 }
             }
             // Fall back to string key (legacy)
-            if let v = payloadMap["type"], case let .utf8String(s) = v { return s }
+            if let v = payloadMap["type"], case let .utf8String(s) = v {
+                return s
+            }
             return "inline"
         }()
 
@@ -677,7 +681,9 @@ extension TDFCBOREnvelope {
                 }
             }
             // Fall back to string key (legacy)
-            if let v = payloadMap["protocol"], case let .utf8String(s) = v { return s }
+            if let v = payloadMap["protocol"], case let .utf8String(s) = v {
+                return s
+            }
             return "binary"
         }()
 
@@ -689,7 +695,9 @@ extension TDFCBOREnvelope {
                 return s
             }
             // Fall back to string key (legacy)
-            if let v = payloadMap["mimeType"], case let .utf8String(s) = v { return s }
+            if let v = payloadMap["mimeType"], case let .utf8String(s) = v {
+                return s
+            }
             return nil
         }()
 
@@ -701,7 +709,9 @@ extension TDFCBOREnvelope {
                 return b
             }
             // Fall back to string key (legacy)
-            if let v = payloadMap["isEncrypted"], case let .boolean(b) = v { return b }
+            if let v = payloadMap["isEncrypted"], case let .boolean(b) = v {
+                return b
+            }
             return true
         }()
 
