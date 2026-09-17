@@ -742,6 +742,9 @@ struct OpenTDFKitCLI {
         case "hexless":
             // Default TDF spec 4.3.0 emits hexless manifests
             return 0
+        case "spec-container":
+            // Writes manifest.json at the zip root; payload entry resolved from payload.url.
+            return 0
         case "connectrpc":
             return 0
         case "tdf-ecwrap", "ztdf-ecwrap", "assertions", "assertion_verification",

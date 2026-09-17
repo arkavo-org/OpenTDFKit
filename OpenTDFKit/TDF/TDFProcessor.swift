@@ -164,7 +164,7 @@ public struct TDFEncryptor {
 
         let payloadDescriptor = TDFPayloadDescriptor(
             type: .reference,
-            url: "0.payload",
+            url: TDFArchiveEntryNames.payload,
             protocolValue: .zip,
             isEncrypted: true,
             mimeType: configuration.mimeType,
@@ -276,7 +276,7 @@ public struct TDFEncryptor {
 
         let payloadDescriptor = TDFPayloadDescriptor(
             type: .reference,
-            url: "0.payload",
+            url: TDFArchiveEntryNames.payload,
             protocolValue: .zip,
             isEncrypted: true,
             mimeType: configuration.mimeType,
@@ -364,7 +364,7 @@ public struct TDFEncryptor {
 
         let payloadDescriptor = TDFPayloadDescriptor(
             type: .reference,
-            url: "0.payload",
+            url: TDFArchiveEntryNames.payload,
             protocolValue: .zip,
             isEncrypted: true,
             mimeType: configuration.mimeType,

@@ -2,10 +2,22 @@ import Foundation
 
 /// Trusted Data Format manifest representation aligned with OpenTDF schema.
 public struct TDFManifest: Codable, Sendable {
-    public var schemaVersion: String
+    /// Root version key every SDK writes. Optional on decode so peer manifests
+    /// carrying only `tdf_spec_version` still load.
+    public var schemaVersion: String?
     public var payload: TDFPayloadDescriptor
     public var encryptionInformation: TDFEncryptionInformation
     public var assertions: [TDFAssertion]?
+    /// Spec prose places `tdf_spec_version` at the root. Decode-only; never encoded.
+    public var tdfSpecVersion: String?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case payload
+        case encryptionInformation
+        case assertions
+        case tdfSpecVersion = "tdf_spec_version"
+    }
 
     public init(
         schemaVersion: String,
@@ -17,6 +29,36 @@ public struct TDFManifest: Codable, Sendable {
         self.payload = payload
         self.encryptionInformation = encryptionInformation
         self.assertions = assertions
+        tdfSpecVersion = nil
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decodeIfPresent(String.self, forKey: .schemaVersion)
+        payload = try c.decode(TDFPayloadDescriptor.self, forKey: .payload)
+        encryptionInformation = try c.decode(TDFEncryptionInformation.self, forKey: .encryptionInformation)
+        assertions = try c.decodeIfPresent([TDFAssertion].self, forKey: .assertions)
+        tdfSpecVersion = try c.decodeIfPresent(String.self, forKey: .tdfSpecVersion)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(schemaVersion, forKey: .schemaVersion)
+        try c.encode(payload, forKey: .payload)
+        try c.encode(encryptionInformation, forKey: .encryptionInformation)
+        try c.encodeIfPresent(assertions, forKey: .assertions)
+        // tdfSpecVersion intentionally not encoded.
+    }
+
+    /// Resolve the spec version: `schemaVersion`, then root `tdf_spec_version`,
+    /// then `payload.tdf_spec_version`. First non-empty wins.
+    public var effectiveSpecVersion: String? {
+        for candidate in [schemaVersion, tdfSpecVersion, payload.tdfSpecVersion] {
+            if let v = candidate, !v.isEmpty {
+                return v
+            }
+        }
+        return nil
     }
 }
 
@@ -38,6 +80,8 @@ public struct TDFPayloadDescriptor: Codable, Sendable {
     public var protocolValue: PayloadProtocol
     public var isEncrypted: Bool
     public var mimeType: String?
+    /// Spec JSON schema places `tdf_spec_version` under payload. Decode-only.
+    public var tdfSpecVersion: String?
 
     enum CodingKeys: String, CodingKey {
         case type
@@ -45,6 +89,7 @@ public struct TDFPayloadDescriptor: Codable, Sendable {
         case protocolValue = "protocol"
         case isEncrypted
         case mimeType
+        case tdfSpecVersion = "tdf_spec_version"
     }
 
     public init(
@@ -59,6 +104,26 @@ public struct TDFPayloadDescriptor: Codable, Sendable {
         self.protocolValue = protocolValue
         self.isEncrypted = isEncrypted
         self.mimeType = mimeType
+        tdfSpecVersion = nil
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type = try c.decode(PayloadType.self, forKey: .type)
+        url = try c.decode(String.self, forKey: .url)
+        protocolValue = try c.decode(PayloadProtocol.self, forKey: .protocolValue)
+        isEncrypted = try c.decode(Bool.self, forKey: .isEncrypted)
+        mimeType = try c.decodeIfPresent(String.self, forKey: .mimeType)
+        tdfSpecVersion = try c.decodeIfPresent(String.self, forKey: .tdfSpecVersion)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(type, forKey: .type)
+        try c.encode(url, forKey: .url)
+        try c.encode(protocolValue, forKey: .protocolValue)
+        try c.encode(isEncrypted, forKey: .isEncrypted)
+        try c.encodeIfPresent(mimeType, forKey: .mimeType)
     }
 }
 

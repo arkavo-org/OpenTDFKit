@@ -302,7 +302,7 @@ final class StandardTDFTests: XCTestCase {
             return
         }
 
-        try archive.remove(archive["0.manifest.json"]!)
+        try archive.remove(archive["manifest.json"]!)
 
         guard let corruptedData = archive.data else {
             XCTFail("Could not get corrupted archive data")
@@ -343,6 +343,108 @@ final class StandardTDFTests: XCTestCase {
                 return
             }
             XCTAssertEqual(archiveError, TDFArchiveError.missingPayload)
+        }
+    }
+
+    private func rawZip(_ members: [(String, Data)]) throws -> Data {
+        let archive = try ZIPFoundation.Archive(data: Data(), accessMode: .create)
+        for (name, data) in members {
+            try archive.addEntry(with: name, type: .file, uncompressedSize: Int64(data.count),
+                                 compressionMethod: .none, bufferSize: ZIPFoundation.defaultWriteChunkSize)
+            { pos, size in
+                let s = Int(pos); let e = min(s + size, data.count)
+                return s < data.count ? data.subdata(in: s ..< e) : Data()
+            }
+        }
+        return archive.data!
+    }
+
+    private func entryNames(_ data: Data) throws -> [String] {
+        let a = try ZIPFoundation.Archive(data: data, accessMode: .read)
+        return a.map(\.path)
+    }
+
+    private func manifestData(url: String) throws -> Data {
+        var m = createTestManifest()
+        m.payload.url = url
+        return try JSONEncoder().encode(m)
+    }
+
+    func testWriterEmitsSpecManifestNameAndPayloadFromURL() throws {
+        let data = try TDFArchiveWriter().buildArchive(manifest: createTestManifest(), payload: testPlaintext)
+        let names = try entryNames(data)
+        XCTAssertEqual(Set(names), ["manifest.json", "0.payload"])
+        XCTAssertFalse(names.contains("0.manifest.json"))
+    }
+
+    func testWriterPayloadEntryFollowsManifestURL() throws {
+        var m = createTestManifest()
+        m.payload.url = "data.bin"
+        let data = try TDFArchiveWriter().buildArchive(manifest: m, payload: testPlaintext)
+        XCTAssertEqual(try Set(entryNames(data)), ["manifest.json", "data.bin"])
+        let reader = try TDFArchiveReader(data: data)
+        XCTAssertEqual(try reader.payloadData(), testPlaintext)
+    }
+
+    func testReaderAcceptsLegacyManifestName() throws {
+        let data = try rawZip([("0.manifest.json", manifestData(url: "0.payload")), ("0.payload", testPlaintext)])
+        let reader = try TDFArchiveReader(data: data)
+        XCTAssertEqual(try reader.manifest().payload.url, "0.payload")
+        XCTAssertEqual(try reader.payloadData(), testPlaintext)
+    }
+
+    func testReaderPrefersSpecManifestName() throws {
+        let data = try rawZip([
+            ("0.manifest.json", manifestData(url: "b")),
+            ("manifest.json", manifestData(url: "a")),
+            ("a", Data("A".utf8)), ("b", Data("B".utf8)),
+        ])
+        XCTAssertEqual(try TDFArchiveReader(data: data).payloadData(), Data("A".utf8))
+    }
+
+    func testReaderCachesDecodedManifestAfterFirstSuccess() throws {
+        let data = try rawZip([("manifest.json", manifestData(url: "0.payload")), ("0.payload", testPlaintext)])
+        let reader = try TDFArchiveReader(data: data)
+
+        let first = try reader.manifest()
+        XCTAssertEqual(first.payload.url, "0.payload")
+
+        // A second call with a maxSize far too small to re-read the manifest would throw
+        // .manifestTooLarge if the manifest were being re-decoded from disk; since it instead
+        // returns the cached value, this proves the manifest is only decoded once.
+        let second = try reader.manifest(maxSize: 1)
+        XCTAssertEqual(second.payload.url, first.payload.url)
+
+        // The payload path (resolved via the cached manifest) still works after caching.
+        XCTAssertEqual(try reader.payloadData(), testPlaintext)
+
+        // A fresh reader with no cached success still enforces maxSize and fails as expected.
+        let freshReader = try TDFArchiveReader(data: data)
+        XCTAssertThrowsError(try freshReader.manifest(maxSize: 1)) { error in
+            XCTAssertEqual(error as? TDFArchiveError, .manifestTooLarge)
+        }
+        // ...and a later call with a sufficient maxSize succeeds and is then cached.
+        XCTAssertEqual(try freshReader.manifest().payload.url, "0.payload")
+    }
+
+    func testReaderFallsBackTo0PayloadWhenURLEmpty() throws {
+        let data = try rawZip([("manifest.json", manifestData(url: "")), ("0.payload", testPlaintext)])
+        XCTAssertEqual(try TDFArchiveReader(data: data).payloadData(), testPlaintext)
+    }
+
+    func testReaderErrorsWhenURLNamesMissingEntry() throws {
+        let data = try rawZip([("manifest.json", manifestData(url: "missing.bin")), ("0.payload", testPlaintext)])
+        XCTAssertThrowsError(try TDFArchiveReader(data: data).payloadData()) { error in
+            XCTAssertEqual(error as? TDFArchiveError, .missingPayloadEntry("missing.bin"))
+        }
+    }
+
+    func testReaderRejectsUnsafePayloadURL() throws {
+        for bad in ["../x", "/abs", "a\\b", "x/../y"] {
+            let data = try rawZip([("manifest.json", manifestData(url: bad))])
+            XCTAssertThrowsError(try TDFArchiveReader(data: data).payloadData(), bad) { error in
+                XCTAssertEqual(error as? TDFArchiveError, .unsafePayloadURL(bad))
+            }
         }
     }
 
@@ -1012,5 +1114,54 @@ final class StandardTDFTests: XCTestCase {
 
         let accessType = try XCTUnwrap(loaded.manifest.encryptionInformation.keyAccess.first?.type)
         XCTAssertEqual(accessType, .ecWrapped)
+    }
+
+    private func manifestJSON(top: String, payloadExtra: String) -> Data {
+        """
+        {"payload":{"type":"reference","url":"0.payload","protocol":"zip","isEncrypted":true\(payloadExtra)},
+         "encryptionInformation":{"type":"split","keyAccess":[],
+           "method":{"algorithm":"AES-256-GCM","iv":"","isStreamable":true},
+           "integrityInformation":{"rootSignature":{"alg":"HS256","sig":""},"segmentHashAlg":"GMAC","segmentSizeDefault":0,"segments":[]},
+           "policy":""}\(top)}
+        """.data(using: .utf8)!
+    }
+
+    func testEffectiveSpecVersionPrefersSchemaVersion() throws {
+        let m = try JSONDecoder().decode(TDFManifest.self, from: manifestJSON(
+            top: ",\"schemaVersion\":\"4.3.0\",\"tdf_spec_version\":\"9.9.9\"",
+            payloadExtra: ",\"tdf_spec_version\":\"8.8.8\"",
+        ))
+        XCTAssertEqual(m.effectiveSpecVersion, "4.3.0")
+    }
+
+    func testEffectiveSpecVersionThenTopLevelTdfSpecVersion() throws {
+        let m = try JSONDecoder().decode(TDFManifest.self, from: manifestJSON(
+            top: ",\"tdf_spec_version\":\"9.9.9\"",
+            payloadExtra: ",\"tdf_spec_version\":\"8.8.8\"",
+        ))
+        XCTAssertEqual(m.effectiveSpecVersion, "9.9.9")
+    }
+
+    func testEffectiveSpecVersionThenPayloadTdfSpecVersion() throws {
+        let m = try JSONDecoder().decode(TDFManifest.self, from: manifestJSON(
+            top: "", payloadExtra: ",\"tdf_spec_version\":\"8.8.8\"",
+        ))
+        XCTAssertEqual(m.effectiveSpecVersion, "8.8.8")
+    }
+
+    func testEffectiveSpecVersionAbsentIsNil() throws {
+        let m = try JSONDecoder().decode(TDFManifest.self, from: manifestJSON(top: "", payloadExtra: ""))
+        XCTAssertNil(m.effectiveSpecVersion)
+    }
+
+    func testTdfSpecVersionIsNeverEncoded() throws {
+        var m = createTestManifest()
+        m.tdfSpecVersion = "9.9.9"
+        m.payload.tdfSpecVersion = "8.8.8"
+        let data = try JSONEncoder().encode(m)
+        let obj = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        XCTAssertNil(obj["tdf_spec_version"])
+        XCTAssertNil((obj["payload"] as! [String: Any])["tdf_spec_version"])
+        XCTAssertEqual(obj["schemaVersion"] as? String, "1.0.0")
     }
 }
