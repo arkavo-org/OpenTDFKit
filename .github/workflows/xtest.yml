@@ -4,6 +4,14 @@
 # Runs native macOS platform deps (Postgres + Keycloak + platform) and pytest
 # for swift × go Base TDF only.
 #
+# Two legs run side by side (matrix `go-source`):
+#   upstream    — go CLI from the released opentdf/platform `otdfctl/*` tag.
+#   arkavo-fork — go CLI (otdfctl + sdk) built from arkavo-org/opentdf-platform
+#                 at `fork-ref` via the fork's go.work.
+# The platform SERVICE is upstream in both legs: the fork's service auth is
+# CWT-only and cannot start against the harness's Keycloak IdP. Only the go
+# client comes from the fork.
+#
 # Cross-repo: opentdf-tests community-xtest.yml exercises OpenTDFKit the other
 # direction.
 name: X-Test
@@ -39,6 +47,13 @@ on:
         type: string
         default: latest
         description: "go/otdfctl peer ref: 'latest'/'lts', branch, tag, or SHA"
+      fork-ref:
+        required: false
+        type: string
+        default: main
+        description: >-
+          arkavo-org/opentdf-platform ref for the arkavo-fork go leg
+          (otdfctl + sdk built from source): branch, tag, or SHA.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
@@ -60,10 +75,13 @@ jobs:
       platform-tag: ${{ steps.resolve.outputs.platform-tag }}
       go-ref: ${{ steps.resolve.outputs.go-ref }}
       go-channel: ${{ steps.resolve.outputs.go-channel }}
+      fork-ref: ${{ steps.resolve.outputs.fork-ref }}
+      fork-channel: ${{ steps.resolve.outputs.fork-channel }}
     env:
       TESTS_REF_IN: ${{ inputs.tests-ref || 'latest' }}
       PLATFORM_REF_IN: ${{ inputs.platform-ref || 'latest' }}
       OTDFCTL_REF_IN: ${{ inputs.otdfctl-ref || 'latest' }}
+      FORK_REF_IN: ${{ inputs.fork-ref || 'main' }}
       GH_TOKEN: ${{ github.token }}
       # Harness main; SDK PRs pick up infra fixes without a re-tag.
       TESTS_FALLBACK_REF: main
@@ -121,12 +139,21 @@ jobs:
             GO_CHANNEL="$OTDFCTL_REF_IN"
           fi
 
+          # arkavo-fork leg: the go CLI is built from source, so the channel is
+          # only a dist directory name (sdk/go/dist/<channel>). Prefix it so it
+          # never matches the harness's released-version regex and stays a head.
+          FORK_REF="$FORK_REF_IN"
+          [[ -n "$FORK_REF" ]] || { echo "fork-ref must not be empty" >&2; exit 1; }
+          FORK_CHANNEL="arkavo-$(printf '%s' "$FORK_REF" | sed 's/[^A-Za-z0-9._-]/-/g')"
+
           {
             echo "tests-ref=${TESTS_REF}"
             echo "platform-ref=${PLATFORM_REF}"
             echo "platform-tag=${PLATFORM_TAG}"
             echo "go-ref=${GO_REF}"
             echo "go-channel=${GO_CHANNEL}"
+            echo "fork-ref=${FORK_REF}"
+            echo "fork-channel=${FORK_CHANNEL}"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -137,15 +164,24 @@ jobs:
             echo "| opentdf-tests | \`${TESTS_REF_IN}\` | \`${TESTS_REF}\` |"
             echo "| platform | \`${PLATFORM_REF_IN}\` | \`${PLATFORM_REF}\` |"
             echo "| go/otdfctl | \`${OTDFCTL_REF_IN}\` | \`${GO_REF}\` (channel \`${GO_CHANNEL}\`) |"
+            echo "| arkavo-org/opentdf-platform (go client) | \`${FORK_REF_IN}\` | \`${FORK_REF}\` (channel \`${FORK_CHANNEL}\`) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          echo "tests=${TESTS_REF} platform=${PLATFORM_REF} go=${GO_REF}"
+          echo "tests=${TESTS_REF} platform=${PLATFORM_REF} go=${GO_REF} fork=${FORK_REF}"
 
   community-swift:
-    name: "swift ↔ go"
+    name: "swift ↔ go (${{ matrix.go-source }})"
     needs: [resolve-refs]
     runs-on: macos-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # upstream: released opentdf/platform otdfctl tag (stays red until
+        #   opentdf/platform#4063 ships in a tag — released go only reads
+        #   0.manifest.json, this repo writes the spec name manifest.json).
+        # arkavo-fork: otdfctl + sdk from arkavo-org/opentdf-platform@fork-ref.
+        go-source: [upstream, arkavo-fork]
     permissions:
       contents: read
       packages: read
@@ -154,7 +190,9 @@ jobs:
       PLATFORM_REF: ${{ needs.resolve-refs.outputs.platform-ref }}
       PLATFORM_TAG: ${{ needs.resolve-refs.outputs.platform-tag }}
       OTDFCTL_REF: ${{ needs.resolve-refs.outputs.go-ref }}
-      GO_CHANNEL: ${{ needs.resolve-refs.outputs.go-channel }}
+      FORK_REF: ${{ needs.resolve-refs.outputs.fork-ref }}
+      # dist directory the go peer lands in (sdk/go/dist/<GO_CHANNEL>).
+      GO_CHANNEL: ${{ matrix.go-source == 'upstream' && needs.resolve-refs.outputs.go-channel || needs.resolve-refs.outputs.fork-channel }}
     steps:
       - name: Checkout OpenTDFKit
         uses: actions/checkout@v4
@@ -168,6 +206,15 @@ jobs:
           repository: arkavo-org/opentdf-tests
           ref: ${{ env.TESTS_REF }}
           path: otdftests
+          persist-credentials: false
+
+      - name: Checkout arkavo-org/opentdf-platform (go client source)
+        if: matrix.go-source == 'arkavo-fork'
+        uses: actions/checkout@v4
+        with:
+          repository: arkavo-org/opentdf-platform
+          ref: ${{ env.FORK_REF }}
+          path: platform-fork
           persist-credentials: false
 
       - name: Wire this OpenTDFKit into xtest sdk/swift
@@ -202,6 +249,7 @@ jobs:
           go-version: "1.24.x"
 
       - name: Capture platform otdfctl location
+        if: matrix.go-source == 'upstream'
         id: platform-otdfctl
         run: |-
           if [ -d "$PLATFORM_DIR/otdfctl" ] && [ -f "$PLATFORM_DIR/otdfctl/go.mod" ]; then
@@ -215,6 +263,7 @@ jobs:
           PLATFORM_DIR: ${{ steps.run-platform.outputs.platform-working-dir }}
 
       - name: Resolve go peer
+        if: matrix.go-source == 'upstream'
         id: resolve-go
         working-directory: otdftests
         run: |-
@@ -223,6 +272,7 @@ jobs:
           echo "$INFO" | jq .
 
       - name: Configure otdfctl (go)
+        if: matrix.go-source == 'upstream'
         id: configure-go
         uses: ./otdftests/xtest/setup-cli-tool
         with:
@@ -233,6 +283,7 @@ jobs:
           platform-otdfctl-sha: ${{ steps.platform-otdfctl.outputs.sha }}
 
       - name: Build go CLI from source when dist is missing
+        if: matrix.go-source == 'upstream'
         working-directory: otdftests/xtest/sdk/go
         run: |-
           set -euo pipefail
@@ -260,6 +311,34 @@ jobs:
             ls -la dist 2>/dev/null || true
             exit 1
           fi
+
+      - name: Build go CLI from arkavo-org/opentdf-platform fork
+        if: matrix.go-source == 'arkavo-fork'
+        working-directory: otdftests/xtest/sdk/go
+        run: |-
+          set -euo pipefail
+          # The harness Makefile builds every entry under src/, follows the
+          # symlink to its real path and uses the enclosing go.work when there
+          # is one ("Using platform go.work"), so the fork's in-tree sdk/ is
+          # what otdfctl links against — no go.mod replace needed.
+          FORK_DIR="${GITHUB_WORKSPACE}/platform-fork"
+          for f in go.work otdfctl/go.mod sdk/go.mod; do
+            if [[ ! -f "${FORK_DIR}/${f}" ]]; then
+              echo "::error::platform-fork/${f} missing; fork layout changed?"
+              ls -la "${FORK_DIR}" 2>/dev/null || true
+              exit 1
+            fi
+          done
+          echo "fork sha: $(git -C "${FORK_DIR}" rev-parse HEAD) (ref ${FORK_REF})"
+          mkdir -p src
+          ln -sfn "${FORK_DIR}/otdfctl" "src/${GO_CHANNEL}"
+          make "VERSIONS=${GO_CHANNEL}"
+          if [[ ! -x "dist/${GO_CHANNEL}/cli.sh" ]]; then
+            echo "::error::make finished but dist/${GO_CHANNEL}/cli.sh is missing"
+            ls -la dist 2>/dev/null || true
+            exit 1
+          fi
+          "dist/${GO_CHANNEL}/otdfctl" --version --json || true
 
       - name: Build swift CLI from this checkout
         run: make VERSIONS=main
@@ -334,13 +413,13 @@ jobs:
         if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ job.status == 'success' && '✅' || '❌' }} opentdfkit-xtest
+          name: ${{ job.status == 'success' && '✅' || '❌' }} opentdfkit-xtest-${{ matrix.go-source }}
           path: otdftests/xtest/test-results/**
 
       - name: Upload platform logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: opentdfkit-xtest-platform-logs
+          name: opentdfkit-xtest-platform-logs-${{ matrix.go-source }}
           path: ${{ steps.run-platform.outputs.platform-log-file }}
           if-no-files-found: ignore
