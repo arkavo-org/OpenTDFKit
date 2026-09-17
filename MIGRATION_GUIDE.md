@@ -2,6 +2,18 @@
 
 This guide covers breaking changes across all OpenTDFKit versions.
 
+## Unreleased - Spec-compliant TDF container
+
+**What changed:** `TDFArchive` now writes the TDF manifest zip entry as `manifest.json` (per opentdf/spec) instead of `0.manifest.json`. Readers accept both names — `0.manifest.json` is recognized forever, so files written by older OpenTDFKit versions still load. The payload zip entry is now resolved from `manifest.payload.url` (falling back to `0.payload` when unset) instead of being assumed. New `TDFArchiveEntryNames` enum centralizes the entry-name constants (`manifest`, `legacyManifest`, `payload`). Two new `TDFArchiveError` cases surface payload-resolution failures: `.missingPayloadEntry(String)` when `payload.url` names an entry that isn't in the archive, and `.unsafePayloadURL(String)` when `payload.url` is an absolute path, contains a backslash, or has a `..` path segment.
+
+`schemaVersion` is unchanged (still `4.3.0`). `tdf_spec_version` is now read at either its legacy or spec-conformant placement in the manifest, but never written.
+
+**Interop impact:** archives written by this version cannot be opened by released otdfctl, or by the upstream opentdf/platform Go, Java, or JS SDKs, until they add a `manifest.json` read fallback (an upstream reader-fallback PR is planned). If you interoperate with those tools today, hold off upgrading until that fallback ships.
+
+### Migration Steps
+
+No API migration is required for the common path — `TDFArchive` read/write and `TDFBuilder`/`TDFLoader` are unaffected. If you match on `TDFArchiveError` exhaustively, add cases for `.missingPayloadEntry` and `.unsafePayloadURL`.
+
 ## v4.0.0 - StandardTDF → TDF Rename
 
 **Release Date:** October 2025
