@@ -402,6 +402,31 @@ final class StandardTDFTests: XCTestCase {
         XCTAssertEqual(try TDFArchiveReader(data: data).payloadData(), Data("A".utf8))
     }
 
+    func testReaderCachesDecodedManifestAfterFirstSuccess() throws {
+        let data = try rawZip([("manifest.json", manifestData(url: "0.payload")), ("0.payload", testPlaintext)])
+        let reader = try TDFArchiveReader(data: data)
+
+        let first = try reader.manifest()
+        XCTAssertEqual(first.payload.url, "0.payload")
+
+        // A second call with a maxSize far too small to re-read the manifest would throw
+        // .manifestTooLarge if the manifest were being re-decoded from disk; since it instead
+        // returns the cached value, this proves the manifest is only decoded once.
+        let second = try reader.manifest(maxSize: 1)
+        XCTAssertEqual(second.payload.url, first.payload.url)
+
+        // The payload path (resolved via the cached manifest) still works after caching.
+        XCTAssertEqual(try reader.payloadData(), testPlaintext)
+
+        // A fresh reader with no cached success still enforces maxSize and fails as expected.
+        let freshReader = try TDFArchiveReader(data: data)
+        XCTAssertThrowsError(try freshReader.manifest(maxSize: 1)) { error in
+            XCTAssertEqual(error as? TDFArchiveError, .manifestTooLarge)
+        }
+        // ...and a later call with a sufficient maxSize succeeds and is then cached.
+        XCTAssertEqual(try freshReader.manifest().payload.url, "0.payload")
+    }
+
     func testReaderFallsBackTo0PayloadWhenURLEmpty() throws {
         let data = try rawZip([("manifest.json", manifestData(url: "")), ("0.payload", testPlaintext)])
         XCTAssertEqual(try TDFArchiveReader(data: data).payloadData(), testPlaintext)

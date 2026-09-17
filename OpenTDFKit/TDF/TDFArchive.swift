@@ -28,10 +28,19 @@ public enum TDFArchiveEntryNames {
     }
 }
 
+/// Reference-type box holding the decoded manifest so `TDFArchiveReader` (a `public struct`
+/// used as `let` by callers, with non-`mutating` methods) can cache across calls without
+/// changing its value-type API.
+private final class ManifestCache {
+    var manifest: TDFManifest?
+    var maxSize: Int?
+}
+
 public struct TDFArchiveReader {
     public static let defaultManifestMaxSize = 10 * 1024 * 1024
 
     private let archive: ZIPFoundation.Archive
+    private let cache = ManifestCache()
 
     public init(data: Data) throws {
         do {
@@ -87,9 +96,32 @@ public struct TDFArchiveReader {
         return result
     }
 
+    /// Decodes and returns the manifest, caching the result after the first successful decode.
+    ///
+    /// `payloadData()`, `payloadSize()`, and `writePayload(to:)` all resolve `payload.url` via
+    /// this method, and `TDFLoader.load` also calls it directly; without caching, the manifest
+    /// JSON would be parsed twice per load. The decoded value is cached on first success, and
+    /// later calls return the cached manifest without re-reading or re-decoding, ignoring
+    /// `maxSize` on the cache hit.
+    ///
+    /// `maxSize` semantics with caching: a smaller `maxSize` passed after a cached success is
+    /// still safe to ignore, because the cached decode already completed under a
+    /// larger-or-equal cap (i.e. the manifest is known to fit). A failed decode (for example
+    /// `TDFArchiveError.manifestTooLarge`) is never cached, so a later call — even with a
+    /// larger `maxSize` — re-reads and re-decodes normally.
+    ///
+    /// Thread-safety: `TDFArchiveReader` is not `Sendable`. This cache uses a plain (unlocked)
+    /// reference box, so concurrent `manifest()` calls on the same reader instance from
+    /// multiple threads are not supported.
     public func manifest(maxSize: Int = TDFArchiveReader.defaultManifestMaxSize) throws -> TDFManifest {
+        if let cached = cache.manifest {
+            return cached
+        }
         let data = try manifestData(maxSize: maxSize)
-        return try JSONDecoder().decode(TDFManifest.self, from: data)
+        let decoded = try JSONDecoder().decode(TDFManifest.self, from: data)
+        cache.manifest = decoded
+        cache.maxSize = maxSize
+        return decoded
     }
 
     public func payloadSize() throws -> Int64 {
