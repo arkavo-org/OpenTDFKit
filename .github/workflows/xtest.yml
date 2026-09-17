@@ -1,6 +1,6 @@
 # Community cross-test: OpenTDFKit (this repo) ↔ go peer via opentdf-tests.
 #
-# Pulls arkavo-org/opentdf-tests (default: community-xtest-stage1 branch tip).
+# Pulls arkavo-org/opentdf-tests (default: main branch tip).
 # Runs native macOS platform deps (Postgres + Keycloak + platform) and pytest
 # for swift × go Base TDF only.
 #
@@ -27,7 +27,7 @@ on:
         type: string
         default: latest
         description: >-
-          arkavo-org/opentdf-tests ref: 'latest' (tracks community-xtest-stage1
+          arkavo-org/opentdf-tests ref: 'latest' (tracks main
           branch tip), branch, tag, or SHA.
       platform-ref:
         required: false
@@ -65,8 +65,8 @@ jobs:
       PLATFORM_REF_IN: ${{ inputs.platform-ref || 'latest' }}
       OTDFCTL_REF_IN: ${{ inputs.otdfctl-ref || 'latest' }}
       GH_TOKEN: ${{ github.token }}
-      # Live community branch while the suite is still iterating.
-      TESTS_FALLBACK_REF: community-xtest-stage1
+      # Harness main; SDK PRs pick up infra fixes without a re-tag.
+      TESTS_FALLBACK_REF: main
     steps:
       - name: Resolve pins
         id: resolve
