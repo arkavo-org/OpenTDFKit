@@ -670,6 +670,49 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         }
     }
 
+    /// Rewraps a standard TDF's key access object(s) at the KAS and unwraps the
+    /// returned session-wrapped DEK locally. Generates the ephemeral P-256 client
+    /// key, calls `rewrapTDF`, parses the session public key PEM, and derives the
+    /// KEK with the standard-TDF HKDF salt (`standardTDFSessionSalt`), which
+    /// differs from the NanoTDF salt `unwrapKey` defaults to.
+    ///
+    /// The manifest must carry exactly one key access object for this client's
+    /// KAS: with none, `rewrapTDF` throws `KASRewrapError.invalidTDFRequest`
+    /// before any request is sent; with several (a split-key manifest, whose
+    /// per-KAO results are shares rather than the DEK) this throws
+    /// `KASRewrapError.multipleWrappedKeys` — use `rewrapTDF` and reconstruct
+    /// the key yourself. A permit without a session public key throws
+    /// `KASRewrapError.missingSessionKey`; a wrapped key that fails to open
+    /// (wrong salt, wrong client key, corrupt bytes) throws
+    /// `KASRewrapError.keyUnwrapFailed`.
+    /// - Parameter manifest: The parsed TDF manifest containing key access entries.
+    /// - Returns: The data encryption key for the TDF payload.
+    public func rewrapAndUnwrapTDF(manifest: TDFManifest) async throws -> SymmetricKey {
+        let clientPrivateKey = P256.KeyAgreement.PrivateKey()
+        let result = try await rewrapTDF(manifest: manifest, clientPrivateKey: clientPrivateKey)
+
+        guard result.wrappedKeys.count == 1, let wrappedKey = result.wrappedKeys.values.first else {
+            throw KASRewrapError.multipleWrappedKeys(result.wrappedKeys.count)
+        }
+        guard let sessionPEM = result.sessionPublicKeyPEM, !sessionPEM.isEmpty else {
+            throw KASRewrapError.missingSessionKey
+        }
+
+        do {
+            let (sessionPublicKey, _) = try Self.validateEcPublicKeyPEM(sessionPEM)
+            return try Self.unwrapKey(
+                wrappedKey: wrappedKey,
+                sessionPublicKey: sessionPublicKey,
+                clientPrivateKey: clientPrivateKey.rawRepresentation,
+                salt: Self.standardTDFSessionSalt,
+            )
+        } catch let error as KASRewrapError {
+            throw error
+        } catch {
+            throw KASRewrapError.keyUnwrapFailed(String(describing: error))
+        }
+    }
+
     // MARK: - KAS Public Key Fetching
 
     /// Fetch the KAS EC public key for NanoTDF encryption
@@ -948,7 +991,9 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     ///   - sessionPublicKey: The session public key from KAS response
     ///   - clientPrivateKey: The client's ephemeral private key
     ///   - salt: HKDF salt for session key derivation. Pass `nil` to use the default
-    ///           NanoTDF v12 salt (matching KAS behavior). Pass empty `Data()` for Standard TDF.
+    ///           NanoTDF v12 salt (matching KAS behavior). For Standard TDF pass
+    ///           `standardTDFSessionSalt` (`SHA256("TDF")`), or use `rewrapAndUnwrapTDF`
+    ///           which does so for you.
     /// - Returns: The decrypted symmetric key
     public static func unwrapKey(
         wrappedKey: Data,
@@ -1133,6 +1178,10 @@ public enum KASRewrapError: Error, CustomStringConvertible {
     case keyFetchFailed(String)
     case invalidEcPublicKey(String)
     case unsupportedKeyAlgorithm(String)
+    /// `rewrapAndUnwrapTDF` needs exactly one wrapped key; carries the count returned.
+    case multipleWrappedKeys(Int)
+    /// Local unwrap of the session-wrapped key failed (wrong salt/key, corrupt bytes).
+    case keyUnwrapFailed(String)
 
     public var description: String {
         switch self {
@@ -1164,6 +1213,10 @@ public enum KASRewrapError: Error, CustomStringConvertible {
             "Invalid EC public key: \(reason)"
         case let .unsupportedKeyAlgorithm(algorithm):
             "Unsupported key algorithm: \(algorithm)"
+        case let .multipleWrappedKeys(count):
+            "Expected exactly one wrapped key from KAS, got \(count); split-key manifests need rewrapTDF and reconstruction"
+        case let .keyUnwrapFailed(reason):
+            "Failed to unwrap KAS session-wrapped key: \(reason)"
         }
     }
 }

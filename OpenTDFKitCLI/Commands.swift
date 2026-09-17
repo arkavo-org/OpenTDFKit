@@ -122,10 +122,12 @@ enum Commands {
     ///
     /// Stage-1 KAS path (preferred when no offline symmetric key):
     /// 1. Client-credentials OAuth (caller supplies token)
-    /// 2. Ephemeral P-256 session keypair + `rewrapTDF`
-    /// 3. `unwrapKey(salt: Data())` for Standard TDF (empty salt — not Nano default)
+    /// 2. `rewrapAndUnwrapTDF` per KAS: ephemeral P-256 session keypair, rewrap,
+    ///    and EC session unwrap with the Standard TDF salt (`SHA256("TDF")`, not
+    ///    the Nano default) — all owned by the library.
     ///
-    /// Offline shortcuts: `symmetricKey` or legacy RSA `privateKeyPEM` after rewrap.
+    /// Offline shortcuts: `symmetricKey`, or legacy RSA `privateKeyPEM` to unwrap
+    /// the raw rewrap response (which therefore runs `rewrapTDF` directly).
     static func decryptTDF(
         data: Data,
         filename: String,
@@ -158,9 +160,6 @@ enum Commands {
 
         print("  Requesting rewrap from KAS (ephemeral P-256 session key)")
 
-        // Ephemeral P-256 key pair for rewrap ECDH (Stage-1 / modern KAS)
-        let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
-
         var keyShares: [Data] = []
         let uniqueKasURLs = Set(container.manifest.encryptionInformation.keyAccess.map(\.url))
 
@@ -171,6 +170,18 @@ enum Commands {
 
             let configuration = await resolveConfiguration(kasURL: kasURL, token: oauthToken)
             let client = try KASRewrapClient(configuration: configuration, oauthToken: oauthToken)
+
+            guard let privateKeyPEM else {
+                // Stage-1 path: the library generates the ephemeral key, rewraps, and
+                // unwraps with go `tdfSalt()` = SHA256("TDF").
+                let share = try await client.rewrapAndUnwrapTDF(manifest: container.manifest)
+                keyShares.append(TDFCrypto.data(from: share))
+                continue
+            }
+
+            // A legacy RSA client key needs the raw wrapped bytes, so run the rewrap
+            // here; the EC session unwrap is still preferred when the KAS offers one.
+            let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
             let result = try await client.rewrapTDF(
                 manifest: container.manifest,
                 clientPrivateKey: ephemeralPrivateKey,
@@ -188,7 +199,7 @@ enum Commands {
                     )
                     keyShares.append(TDFCrypto.data(from: share))
                 }
-            } else if let privateKeyPEM {
+            } else {
                 // Legacy offline RSA unwrap of rewrap response (older KAS shapes)
                 print("  Falling back to RSA private-key unwrap of rewrap response")
                 for (_, wrappedKeyData) in result.wrappedKeys.sorted(by: { $0.key < $1.key }) {
@@ -199,8 +210,6 @@ enum Commands {
                     )
                     keyShares.append(TDFCrypto.data(from: share))
                 }
-            } else {
-                throw DecryptError.missingWrappedKey
             }
         }
 
