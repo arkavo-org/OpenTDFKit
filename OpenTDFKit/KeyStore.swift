@@ -258,7 +258,7 @@ public actor KeyStore {
     ///   - header: The NanoTDF header containing the necessary keys for decryption.
     /// - Returns: The derived symmetric key for AES-256-GCM as SymmetricKey.
     /// - Throws: KeyStoreError or other errors if key derivation fails.
-    public func derivePayloadSymmetricKey(header: Header) async throws -> SymmetricKey {
+    public nonisolated func derivePayloadSymmetricKey(header: Header) async throws -> SymmetricKey {
         let kasPublicKey = header.payloadKeyAccess.kasPublicKey
         let tdfEphemeralPublicKey = header.ephemeralPublicKey
 
@@ -275,13 +275,14 @@ public actor KeyStore {
     ///                            This corresponds to `header.ephemeralPublicKey`.
     /// - Returns: The derived symmetric key for AES-256-GCM as SymmetricKey.
     /// - Throws: KeyStoreError or other errors if key derivation fails.
-    public func derivePayloadSymmetricKey(
+    public nonisolated func derivePayloadSymmetricKey(
         kasPublicKey: Data,
         tdfEphemeralPublicKey: Data,
     ) async throws -> SymmetricKey {
-        // 1. Get the KAS's private key from this KeyStore
-        // The kasPublicKeyForLookup is the KAS's own public key, used to identify its private key.
-        guard let kasPrivateKeyData = getPrivateKey(forPublicKey: kasPublicKey) else {
+        // 1. Get the KAS's private key from this KeyStore (the only actor-isolated step;
+        //    the ECDH and HKDF below run on the caller's executor so concurrent
+        //    decrypts are not serialized through the store).
+        guard let kasPrivateKeyData = await getPrivateKey(forPublicKey: kasPublicKey) else {
             throw KeyStoreError.keyNotFound("Private key for KAS Public Key \(kasPublicKey.hexString) not found in this KeyStore.")
         }
 

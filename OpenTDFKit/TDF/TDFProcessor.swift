@@ -67,17 +67,23 @@ public enum TDFPolicyError: Error, CustomStringConvertible {
 }
 
 public struct TDFEncryptionConfiguration: Sendable {
+    /// The only TDF spec version OpenTDFKit writes (manifest `schemaVersion`).
+    public static let specVersion = "4.3.0"
+
     public let kas: TDFKasInfo
     public let policy: TDFPolicy
     public let mimeType: String?
-    public let tdfSpecVersion: String
     public let keySize: TDFKeySize
 
-    public init(kas: TDFKasInfo, policy: TDFPolicy, mimeType: String? = nil, tdfSpecVersion: String = "4.3.0", keySize: TDFKeySize = .bits256) {
+    /// Always `TDFEncryptionConfiguration.specVersion`.
+    public var tdfSpecVersion: String {
+        Self.specVersion
+    }
+
+    public init(kas: TDFKasInfo, policy: TDFPolicy, mimeType: String? = nil, keySize: TDFKeySize = .bits256) {
         self.kas = kas
         self.policy = policy
         self.mimeType = mimeType
-        self.tdfSpecVersion = tdfSpecVersion
         self.keySize = keySize
     }
 }
@@ -114,7 +120,7 @@ public struct TDFEncryptor {
 
         let method = TDFMethodDescriptor(
             algorithm: configuration.keySize.algorithm,
-            iv: "",
+            iv: streamingResult.iv.base64EncodedString(),
             isStreamable: true,
         )
 
@@ -226,7 +232,7 @@ public struct TDFEncryptor {
 
         let method = TDFMethodDescriptor(
             algorithm: configuration.keySize.algorithm,
-            iv: "",
+            iv: streamingResult.iv.base64EncodedString(),
             isStreamable: true,
         )
 
@@ -311,34 +317,120 @@ public struct TDFEncryptor {
 
         let payloadData = iv + ciphertext + tag
 
+        let segmentSignature = try TDFCrypto.segmentSignatureGMAC(encryptedSegment: payloadData)
+        let segment = TDFSegment(
+            hash: segmentSignature.base64EncodedString(),
+            segmentSize: Int64(plaintext.count),
+            encryptedSegmentSize: Int64(payloadData.count),
+        )
+
+        return try makeResult(
+            payloadData: payloadData,
+            segments: [segment],
+            rawSegmentSignatures: [segmentSignature],
+            segmentSizeDefault: 2_097_152,
+            symmetricKey: symmetricKey,
+            configuration: configuration,
+            iv: iv,
+            tag: tag,
+        )
+    }
+
+    /// Encrypt in memory into `segmentSize`-byte segments (the last may be shorter),
+    /// each sealed with its own AES-GCM nonce and recorded in the manifest with its
+    /// GMAC. This is the layout other OpenTDF SDKs produce by default (2 MiB segments).
+    /// - Parameters:
+    ///   - plaintext: Data to protect.
+    ///   - configuration: KAS, policy and format settings.
+    ///   - segmentSize: Plaintext bytes per segment; must be positive.
+    /// - Returns: The container plus the generated DEK, first segment IV and last segment tag.
+    public func encrypt(
+        plaintext: Data,
+        configuration: TDFEncryptionConfiguration,
+        segmentSize: Int,
+    ) throws -> TDFEncryptionResult {
+        guard segmentSize > 0 else {
+            throw StreamingCryptoError.invalidSegmentSize
+        }
+
+        let symmetricKey = try TDFCrypto.generateSymmetricKey(size: configuration.keySize)
+        let segmentCount = max(1, (plaintext.count + segmentSize - 1) / segmentSize)
+
+        var payloadData = Data()
+        payloadData.reserveCapacity(plaintext.count + segmentCount * 28)
+        var segments: [TDFSegment] = []
+        segments.reserveCapacity(segmentCount)
+        var tags: [Data] = []
+        tags.reserveCapacity(segmentCount)
+        var firstIV = Data()
+
+        var offset = plaintext.startIndex
+        repeat {
+            let end = min(offset + segmentSize, plaintext.endIndex)
+            let nonce = AES.GCM.Nonce()
+            let sealed = try AES.GCM.seal(plaintext[offset ..< end], using: symmetricKey, nonce: nonce)
+            let segmentStart = payloadData.count
+            payloadData.append(contentsOf: nonce)
+            payloadData.append(sealed.ciphertext)
+            payloadData.append(sealed.tag)
+
+            if firstIV.isEmpty {
+                firstIV = Data(nonce)
+            }
+            tags.append(sealed.tag)
+            segments.append(TDFSegment(
+                hash: sealed.tag.base64EncodedString(),
+                segmentSize: Int64(end - offset),
+                encryptedSegmentSize: Int64(payloadData.count - segmentStart),
+            ))
+            offset = end
+        } while offset < plaintext.endIndex
+
+        return try makeResult(
+            payloadData: payloadData,
+            segments: segments,
+            rawSegmentSignatures: tags,
+            segmentSizeDefault: Int64(segmentSize),
+            symmetricKey: symmetricKey,
+            configuration: configuration,
+            iv: firstIV,
+            tag: tags[tags.count - 1],
+        )
+    }
+
+    /// Wrap the DEK, bind the policy and assemble the manifest around an encrypted payload.
+    private func makeResult(
+        payloadData: Data,
+        segments: [TDFSegment],
+        rawSegmentSignatures: [Data],
+        segmentSizeDefault: Int64,
+        symmetricKey: SymmetricKey,
+        configuration: TDFEncryptionConfiguration,
+        iv: Data,
+        tag: Data,
+    ) throws -> TDFEncryptionResult {
         let policyBinding = TDFCrypto.policyBinding(policy: configuration.policy.json, symmetricKey: symmetricKey)
         let wrappedKey = try TDFCrypto.wrapSymmetricKeyWithRSA(publicKeyPEM: configuration.kas.publicKeyPEM, symmetricKey: symmetricKey)
 
-        let segmentSignature = try TDFCrypto.segmentSignatureGMAC(encryptedSegment: payloadData)
-        let segmentSignatureBase64 = segmentSignature.base64EncodedString()
         let rootSignature = TDFCrypto.rootSignatureBase64(
-            rawSegmentSignatures: [segmentSignature],
+            rawSegmentSignatures: rawSegmentSignatures,
             symmetricKey: symmetricKey,
         )
 
+        // Spec method.md: `iv` is required; record the first segment's nonce
+        // (each segment carries its own nonce inline, which is what readers use).
         let method = TDFMethodDescriptor(
             algorithm: configuration.keySize.algorithm,
-            iv: "",
+            iv: iv.base64EncodedString(),
             isStreamable: true,
-        )
-
-        let segment = TDFSegment(
-            hash: segmentSignatureBase64,
-            segmentSize: Int64(plaintext.count),
-            encryptedSegmentSize: Int64(payloadData.count),
         )
 
         let integrity = TDFIntegrityInformation(
             rootSignature: TDFRootSignature(alg: "HS256", sig: rootSignature),
             segmentHashAlg: "GMAC",
-            segmentSizeDefault: 2_097_152,
-            encryptedSegmentSizeDefault: 2_097_180,
-            segments: [segment],
+            segmentSizeDefault: segmentSizeDefault,
+            encryptedSegmentSizeDefault: segmentSizeDefault + 28,
+            segments: segments,
         )
 
         let kasObject = TDFKeyAccessObject(
@@ -409,77 +501,24 @@ public struct TDFDecryptor {
         symmetricKey: SymmetricKey,
         chunkSize _: Int = StreamingTDFCrypto.defaultChunkSize,
     ) throws {
-        let loader = TDFLoader()
-        let container = try loader.load(from: inputURL)
-
-        let payloadData = container.payload
-        let ivSize = 12
-        let tagSize = 16
-        let minSize = ivSize + tagSize
-        guard payloadData.count >= minSize else {
-            throw TDFDecryptError.malformedPayload
-        }
-
-        let iv = payloadData.prefix(ivSize)
-        let ciphertext = payloadData.dropFirst(ivSize).dropLast(tagSize)
-        let tag = payloadData.suffix(tagSize)
-
-        let plaintext = try TDFCrypto.decryptPayload(
-            ciphertext: Data(ciphertext),
-            iv: Data(iv),
-            tag: Data(tag),
-            symmetricKey: symmetricKey,
-        )
-
-        try plaintext.write(to: outputURL)
+        let container = try TDFLoader().load(from: inputURL)
+        try decrypt(container: container, symmetricKey: symmetricKey).write(to: outputURL)
     }
 
     public func decryptFile(
         inputURL: URL,
         outputURL: URL,
         privateKeyPEM: String,
-        chunkSize: Int = StreamingTDFCrypto.defaultChunkSize,
+        chunkSize _: Int = StreamingTDFCrypto.defaultChunkSize,
     ) throws {
         let loader = TDFLoader()
         let container = try loader.load(from: inputURL)
 
-        let keyAccess = container.manifest.encryptionInformation.keyAccess
-        guard !keyAccess.isEmpty else {
-            throw TDFDecryptError.missingKeyAccess
-        }
-
-        let symmetricKey: SymmetricKey
-        if keyAccess.count == 1 {
-            symmetricKey = try TDFCrypto.unwrapSymmetricKeyWithRSA(
-                privateKeyPEM: privateKeyPEM,
-                wrappedKey: keyAccess[0].wrappedKey,
-            )
-        } else {
-            var combinedKeyData: Data?
-            for kasObject in keyAccess.sorted(by: { ($0.kid ?? "") < ($1.kid ?? "") }) {
-                let symmetricKeyPart = try TDFCrypto.unwrapSymmetricKeyWithRSA(
-                    privateKeyPEM: privateKeyPEM,
-                    wrappedKey: kasObject.wrappedKey,
-                )
-                let keyData = TDFCrypto.data(from: symmetricKeyPart)
-
-                if let existing = combinedKeyData {
-                    guard existing.count == keyData.count else {
-                        throw TDFDecryptError.keyShareSizeMismatch
-                    }
-                    combinedKeyData = xorKeyData(existing, keyData)
-                } else {
-                    combinedKeyData = keyData
-                }
-            }
-
-            guard let finalKeyData = combinedKeyData else {
-                throw TDFDecryptError.missingKeyAccess
-            }
-            symmetricKey = SymmetricKey(data: finalKeyData)
-        }
-
-        try decryptFile(inputURL: inputURL, outputURL: outputURL, symmetricKey: symmetricKey, chunkSize: chunkSize)
+        let symmetricKey = try unwrapDEK(
+            keyAccess: container.manifest.encryptionInformation.keyAccess,
+            privateKeyPEM: privateKeyPEM,
+        )
+        try decrypt(container: container, symmetricKey: symmetricKey).write(to: outputURL)
     }
 
     public func decryptFileMultiSegment(
@@ -488,89 +527,213 @@ public struct TDFDecryptor {
         symmetricKey: SymmetricKey,
         chunkSize _: Int = StreamingTDFCrypto.defaultChunkSize,
     ) throws {
-        let loader = TDFLoader()
-        let container = try loader.load(from: inputURL)
-
-        guard let integrityInfo = container.manifest.encryptionInformation.integrityInformation else {
-            throw TDFDecryptError.missingIntegrityInformation
-        }
-
-        let segments = integrityInfo.segments.enumerated().map { index, seg in
-            StreamingTDFCrypto.EncryptedSegment(
-                segmentIndex: index,
-                plaintextSize: seg.segmentSize,
-                encryptedSize: seg.encryptedSegmentSize ?? (seg.segmentSize + 28),
-                hash: seg.hash,
-            )
-        }
-
-        let plaintext = try StreamingTDFCrypto.decryptPayloadMultiSegmentFromMemory(
-            encryptedPayload: container.payload,
-            segments: segments,
-            symmetricKey: symmetricKey,
-        )
-
-        try plaintext.write(to: outputURL)
+        let container = try TDFLoader().load(from: inputURL)
+        try decrypt(container: container, symmetricKey: symmetricKey).write(to: outputURL)
     }
 
     public func decrypt(container: TDFContainer, privateKeyPEM: String) throws -> Data {
-        let keyAccess = container.manifest.encryptionInformation.keyAccess
-        guard !keyAccess.isEmpty else {
-            throw TDFDecryptError.missingKeyAccess
-        }
+        let symmetricKey = try unwrapDEK(
+            keyAccess: container.manifest.encryptionInformation.keyAccess,
+            privateKeyPEM: privateKeyPEM,
+        )
+        return try decrypt(container: container, symmetricKey: symmetricKey)
+    }
 
-        if keyAccess.count == 1 {
-            let symmetricKey = try TDFCrypto.unwrapSymmetricKeyWithRSA(
-                privateKeyPEM: privateKeyPEM,
-                wrappedKey: keyAccess[0].wrappedKey,
-            )
-            return try decrypt(container: container, symmetricKey: symmetricKey)
-        }
+    /// Payload algorithms `decrypt` accepts. AES-128-GCM is only written by
+    /// OpenTDFKit (`TDFKeySize.bits128`); other SDKs write AES-256-GCM.
+    static let supportedPayloadAlgorithms: Set<String> = ["AES-256-GCM", "AES-128-GCM"]
 
-        var combinedKeyData: Data?
-        for kasObject in keyAccess.sorted(by: { ($0.kid ?? "") < ($1.kid ?? "") }) {
-            let symmetricKeyPart = try TDFCrypto.unwrapSymmetricKeyWithRSA(
-                privateKeyPEM: privateKeyPEM,
-                wrappedKey: kasObject.wrappedKey,
-            )
-            let keyData = TDFCrypto.data(from: symmetricKeyPart)
-
-            if let existing = combinedKeyData {
-                guard existing.count == keyData.count else {
-                    throw TDFDecryptError.keyShareSizeMismatch
-                }
-                combinedKeyData = xorKeyData(existing, keyData)
-            } else {
-                combinedKeyData = keyData
+    /// Reconstructs a DEK from key access objects per OpenTDF split semantics
+    /// (spec concepts/security.md; Go SDK): objects that share a split ID (`sid`,
+    /// absent treated as "") are alternatives for one share and the first that
+    /// unwraps is used; the shares of distinct splits are XORed together. Every
+    /// split must yield a share.
+    /// - Parameter candidates: Each key access object's split ID and a closure
+    ///   that unwraps its share; closures are only called until their split has a share.
+    /// - Returns: The combined key bytes.
+    /// - Throws: The last unwrap error of a split with no share, or
+    ///   `TDFDecryptError.keyShareSizeMismatch` / `.missingKeyAccess`.
+    public static func combineKeyShares(_ candidates: [(sid: String?, unwrap: () throws -> Data)]) throws -> Data {
+        var shares: [String: Data] = [:]
+        var failures: [String: Error] = [:]
+        var splitOrder: [String] = []
+        for candidate in candidates {
+            let sid = candidate.sid ?? ""
+            if !splitOrder.contains(sid) {
+                splitOrder.append(sid)
+            }
+            guard shares[sid] == nil else { continue }
+            do {
+                shares[sid] = try candidate.unwrap()
+            } catch {
+                failures[sid] = error
             }
         }
 
-        guard let finalKeyData = combinedKeyData else {
+        var combined: Data?
+        for sid in splitOrder {
+            guard let share = shares[sid] else {
+                throw failures[sid] ?? TDFDecryptError.missingKeyAccess
+            }
+            if let current = combined {
+                guard current.count == share.count else {
+                    throw TDFDecryptError.keyShareSizeMismatch
+                }
+                combined = Data(zip(current, share).map { $0 ^ $1 })
+            } else {
+                combined = share
+            }
+        }
+        guard let combined else {
             throw TDFDecryptError.missingKeyAccess
         }
-
-        let finalSymmetricKey = SymmetricKey(data: finalKeyData)
-        return try decrypt(container: container, symmetricKey: finalSymmetricKey)
+        return combined
     }
 
-    private func xorKeyData(_ lhs: Data, _ rhs: Data) -> Data {
-        Data(zip(lhs, rhs).map { $0 ^ $1 })
+    /// Unwraps every key access object with the RSA private key and combines the
+    /// shares per split ID (see `combineKeyShares`).
+    private func unwrapDEK(keyAccess: [TDFKeyAccessObject], privateKeyPEM: String) throws -> SymmetricKey {
+        let dek = try Self.combineKeyShares(keyAccess.map { kasObject in
+            (sid: kasObject.sid, unwrap: {
+                try TDFCrypto.data(from: TDFCrypto.unwrapSymmetricKeyWithRSA(
+                    privateKeyPEM: privateKeyPEM,
+                    wrappedKey: kasObject.wrappedKey,
+                ))
+            })
+        })
+        return SymmetricKey(data: dek)
     }
 
+    /// Decrypt a Standard TDF payload with its DEK.
+    ///
+    /// Every segment is opened with AES-GCM, and the manifest's segment hashes and
+    /// root signature are checked against the payload so dropped, reordered or
+    /// substituted segments are rejected.
+    /// - Throws: `TDFDecryptError.missingIntegrityInformation` when the manifest has
+    ///   no segments, `.malformedPayload` when segment sizes do not tile the payload,
+    ///   `.integrityCheckFailed` when a hash or the root signature does not match,
+    ///   or a CryptoKit error when a segment fails authentication.
     public func decrypt(container: TDFContainer, symmetricKey: SymmetricKey) throws -> Data {
-        let payloadData = container.payload
+        let algorithm = container.manifest.encryptionInformation.method.algorithm
+        guard Self.supportedPayloadAlgorithms.contains(algorithm.uppercased()) else {
+            throw TDFDecryptError.unsupportedPayloadAlgorithm(algorithm)
+        }
+        guard let integrity = container.manifest.encryptionInformation.integrityInformation,
+              !integrity.segments.isEmpty
+        else {
+            throw TDFDecryptError.missingIntegrityInformation
+        }
+        return try decryptSegments(payload: container.payload, integrity: integrity, symmetricKey: symmetricKey)
+    }
+
+    /// Open each `IV || ciphertext || tag` segment laid out back to back in `payload`,
+    /// using the manifest's per-segment encrypted sizes (the last segment defaults to
+    /// the remaining bytes). The segments must cover the payload exactly.
+    private func decryptSegments(
+        payload: Data,
+        integrity: TDFIntegrityInformation,
+        symmetricKey: SymmetricKey,
+    ) throws -> Data {
         let ivSize = 12
         let tagSize = 16
-        let minSize = ivSize + tagSize
-        guard payloadData.count >= minSize else {
-            throw TDFDecryptError.malformedPayload
+
+        var plaintext = Data()
+        plaintext.reserveCapacity(payload.count)
+        var signatures: [Data] = []
+        signatures.reserveCapacity(integrity.segments.count)
+        var offset = payload.startIndex
+
+        for (index, segment) in integrity.segments.enumerated() {
+            let remaining = payload.endIndex - offset
+            let isLast = index == integrity.segments.count - 1
+            guard let encryptedSize = segment.encryptedSegmentSize
+                ?? (isLast ? Int64(remaining) : integrity.encryptedSegmentSizeDefault),
+                encryptedSize >= ivSize + tagSize,
+                encryptedSize <= remaining
+            else {
+                throw TDFDecryptError.malformedPayload
+            }
+            let segmentEnd = offset + Int(encryptedSize)
+            let encryptedSegment = payload[offset ..< segmentEnd]
+            try signatures.append(segmentSignature(
+                encryptedSegment,
+                algorithm: integrity.segmentHashAlg,
+                symmetricKey: symmetricKey,
+            ))
+
+            let nonce = try AES.GCM.Nonce(data: payload[offset ..< offset + ivSize])
+            let sealed = try AES.GCM.SealedBox(
+                nonce: nonce,
+                ciphertext: payload[offset + ivSize ..< segmentEnd - tagSize],
+                tag: payload[segmentEnd - tagSize ..< segmentEnd],
+            )
+            try plaintext.append(AES.GCM.open(sealed, using: symmetricKey))
+            offset = segmentEnd
         }
 
-        let iv = payloadData.prefix(ivSize)
-        let ciphertext = payloadData.dropFirst(ivSize).dropLast(tagSize)
-        let tag = payloadData.suffix(tagSize)
+        guard offset == payload.endIndex else {
+            throw TDFDecryptError.malformedPayload
+        }
+        try verifyIntegrity(signatures: signatures, integrity: integrity, symmetricKey: symmetricKey)
+        return plaintext
+    }
 
-        return try TDFCrypto.decryptPayload(ciphertext: Data(ciphertext), iv: Data(iv), tag: Data(tag), symmetricKey: symmetricKey)
+    // MARK: - Integrity verification
+
+    /// Check the manifest's per-segment hashes and root signature against the
+    /// signatures recomputed from the payload, in the hexless TDF 4.3.0+ encoding
+    /// (`base64(raw signature)`).
+    ///
+    /// The root must be HS256: HMAC-SHA256 with the DEK over the segment signatures
+    /// in order, which binds segment order and count. A keyless root (e.g. GMAC,
+    /// which is just the last segment's tag) is rejected so a manifest cannot
+    /// downgrade the check.
+    private func verifyIntegrity(
+        signatures: [Data],
+        integrity: TDFIntegrityInformation,
+        symmetricKey: SymmetricKey,
+    ) throws {
+        let rootAlgorithm = integrity.rootSignature.alg
+        guard rootAlgorithm.isEmpty || rootAlgorithm.uppercased() == "HS256" else {
+            throw TDFDecryptError.unsupportedIntegrityAlgorithm(integrity.rootSignature.alg)
+        }
+        let root = Data(HMAC<SHA256>.authenticationCode(for: Data(signatures.joined()), using: symmetricKey))
+        guard let manifestRoot = Data(base64Encoded: integrity.rootSignature.sig),
+              constantTimeEquals(manifestRoot, root)
+        else {
+            throw TDFDecryptError.integrityCheckFailed
+        }
+
+        for (segment, signature) in zip(integrity.segments, signatures) {
+            guard let manifestHash = Data(base64Encoded: segment.hash),
+                  constantTimeEquals(manifestHash, signature)
+            else {
+                throw TDFDecryptError.integrityCheckFailed
+            }
+        }
+    }
+
+    /// Segment signature per OpenTDF: GMAC is the segment's AES-GCM tag (its last
+    /// 16 bytes); HS256 is HMAC-SHA256 over the encrypted segment with the DEK.
+    private func segmentSignature(_ encryptedSegment: Data, algorithm: String, symmetricKey: SymmetricKey) throws -> Data {
+        switch algorithm.uppercased() {
+        case "GMAC":
+            return Data(encryptedSegment.suffix(16))
+        case "HS256":
+            return Data(HMAC<SHA256>.authenticationCode(for: encryptedSegment, using: symmetricKey))
+        default:
+            throw TDFDecryptError.unsupportedIntegrityAlgorithm(algorithm)
+        }
+    }
+
+    /// Length is public; only the contents are compared in constant time.
+    private func constantTimeEquals(_ lhs: Data, _ rhs: Data) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        var difference: UInt8 = 0
+        for (a, b) in zip(lhs, rhs) {
+            difference |= a ^ b
+        }
+        return difference == 0
     }
 }
 
@@ -579,6 +742,9 @@ public enum TDFDecryptError: Error, CustomStringConvertible, Equatable {
     case malformedPayload
     case keyShareSizeMismatch
     case missingIntegrityInformation
+    case integrityCheckFailed
+    case unsupportedIntegrityAlgorithm(String)
+    case unsupportedPayloadAlgorithm(String)
 
     public var description: String {
         switch self {
@@ -589,7 +755,13 @@ public enum TDFDecryptError: Error, CustomStringConvertible, Equatable {
         case .keyShareSizeMismatch:
             "Key share size mismatch: all key shares must have the same length for XOR reconstruction"
         case .missingIntegrityInformation:
-            "Multi-segment decryption requires integrity information with segment metadata"
+            "Decryption requires integrity information with segment metadata"
+        case .integrityCheckFailed:
+            "Integrity check failed: segment hashes or root signature do not match the payload"
+        case let .unsupportedIntegrityAlgorithm(algorithm):
+            "Unsupported integrity algorithm: \(algorithm)"
+        case let .unsupportedPayloadAlgorithm(algorithm):
+            "Unsupported payload encryption algorithm: \(algorithm)"
         }
     }
 }

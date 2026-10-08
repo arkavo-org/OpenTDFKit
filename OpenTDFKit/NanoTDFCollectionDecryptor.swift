@@ -93,7 +93,7 @@ public actor NanoTDFCollectionDecryptor {
         )
 
         // Perform ECDH with the TDF's ephemeral public key
-        guard let sharedSecret = try await cryptoHelper.deriveSharedSecret(
+        guard let sharedSecret = try cryptoHelper.deriveSharedSecret(
             keyPair: keyPair,
             recipientPublicKey: header.ephemeralPublicKey,
         ) else {
@@ -102,7 +102,7 @@ public actor NanoTDFCollectionDecryptor {
 
         // Derive symmetric key via HKDF using v12 salt
         let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
-        let symmetricKey = await cryptoHelper.deriveSymmetricKey(
+        let symmetricKey = cryptoHelper.deriveSymmetricKey(
             sharedSecret: sharedSecret,
             salt: salt,
             info: Data(),

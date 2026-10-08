@@ -64,7 +64,7 @@ public struct NanoTDF: Sendable {
     /// - Throws: Errors from `CryptoHelper` or `CryptoKit` if decryption fails (e.g., incorrect key, corrupted data).
     public func getPayloadPlaintext(symmetricKey: SymmetricKey) async throws -> Data {
         // Pad the 3-byte NanoTDF IV to the 12 bytes required by AES-GCM
-        let paddedIV = await NanoTDF.sharedCryptoHelper.adjustNonce(payload.iv, to: 12)
+        let paddedIV = NanoTDF.sharedCryptoHelper.adjustNonce(payload.iv, to: 12)
         // Use cipher-aware decryption that routes to CryptoSwift for non-128-bit tags
         // (CryptoKit only supports 16-byte tags; NanoTDF default is 8-byte/64-bit)
         let cipher = header.payloadSignatureConfig.payloadCipher ?? .aes256GCM64
@@ -107,14 +107,14 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
     // Use shared CryptoHelper instance to avoid per-call instantiation overhead
 
     // Step 1: Generate an ephemeral key pair based on the KAS curve
-    guard let keyPair = await NanoTDF.sharedCryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
+    guard let keyPair = NanoTDF.sharedCryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
         throw CryptoHelperError.keyDerivationFailed // Or a more specific error
     }
 
     // Step 2: Derive the shared secret using ECDH between the ephemeral key pair and the KAS public key
     let kasPublicKey = try kas.getPublicKey() // Get the KAS public key data
 
-    guard let sharedSecret = try await NanoTDF.sharedCryptoHelper.deriveSharedSecret(
+    guard let sharedSecret = try NanoTDF.sharedCryptoHelper.deriveSharedSecret(
         keyPair: keyPair,
         recipientPublicKey: kasPublicKey,
     ) else {
@@ -124,7 +124,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
     // Step 3: Derive the symmetric TDF key from the shared secret using HKDF
     // Salt is SHA256(MAGIC_NUMBER + VERSION) per spec section 4
     let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12) // v12 only
-    let tdfSymmetricKey = await NanoTDF.sharedCryptoHelper.deriveSymmetricKey(
+    let tdfSymmetricKey = NanoTDF.sharedCryptoHelper.deriveSymmetricKey(
         sharedSecret: sharedSecret,
         salt: salt,
         info: Data(), // Empty per spec section 4
@@ -167,7 +167,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
             let policyKasPublicKey = try kas.getPublicKey()
 
             // Generate a new ephemeral key pair specifically for policy encryption
-            guard let policyEphemeralKeyPair = await NanoTDF.sharedCryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
+            guard let policyEphemeralKeyPair = NanoTDF.sharedCryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
                 throw CryptoHelperError.keyGenerationFailed
             }
 
@@ -179,7 +179,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
             )
 
             // Derive a shared secret between our ephemeral private key and the Policy KAS public key
-            guard let policySharedSecret = try await NanoTDF.sharedCryptoHelper.deriveSharedSecret(
+            guard let policySharedSecret = try NanoTDF.sharedCryptoHelper.deriveSharedSecret(
                 keyPair: policyEphemeralKeyPair,
                 recipientPublicKey: policyKasPublicKey,
             ) else {
@@ -188,7 +188,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
 
             // Derive symmetric key for policy encryption
             // Using same salt computation as payload encryption per spec
-            let policySymmetricKey = await NanoTDF.sharedCryptoHelper.deriveSymmetricKey(
+            let policySymmetricKey = NanoTDF.sharedCryptoHelper.deriveSymmetricKey(
                 sharedSecret: policySharedSecret,
                 salt: salt, // Use same computed salt as payload encryption
                 info: Data(), // Empty per spec section 4
@@ -197,10 +197,10 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
 
             // NanoTDF spec requires IV of 0x000000 for policy encryption
             let policyIV = Data([0, 0, 0])
-            let adjustedIV = await NanoTDF.sharedCryptoHelper.adjustNonce(policyIV, to: 12)
+            let adjustedIV = NanoTDF.sharedCryptoHelper.adjustNonce(policyIV, to: 12)
 
             // Encrypt the policy data
-            let (encryptedPolicyData, _) = try await NanoTDF.sharedCryptoHelper.encryptPayload(
+            let (encryptedPolicyData, _) = try NanoTDF.sharedCryptoHelper.encryptPayload(
                 plaintext: body.body,
                 symmetricKey: policySymmetricKey,
                 nonce: adjustedIV,
@@ -222,10 +222,10 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
 
             // NanoTDF spec requires IV of 0x000000 for policy encryption
             let policyIV = Data([0, 0, 0])
-            let adjustedIV = await NanoTDF.sharedCryptoHelper.adjustNonce(policyIV, to: 12)
+            let adjustedIV = NanoTDF.sharedCryptoHelper.adjustNonce(policyIV, to: 12)
 
             // Encrypt the policy data using the main TDF symmetric key
-            let (encryptedPolicyData, _) = try await NanoTDF.sharedCryptoHelper.encryptPayload(
+            let (encryptedPolicyData, _) = try NanoTDF.sharedCryptoHelper.encryptPayload(
                 plaintext: body.body,
                 symmetricKey: tdfSymmetricKey, // Use the main TDF symmetric key
                 nonce: adjustedIV,
@@ -248,7 +248,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
     }
 
     // Create the GMAC policy binding using the derived TDF symmetric key
-    let gmacTag = try await NanoTDF.sharedCryptoHelper.createGMACBinding(
+    let gmacTag = try NanoTDF.sharedCryptoHelper.createGMACBinding(
         policyBody: policyBody,
         symmetricKey: tdfSymmetricKey,
     )
@@ -256,12 +256,12 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
     policy.binding = gmacTag
 
     // Step 4: Generate a 3-byte nonce/IV for the payload encryption
-    let nonce = try await NanoTDF.sharedCryptoHelper.generateNonce(length: 3)
+    let nonce = try NanoTDF.sharedCryptoHelper.generateNonce(length: 3)
     // Adjust the 3-byte nonce to 12 bytes for AES-GCM compatibility
-    let nonce12 = await NanoTDF.sharedCryptoHelper.adjustNonce(nonce, to: 12)
+    let nonce12 = NanoTDF.sharedCryptoHelper.adjustNonce(nonce, to: 12)
 
     // Step 5: Encrypt the plaintext payload using AES-GCM with the derived TDF key and adjusted nonce
-    let (ciphertext, tag) = try await NanoTDF.sharedCryptoHelper.encryptPayload(
+    let (ciphertext, tag) = try NanoTDF.sharedCryptoHelper.encryptPayload(
         plaintext: plaintext,
         symmetricKey: tdfSymmetricKey,
         nonce: nonce12,
@@ -316,7 +316,7 @@ public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signi
 
     // Generate the ECDSA signature using the provided private key.
     // Returns the raw 64-byte R || S signature directly.
-    let signatureData = try await NanoTDF.sharedCryptoHelper.generateECDSASignature(
+    let signatureData = try NanoTDF.sharedCryptoHelper.generateECDSASignature(
         privateKey: privateKey,
         message: message,
     )

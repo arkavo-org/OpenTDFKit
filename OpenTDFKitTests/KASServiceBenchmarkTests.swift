@@ -62,12 +62,12 @@ final class KASServiceBenchmarkTests: XCTestCase {
 
             for _ in 0 ..< iterations {
                 // Generate an ephemeral key pair
-                guard let ephemeralKeyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: curve) else {
+                guard let ephemeralKeyPair = cryptoHelper.generateEphemeralKeyPair(curveType: curve) else {
                     continue
                 }
 
                 // Create a shared secret for encryption
-                guard let sharedSecret = try await cryptoHelper.deriveSharedSecret(
+                guard let sharedSecret = try cryptoHelper.deriveSharedSecret(
                     keyPair: ephemeralKeyPair,
                     recipientPublicKey: kasPublicKey,
                 ) else {
@@ -75,15 +75,15 @@ final class KASServiceBenchmarkTests: XCTestCase {
                 }
 
                 // Derive a symmetric key
-                let symmetricKey = await cryptoHelper.deriveSymmetricKey(
+                let symmetricKey = cryptoHelper.deriveSymmetricKey(
                     sharedSecret: sharedSecret,
                     salt: CryptoConstants.hkdfSalt,
                     info: CryptoConstants.hkdfInfoEncryption,
                 )
 
                 // Encrypt sample data with proper format
-                let nonce = try await cryptoHelper.generateNonce()
-                let paddedNonce = await cryptoHelper.adjustNonce(nonce, to: 12)
+                let nonce = try cryptoHelper.generateNonce()
+                let paddedNonce = cryptoHelper.adjustNonce(nonce, to: 12)
                 let sealedBox = try AES.GCM.seal(plaintext, using: symmetricKey, nonce: AES.GCM.Nonce(data: paddedNonce))
 
                 // Prepare encrypted key data in the expected format
@@ -203,7 +203,7 @@ final class KASServiceBenchmarkTests: XCTestCase {
             let accessStartTime = DispatchTime.now()
 
             for i in 0 ..< iterations {
-                let ephemeralKeyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: .secp256r1)!
+                let ephemeralKeyPair = cryptoHelper.generateEphemeralKeyPair(curveType: .secp256r1)!
                 let kasPublicKey = testKeys[i]
 
                 // Create dummy encrypted key data

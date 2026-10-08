@@ -413,11 +413,14 @@ extension TDFCBOREnvelope {
     /// Encode a single key access object to CBOR
     private func encodeKeyAccessToCBOR(_ ka: TDFKeyAccessObject) throws -> CBOR {
         // Key access type enum
-        let kaTypeEnum: UInt64 = switch ka.type {
-        case .wrapped: TDFCBOREnums.keyAccessTypeWrapped
-        case .remote: TDFCBOREnums.keyAccessTypeRemote
-        case .remoteWrapped: TDFCBOREnums.keyAccessTypeRemoteWrapped
-        case .ecWrapped: TDFCBOREnums.keyAccessTypeEcWrapped
+        let kaTypeEnum: UInt64
+        switch ka.type {
+        case .wrapped: kaTypeEnum = TDFCBOREnums.keyAccessTypeWrapped
+        case .remote: kaTypeEnum = TDFCBOREnums.keyAccessTypeRemote
+        case .remoteWrapped: kaTypeEnum = TDFCBOREnums.keyAccessTypeRemoteWrapped
+        case .ecWrapped: kaTypeEnum = TDFCBOREnums.keyAccessTypeEcWrapped
+        case .hybridWrapped, .mlkemWrapped:
+            throw TDFCBORError.cborEncodingFailed("Key access type \(ka.type.rawValue) has no TDF-CBOR encoding")
         }
 
         // Protocol enum: "kas" -> 0 (currently only kas is supported)

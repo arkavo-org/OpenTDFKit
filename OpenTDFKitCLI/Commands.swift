@@ -12,32 +12,30 @@ extension Data {
 struct CLIConfig {
     let kasURL: String
     let platformURL: String
-    let clientID: String
-    let clientSecret: String
+    /// Optional: NanoTDF commands authenticate with a bearer token
+    /// (`TDF_OAUTH_TOKEN` / `OAUTH_TOKEN` / token file), so client credentials
+    /// are only needed by callers that run a client-credentials grant.
+    let clientID: String?
+    let clientSecret: String?
     let withECDSABinding: Bool
     let withPlaintextPolicy: Bool
 
     static func fromEnvironment() throws -> CLIConfig {
-        guard let kasURL = ProcessInfo.processInfo.environment["KASURL"] else {
+        let env = ProcessInfo.processInfo.environment
+        guard let kasURL = env["KASURL"] else {
             throw CLIConfigError.missingEnvironmentVariable("KASURL")
         }
-        guard let platformURL = ProcessInfo.processInfo.environment["PLATFORMURL"] else {
+        guard let platformURL = env["PLATFORMURL"] else {
             throw CLIConfigError.missingEnvironmentVariable("PLATFORMURL")
-        }
-        guard let clientID = ProcessInfo.processInfo.environment["CLIENTID"] else {
-            throw CLIConfigError.missingEnvironmentVariable("CLIENTID")
-        }
-        guard let clientSecret = ProcessInfo.processInfo.environment["CLIENTSECRET"] else {
-            throw CLIConfigError.missingEnvironmentVariable("CLIENTSECRET")
         }
 
         return CLIConfig(
             kasURL: kasURL,
             platformURL: platformURL,
-            clientID: clientID,
-            clientSecret: clientSecret,
-            withECDSABinding: ProcessInfo.processInfo.environment["XT_WITH_ECDSA_BINDING"] == "true",
-            withPlaintextPolicy: ProcessInfo.processInfo.environment["XT_WITH_PLAINTEXT_POLICY"] == "true",
+            clientID: env["CLIENTID"],
+            clientSecret: env["CLIENTSECRET"],
+            withECDSABinding: env["XT_WITH_ECDSA_BINDING"] == "true",
+            withPlaintextPolicy: env["XT_WITH_PLAINTEXT_POLICY"] == "true",
         )
     }
 }
@@ -77,6 +75,67 @@ enum Commands {
         }
 
         return oauthToken
+    }
+
+    /// Resolve the bearer token for NanoTDF commands from the environment.
+    ///
+    /// Token: `providedToken`, else `TDF_OAUTH_TOKEN`, else `OAUTH_TOKEN`.
+    /// File (when no token value is set): `tokenPath`, else `TDF_OAUTH_TOKEN_PATH`,
+    /// else `OAUTH_TOKEN_PATH`, else `fresh_token.txt`. Mirrors the Standard TDF
+    /// decrypt token lookup; the token is treated as opaque (JWT or CWT).
+    static func resolveEnvironmentOAuthToken(providedToken: String? = nil, tokenPath: String? = nil) throws -> String {
+        let env = ProcessInfo.processInfo.environment
+        func nonEmpty(_ value: String?) -> String? {
+            guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            return value
+        }
+        let token = nonEmpty(providedToken) ?? nonEmpty(env["TDF_OAUTH_TOKEN"]) ?? nonEmpty(env["OAUTH_TOKEN"])
+        let path = nonEmpty(tokenPath)
+            ?? nonEmpty(env["TDF_OAUTH_TOKEN_PATH"])
+            ?? nonEmpty(env["OAUTH_TOKEN_PATH"])
+            ?? "fresh_token.txt"
+        return try resolveOAuthToken(providedToken: token, tokenPath: path)
+    }
+
+    /// Build the NanoTDF KAS resource-locator body (`host[:port]`) from `KASURL`.
+    /// The port is included only when `KASURL` names one explicitly, so
+    /// `http://localhost:8080/kas` → `localhost:8080` and
+    /// `https://platform.example.com/kas` → `platform.example.com`.
+    static func nanoKasLocatorBody(kasURL: URL) -> String? {
+        guard let host = kasURL.host, !host.isEmpty else {
+            return nil
+        }
+        if let port = kasURL.port {
+            return "\(host):\(port)"
+        }
+        return host
+    }
+
+    /// NanoTDF resource-locator protocol for a KAS URL scheme (`https` or `http`).
+    static func nanoProtocol(forScheme scheme: String?) -> ProtocolEnum {
+        scheme?.lowercased() == "https" ? .https : .http
+    }
+
+    /// KAS key identifier for the NanoTDF locator: the KAS-reported `kid` when it
+    /// fits a locator identifier (2, 8, or 32 bytes), else `nil`.
+    static func nanoKasIdentifier(kid: String?) -> Data? {
+        guard let kid else {
+            return nil
+        }
+        let data = Data(kid.utf8)
+        return [2, 8, 32].contains(data.count) ? data : nil
+    }
+
+    /// Rebuild the KAS URL (`scheme://body[/kas]`) from a NanoTDF header locator.
+    /// The scheme follows the locator protocol; a body without a `/kas` path
+    /// (this CLI's `host[:port]` form) gets `/kas` appended.
+    static func nanoKasURL(from locator: ResourceLocator) -> URL? {
+        let scheme = locator.protocolEnum == .https ? "https" : "http"
+        let body = locator.body
+        let urlString = body.contains("/kas") ? "\(scheme)://\(body)" : "\(scheme)://\(body)/kas"
+        return URL(string: urlString)
     }
 
     /// Parse and report details about a ZIP-based TDF container.
@@ -160,10 +219,16 @@ enum Commands {
 
         print("  Requesting rewrap from KAS (ephemeral P-256 session key)")
 
-        var keyShares: [Data] = []
-        let uniqueKasURLs = Set(container.manifest.encryptionInformation.keyAccess.map(\.url))
+        // Shares tagged with their split ID; combined per OpenTDF split semantics
+        // (same sid = alternatives, distinct sids XORed).
+        var keyShares: [TDFKeyShare] = []
+        let keyAccess = container.manifest.encryptionInformation.keyAccess
+        var kasURLs: [String] = []
+        for kao in keyAccess where !kasURLs.contains(kao.url) {
+            kasURLs.append(kao.url)
+        }
 
-        for kasURLString in uniqueKasURLs {
+        for kasURLString in kasURLs {
             guard let kasURL = URL(string: kasURLString) else {
                 continue
             }
@@ -174,42 +239,43 @@ enum Commands {
             guard let privateKeyPEM else {
                 // Stage-1 path: the library generates the ephemeral key, rewraps, and
                 // unwraps with go `tdfSalt()` = SHA256("TDF").
-                let share = try await client.rewrapAndUnwrapTDF(manifest: container.manifest)
-                keyShares.append(TDFCrypto.data(from: share))
+                try await keyShares.append(contentsOf: client.rewrapAndUnwrapTDFShares(manifest: container.manifest))
                 continue
             }
 
             // A legacy RSA client key needs the raw wrapped bytes, so run the rewrap
             // here; the EC session unwrap is still preferred when the KAS offers one.
+            let entries = keyAccess.filter { $0.url == kasURLString }
             let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
             let result = try await client.rewrapTDF(
                 manifest: container.manifest,
                 clientPrivateKey: ephemeralPrivateKey,
             )
+            let sessionKey = try result.sessionPublicKeyPEM.flatMap { pem in
+                pem.isEmpty ? nil : try KASRewrapClient.validateEcPublicKeyPEM(pem).0
+            }
+            if sessionKey == nil {
+                print("  Falling back to RSA private-key unwrap of rewrap response")
+            }
 
-            // Prefer Stage-1 path: EC session unwrap with go `tdfSalt()` = SHA256("TDF").
-            if let sessionPEM = result.sessionPublicKeyPEM, !sessionPEM.isEmpty {
-                let (compressedSessionKey, _) = try KASRewrapClient.validateEcPublicKeyPEM(sessionPEM)
-                for (_, wrappedKeyData) in result.wrappedKeys.sorted(by: { $0.key < $1.key }) {
-                    let share = try KASRewrapClient.unwrapKey(
+            for (objectID, wrappedKeyData) in result.wrappedKeys.sorted(by: { $0.key < $1.key }) {
+                // Request ids are `kao-<index into this KAS's entries>`.
+                let index = Int(objectID.dropFirst("kao-".count))
+                let sid = index.flatMap { entries.indices.contains($0) ? entries[$0].sid : nil }
+                let share: SymmetricKey = if let sessionKey {
+                    try KASRewrapClient.unwrapKey(
                         wrappedKey: wrappedKeyData,
-                        sessionPublicKey: compressedSessionKey,
+                        sessionPublicKey: sessionKey,
                         clientPrivateKey: ephemeralPrivateKey.rawRepresentation,
                         salt: KASRewrapClient.standardTDFSessionSalt,
                     )
-                    keyShares.append(TDFCrypto.data(from: share))
-                }
-            } else {
-                // Legacy offline RSA unwrap of rewrap response (older KAS shapes)
-                print("  Falling back to RSA private-key unwrap of rewrap response")
-                for (_, wrappedKeyData) in result.wrappedKeys.sorted(by: { $0.key < $1.key }) {
-                    let base64 = wrappedKeyData.base64EncodedString()
-                    let share = try TDFCrypto.unwrapSymmetricKeyWithRSA(
+                } else {
+                    try TDFCrypto.unwrapSymmetricKeyWithRSA(
                         privateKeyPEM: privateKeyPEM,
-                        wrappedKey: base64,
+                        wrappedKey: wrappedKeyData.base64EncodedString(),
                     )
-                    keyShares.append(TDFCrypto.data(from: share))
                 }
+                keyShares.append(TDFKeyShare(sid: sid, key: share))
             }
         }
 
@@ -217,16 +283,10 @@ enum Commands {
             throw DecryptError.missingWrappedKey
         }
 
-        var combinedKeyData = keyShares[0]
-        for share in keyShares.dropFirst() {
-            guard combinedKeyData.count == share.count else {
-                throw DecryptError.invalidWrappedKeyFormat
-            }
-            combinedKeyData = xorKeyData(combinedKeyData, share)
-        }
-
-        let finalSymmetricKey = SymmetricKey(data: combinedKeyData)
-        return try decryptor.decrypt(container: container, symmetricKey: finalSymmetricKey)
+        let dek = try TDFDecryptor.combineKeyShares(keyShares.map { share in
+            (sid: share.sid, unwrap: { TDFCrypto.data(from: share.key) })
+        })
+        return try decryptor.decrypt(container: container, symmetricKey: SymmetricKey(data: dek))
     }
 
     /// Acquire an OAuth access token via client_credentials.
@@ -375,27 +435,6 @@ enum Commands {
         )
     }
 
-    private static func xorKeyData(_ lhs: Data, _ rhs: Data) -> Data {
-        precondition(lhs.count == rhs.count, "Key share lengths must match")
-        var result = Data(count: lhs.count)
-        result.withUnsafeMutableBytes { resPtr in
-            lhs.withUnsafeBytes { lhsPtr in
-                rhs.withUnsafeBytes { rhsPtr in
-                    guard let resBytes = resPtr.bindMemory(to: UInt8.self).baseAddress,
-                          let lhsBytes = lhsPtr.bindMemory(to: UInt8.self).baseAddress,
-                          let rhsBytes = rhsPtr.bindMemory(to: UInt8.self).baseAddress
-                    else {
-                        return
-                    }
-                    for index in 0 ..< lhs.count {
-                        resBytes[index] = lhsBytes[index] ^ rhsBytes[index]
-                    }
-                }
-            }
-        }
-        return result
-    }
-
     /// Encrypt plaintext to NanoTDF v1.2 format (L1L) using OpenTDFKit's NanoTDF API
     static func encryptNanoTDF(plaintext: Data, useECDSA: Bool) async throws -> Data {
         print("NanoTDF Encryption")
@@ -406,44 +445,33 @@ enum Commands {
         // Get configuration from environment
         let config = try CLIConfig.fromEnvironment()
 
-        // Parse KAS URL
+        // Parse KAS URL. The NanoTDF ResourceLocator carries host[:port] only
+        // (no path); the port is kept only when KASURL names one explicitly.
         guard let kasURL = URL(string: config.kasURL),
-              let kasHost = kasURL.host
+              let kasBody = nanoKasLocatorBody(kasURL: kasURL)
         else {
             throw EncryptError.invalidKASURL
         }
 
-        let kasPort = kasURL.port ?? 8080
-        // For NanoTDF ResourceLocator, only include host:port, not the path
-        let kasBody = "\(kasHost):\(kasPort)"
+        // Bearer token for fetching the KAS public key (env or token file)
+        let oauthToken = try resolveEnvironmentOAuthToken()
 
-        // Get OAuth token for fetching KAS public key
-        let tokenURL = URL(fileURLWithPath: "fresh_token.txt")
-        let tokenData = try Data(contentsOf: tokenURL)
-        let oauthToken = String(data: tokenData, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // Fetch KAS public key (endpoints resolved from PLATFORMURL / KASURL)
+        let kasKey = try await fetchKASPublicKey(kasURL: kasURL, token: oauthToken)
+        print("✓ Retrieved KAS public key\(kasKey.kid.map { " (kid: \($0))" } ?? "")")
 
-        // Fetch KAS public key - construct full URL for the API call, preserving the configured scheme
-        let scheme = kasURL.scheme ?? "http"
-        let kasFullURL = URL(string: "\(scheme)://\(kasBody)/kas")!
-        let kasPublicKeyData = try await fetchKASPublicKey(
-            kasURL: kasFullURL,
-            token: oauthToken,
-        )
-        print("✓ Retrieved KAS public key")
-
-        // Create resource locator for KAS, matching the configured scheme
-        let protocolEnum: ProtocolEnum = scheme == "https" ? .https : .http
+        // Create resource locator for KAS, matching the configured scheme. The
+        // identifier is the KAS key id ("e1" when the KAS does not report one).
         guard let kasLocator = ResourceLocator(
-            protocolEnum: protocolEnum,
+            protocolEnum: nanoProtocol(forScheme: kasURL.scheme),
             body: kasBody,
-            identifier: Data([0x65, 0x31]), // "e1" for EC key
+            identifier: nanoKasIdentifier(kid: kasKey.kid ?? "e1"),
         ) else {
             throw EncryptError.invalidKASURL
         }
 
         // Convert compressed key data to CryptoKit public key
-        let kasPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: kasPublicKeyData)
+        let kasPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: kasKey.compressedKey)
 
         // Create KAS metadata with the public key
         let kasMetadata = try KasMetadata(
@@ -512,7 +540,11 @@ enum Commands {
         print("KAS URL: \(configuration.kas.url.absoluteString)")
 
         let encryptor = TDFEncryptor()
-        let result = try encryptor.encrypt(plaintext: plaintext, configuration: configuration)
+        let result = try encryptor.encrypt(
+            plaintext: plaintext,
+            configuration: configuration,
+            segmentSize: StreamingTDFCrypto.defaultChunkSize,
+        )
         let archiveData = try result.container.serializedData()
 
         print("✓ Created Standard TDF archive (\(archiveData.count) bytes)")
@@ -573,12 +605,12 @@ enum Commands {
         return stripKasPath(platformBase.isEmpty ? kasURL.absoluteString : platformBase)
     }
 
-    /// Fetch KAS public key
-    static func fetchKASPublicKey(kasURL: URL, token: String) async throws -> Data {
+    /// Fetch the KAS EC (P-256) public key and its key id, if the KAS reports one.
+    static func fetchKASPublicKey(kasURL: URL, token: String) async throws -> (compressedKey: Data, kid: String?) {
         let configuration = await resolveConfiguration(kasURL: kasURL, token: token)
         let client = try KASRewrapClient(configuration: configuration, oauthToken: token)
         let result = try await client.fetchKasEcPublicKey(algorithm: .ecP256)
-        return result.compressedKey
+        return (result.compressedKey, result.kid)
     }
 
     /// Verify and parse a NanoTDF file using OpenTDFKit's parser
@@ -661,7 +693,7 @@ enum Commands {
     }
 
     /// Decrypt a NanoTDF file with verbose console output
-    static func decryptNanoTDF(data: Data, filename: String, token: String? = nil, tokenPath: String = "fresh_token.txt") async throws {
+    static func decryptNanoTDF(data: Data, filename: String, token: String? = nil, tokenPath: String? = nil) async throws {
         print("NanoTDF Decryption")
         print("==================")
         print("File: \(filename)")
@@ -681,7 +713,7 @@ enum Commands {
         data: Data,
         verbose: Bool,
         token: String? = nil,
-        tokenPath: String = "fresh_token.txt",
+        tokenPath: String? = nil,
     ) async throws -> Data {
         let parser = BinaryParser(data: data)
         let header: Header
@@ -697,18 +729,12 @@ enum Commands {
             throw DecryptError.invalidFormat
         }
 
-        // Extract KAS URL - handle both formats: host:port and host:port/kas
-        let kasURLString = header.payloadKeyAccess.kasLocator.body
-        let kasURLWithPath = if kasURLString.contains("/kas") {
-            // otdfctl format: already includes /kas path
-            "http://\(kasURLString)"
-        } else {
-            // Our format: just host:port, need to add /kas path
-            "http://\(kasURLString)/kas"
-        }
-        guard let kasURL = URL(string: kasURLWithPath) else {
+        // Extract KAS URL - handle both formats: host[:port] and host[:port]/kas;
+        // the scheme follows the header locator protocol (http / https).
+        let kasLocator = header.payloadKeyAccess.kasLocator
+        guard let kasURL = nanoKasURL(from: kasLocator) else {
             if verbose {
-                print("❌ Invalid KAS URL: \(kasURLString)")
+                print("❌ Invalid KAS URL: \(kasLocator.body)")
             }
             throw DecryptError.invalidKASURL
         }
@@ -716,26 +742,18 @@ enum Commands {
             print("KAS URL: \(kasURL)")
         }
 
-        // Get OAuth token (from parameter or file)
-        let oauthToken: String
-        oauthToken = try resolveOAuthToken(providedToken: token, tokenPath: tokenPath)
+        // Get OAuth token (parameter, TDF_OAUTH_TOKEN / OAUTH_TOKEN, or token file)
+        let oauthToken = try resolveEnvironmentOAuthToken(providedToken: token, tokenPath: tokenPath)
         if verbose {
             print("✓ OAuth token loaded")
         }
 
-        // Generate client ephemeral key pair
+        // Generate client ephemeral key pair. KASRewrapClient expects the
+        // compressed public key and builds the request PEM itself.
         let privateKey = P256.KeyAgreement.PrivateKey()
         let clientKeyPair = EphemeralKeyPair(
             privateKey: privateKey.rawRepresentation,
             publicKey: privateKey.publicKey.compressedRepresentation,
-            curve: .secp256r1,
-        )
-
-        // Convert to PEM format for KAS request
-        let publicKeyPEM = try convertToSPKIPEM(compressedKey: clientKeyPair.publicKey)
-        let pemKeyPair = EphemeralKeyPair(
-            privateKey: clientKeyPair.privateKey,
-            publicKey: publicKeyPEM.data(using: String.Encoding.utf8)!,
             curve: .secp256r1,
         )
         if verbose {
@@ -758,7 +776,7 @@ enum Commands {
             (wrappedKey, sessionPublicKey) = try await kasClient.rewrapNanoTDF(
                 header: rawHeader,
                 parsedHeader: header,
-                clientKeyPair: pemKeyPair,
+                clientKeyPair: clientKeyPair,
             )
             if verbose {
                 print("✓ KAS rewrap successful")
@@ -901,59 +919,6 @@ enum EncryptError: Error, CustomStringConvertible {
     }
 }
 
-/// Convert compressed P256 public key to SPKI PEM format with proper DER encoding
-func convertToSPKIPEM(compressedKey: Data) throws -> String {
-    guard compressedKey.count == 33 else {
-        throw DecryptError.keyFormatError
-    }
-
-    // Convert compressed to uncompressed using x963Representation (65 bytes)
-    let tempKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: compressedKey)
-    let x963Key = tempKey.x963Representation // This is the uncompressed format (0x04 + X + Y)
-
-    // Standard SPKI DER structure for P-256
-    var derData = Data()
-
-    // SEQUENCE header for SubjectPublicKeyInfo
-    derData.append(0x30) // SEQUENCE
-    derData.append(0x59) // Total length (89 bytes)
-
-    // Algorithm Identifier SEQUENCE
-    derData.append(0x30) // SEQUENCE
-    derData.append(0x13) // Length (19 bytes)
-
-    // OID for ecPublicKey
-    derData.append(contentsOf: [0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01])
-
-    // OID for prime256v1/secp256r1
-    derData.append(contentsOf: [0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07])
-
-    // BIT STRING for public key
-    derData.append(0x03) // BIT STRING
-    derData.append(0x42) // Length (66 bytes)
-    derData.append(0x00) // No unused bits
-
-    // Add the uncompressed public key point (65 bytes)
-    derData.append(x963Key)
-
-    // Verify DER structure is correct size
-    guard derData.count == 91 else {
-        throw DecryptError.keyFormatError
-    }
-
-    // Convert to PEM format with proper padding
-    let base64String = derData.base64EncodedString(options: [
-        .lineLength64Characters,
-        .endLineWithLineFeed,
-    ])
-
-    return """
-    -----BEGIN PUBLIC KEY-----
-    \(base64String)
-    -----END PUBLIC KEY-----
-    """
-}
-
 extension String {
     func chunked(into size: Int) -> [String] {
         stride(from: 0, to: count, by: size).map {
@@ -979,41 +944,31 @@ extension Commands {
         // Get configuration from environment
         let config = try CLIConfig.fromEnvironment()
 
-        // Parse KAS URL
+        // Parse KAS URL (locator body is host[:port]; port only when explicit)
         guard let kasURL = URL(string: config.kasURL),
-              let kasHost = kasURL.host
+              let kasBody = nanoKasLocatorBody(kasURL: kasURL)
         else {
             throw EncryptError.invalidKASURL
         }
 
-        let kasPort = kasURL.port ?? 8080
-        let kasBody = "\(kasHost):\(kasPort)"
+        // Get OAuth token (env or token file)
+        let oauthToken = try resolveEnvironmentOAuthToken()
 
-        // Get OAuth token
-        let tokenURL = URL(fileURLWithPath: "fresh_token.txt")
-        let tokenData = try Data(contentsOf: tokenURL)
-        let oauthToken = String(data: tokenData, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // Fetch KAS public key (endpoints resolved from PLATFORMURL / KASURL)
+        let kasKey = try await fetchKASPublicKey(kasURL: kasURL, token: oauthToken)
+        print("✓ Retrieved KAS public key\(kasKey.kid.map { " (kid: \($0))" } ?? "")")
 
-        // Fetch KAS public key
-        let kasFullURL = URL(string: "http://\(kasBody)/kas")!
-        let kasPublicKeyData = try await fetchKASPublicKey(
-            kasURL: kasFullURL,
-            token: oauthToken,
-        )
-        print("✓ Retrieved KAS public key")
-
-        // Create resource locator for KAS
+        // Create resource locator for KAS, matching the configured scheme
         guard let kasLocator = ResourceLocator(
-            protocolEnum: ProtocolEnum(rawValue: 0x00)!,
+            protocolEnum: nanoProtocol(forScheme: kasURL.scheme),
             body: kasBody,
-            identifier: Data([0x65, 0x31]),
+            identifier: nanoKasIdentifier(kid: kasKey.kid ?? "e1"),
         ) else {
             throw EncryptError.invalidKASURL
         }
 
         // Convert compressed key data to CryptoKit public key
-        let kasPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: kasPublicKeyData)
+        let kasPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: kasKey.compressedKey)
 
         // Create KAS metadata
         let kasMetadata = try KasMetadata(
@@ -1073,7 +1028,7 @@ extension Commands {
         data: Data,
         filename: String,
         token: String? = nil,
-        tokenPath: String = "fresh_token.txt",
+        tokenPath: String? = nil,
     ) async throws -> [Data] {
         print("NanoTDF Collection Decryption")
         print("==============================")
@@ -1091,34 +1046,22 @@ extension Commands {
         let header = try parser.parseHeader()
         print("✓ Parsed NanoTDF header")
 
-        // Get KAS URL
-        let kasURLString = header.payloadKeyAccess.kasLocator.body
-        let kasURLWithPath = if kasURLString.contains("/kas") {
-            "http://\(kasURLString)"
-        } else {
-            "http://\(kasURLString)/kas"
-        }
-        guard let kasURL = URL(string: kasURLWithPath) else {
+        // Get KAS URL (scheme from the header locator protocol)
+        guard let kasURL = nanoKasURL(from: header.payloadKeyAccess.kasLocator) else {
             throw DecryptError.invalidKASURL
         }
         print("  KAS URL: \(kasURL)")
 
-        // Get OAuth token
-        let oauthToken = try resolveOAuthToken(providedToken: token, tokenPath: tokenPath)
+        // Get OAuth token (parameter, TDF_OAUTH_TOKEN / OAUTH_TOKEN, or token file)
+        let oauthToken = try resolveEnvironmentOAuthToken(providedToken: token, tokenPath: tokenPath)
         print("✓ OAuth token loaded")
 
-        // Generate client ephemeral key pair
+        // Generate client ephemeral key pair (compressed public key; the rewrap
+        // client builds the request PEM itself)
         let privateKey = P256.KeyAgreement.PrivateKey()
         let clientKeyPair = EphemeralKeyPair(
             privateKey: privateKey.rawRepresentation,
             publicKey: privateKey.publicKey.compressedRepresentation,
-            curve: .secp256r1,
-        )
-
-        let publicKeyPEM = try convertToSPKIPEM(compressedKey: clientKeyPair.publicKey)
-        let pemKeyPair = EphemeralKeyPair(
-            privateKey: clientKeyPair.privateKey,
-            publicKey: publicKeyPEM.data(using: .utf8)!,
             curve: .secp256r1,
         )
         print("✓ Generated client ephemeral key pair")
@@ -1131,7 +1074,7 @@ extension Commands {
         let (wrappedKey, sessionPublicKey) = try await kasClient.rewrapNanoTDF(
             header: headerBytes,
             parsedHeader: header,
-            clientKeyPair: pemKeyPair,
+            clientKeyPair: clientKeyPair,
         )
         print("✓ KAS rewrap successful (single key for all items)")
 
@@ -1186,7 +1129,7 @@ extension Commands {
         inputURL: URL,
         outputURL: URL,
         token: String? = nil,
-        tokenPath: String = "fresh_token.txt",
+        tokenPath: String? = nil,
     ) async throws {
         let data = try Data(contentsOf: inputURL)
         let decryptedItems = try await decryptNanoTDFCollection(

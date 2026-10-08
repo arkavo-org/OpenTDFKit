@@ -70,6 +70,7 @@ public struct TDFPayloadDescriptor: Codable, Sendable {
 
     public enum PayloadProtocol: String, Codable, Sendable {
         case zip
+        case zipstream
         case file
         case http
         case https
@@ -160,6 +161,10 @@ public struct TDFKeyAccessObject: Codable, Sendable {
         case remote
         case remoteWrapped
         case ecWrapped = "ec-wrapped"
+        /// Wrapped to a KAS hybrid (classical + ML-KEM) key; the KAS unwraps it.
+        case hybridWrapped = "hybrid-wrapped"
+        /// Wrapped to a KAS ML-KEM key; the KAS unwraps it.
+        case mlkemWrapped = "mlkem-wrapped"
     }
 
     public enum AccessProtocol: String, Codable, Sendable {
@@ -223,6 +228,25 @@ public struct TDFPolicyBinding: Codable, Sendable {
         self.alg = alg
         self.hash = hash
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case alg
+        case hash
+    }
+
+    /// Accepts the `{alg, hash}` object and the bare-string form some writers
+    /// emit. An absent or empty `alg` means HS256 (OpenTDF spec PR #70, Go SDK).
+    public init(from decoder: Decoder) throws {
+        if let hash = try? decoder.singleValueContainer().decode(String.self) {
+            alg = "HS256"
+            self.hash = hash
+            return
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hash = try c.decode(String.self, forKey: .hash)
+        let decodedAlg = try c.decodeIfPresent(String.self, forKey: .alg) ?? ""
+        alg = decodedAlg.isEmpty ? "HS256" : decodedAlg
+    }
 }
 
 public struct TDFMethodDescriptor: Codable, Sendable {
@@ -258,6 +282,39 @@ public struct TDFIntegrityInformation: Codable, Sendable {
         self.segments = segments
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case rootSignature
+        case segmentHashAlg
+        case segmentSizeDefault
+        case encryptedSegmentSizeDefault
+        case segments
+    }
+
+    /// Segment entry as written on the wire: `segmentSize` is optional (spec
+    /// integrity_information.md) and some writers emit `encryptedSegmentSize: 0`
+    /// for "use the default".
+    private struct WireSegment: Decodable {
+        let hash: String
+        let segmentSize: Int64?
+        let encryptedSegmentSize: Int64?
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        rootSignature = try c.decode(TDFRootSignature.self, forKey: .rootSignature)
+        segmentHashAlg = try c.decode(String.self, forKey: .segmentHashAlg)
+        segmentSizeDefault = try c.decode(Int64.self, forKey: .segmentSizeDefault)
+        encryptedSegmentSizeDefault = try c.decodeIfPresent(Int64.self, forKey: .encryptedSegmentSizeDefault)
+        let defaultSize = segmentSizeDefault
+        segments = try c.decode([WireSegment].self, forKey: .segments).map { segment in
+            TDFSegment(
+                hash: segment.hash,
+                segmentSize: segment.segmentSize ?? defaultSize,
+                encryptedSegmentSize: segment.encryptedSegmentSize.flatMap { $0 > 0 ? $0 : nil },
+            )
+        }
+    }
+
     /// Minimal integrity information for simple use cases without segment hashing
     public static var minimal: TDFIntegrityInformation {
         TDFIntegrityInformation(
@@ -277,6 +334,19 @@ public struct TDFRootSignature: Codable, Sendable {
     public init(alg: String, sig: String) {
         self.alg = alg
         self.sig = sig
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case alg
+        case sig
+    }
+
+    /// An absent or empty `alg` means HS256 (OpenTDF spec PR #70, Go SDK).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sig = try c.decode(String.self, forKey: .sig)
+        let decodedAlg = try c.decodeIfPresent(String.self, forKey: .alg) ?? ""
+        alg = decodedAlg.isEmpty ? "HS256" : decodedAlg
     }
 }
 
@@ -318,10 +388,20 @@ public struct TDFAssertion: Codable, Sendable {
 }
 
 public struct TDFAssertionStatement: Codable, Sendable {
-    public enum StatementFormat: String, Codable, Sendable {
-        case jsonStructured = "json-structured"
-        case string
-        case binary
+    /// Statement format. The spec lists `json-structured`, `base64binary` and
+    /// `string`, and writers use others (the Go SDK's system-metadata assertion
+    /// writes `json`), so any value round-trips.
+    public struct StatementFormat: RawRepresentable, Codable, Hashable, Sendable {
+        public let rawValue: String
+
+        public init(rawValue: String) {
+            self.rawValue = rawValue
+        }
+
+        public static let jsonStructured = StatementFormat(rawValue: "json-structured")
+        public static let string = StatementFormat(rawValue: "string")
+        public static let binary = StatementFormat(rawValue: "binary")
+        public static let base64Binary = StatementFormat(rawValue: "base64binary")
     }
 
     public var format: StatementFormat
@@ -332,6 +412,20 @@ public struct TDFAssertionStatement: Codable, Sendable {
         self.format = format
         self.schema = schema
         self.value = value
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case format
+        case schema
+        case value
+    }
+
+    /// `format` may be omitted (the Go SDK writes it `omitempty`).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        format = try c.decodeIfPresent(StatementFormat.self, forKey: .format) ?? StatementFormat(rawValue: "")
+        schema = try c.decodeIfPresent(String.self, forKey: .schema)
+        value = try c.decode(CodableValue.self, forKey: .value)
     }
 }
 

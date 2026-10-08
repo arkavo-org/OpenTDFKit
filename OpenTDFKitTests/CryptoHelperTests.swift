@@ -16,7 +16,7 @@ final class CryptoHelperTests: XCTestCase {
         }
 
         // Generate ephemeral key pair for P256
-        guard let keyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: .secp256r1) else {
+        guard let keyPair = cryptoHelper.generateEphemeralKeyPair(curveType: .secp256r1) else {
             XCTFail("Failed to generate ephemeral key pair")
             return
         }

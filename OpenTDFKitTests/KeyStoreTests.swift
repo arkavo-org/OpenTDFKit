@@ -103,7 +103,7 @@ final class KeyStoreTests: XCTestCase {
     /// Helper to generate client ephemeral key pair for tests
     private func generateClientEphemeralKeyPair(curve: Curve) async throws -> EphemeralKeyPair {
         let cryptoHelper = CryptoHelper()
-        guard let keyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: curve) else {
+        guard let keyPair = cryptoHelper.generateEphemeralKeyPair(curveType: curve) else {
             throw TestError.keyGenerationFailed("Client ephemeral key pair generation failed for curve \(curve)")
         }
         return keyPair
@@ -224,7 +224,7 @@ final class KeyStoreTests: XCTestCase {
 
         // Generate a KAS public key that is NOT in the store
         let cryptoHelper = CryptoHelper()
-        guard let nonStoredKasKeyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: curve) else {
+        guard let nonStoredKasKeyPair = cryptoHelper.generateEphemeralKeyPair(curveType: curve) else {
             XCTFail("Failed to generate non-stored KAS key pair for test setup")
             return
         }
