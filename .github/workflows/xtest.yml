@@ -40,7 +40,9 @@ on:
       platform-ref:
         required: false
         type: string
-        default: latest
+        # TODO: back to `latest` once a service/* release includes
+        # opentdf/platform#4081 (KAS accepts spec Base64(HMAC) policy bindings).
+        default: ca178b05ee15c0ba5b075f0a2b05d1da6dd585bc
         description: "opentdf/platform ref: 'latest'/'lts', branch, tag, or SHA"
       otdfctl-ref:
         required: false
@@ -79,7 +81,10 @@ jobs:
       fork-channel: ${{ steps.resolve.outputs.fork-channel }}
     env:
       TESTS_REF_IN: ${{ inputs.tests-ref || 'latest' }}
-      PLATFORM_REF_IN: ${{ inputs.platform-ref || 'latest' }}
+      # Pinned until a service/* release includes opentdf/platform#4081:
+      # OpenTDFKit writes spec-form policy bindings, which released KAS
+      # versions reject (arkavo-org/OpenTDFKit#56).
+      PLATFORM_REF_IN: ${{ inputs.platform-ref || 'ca178b05ee15c0ba5b075f0a2b05d1da6dd585bc' }}
       OTDFCTL_REF_IN: ${{ inputs.otdfctl-ref || 'latest' }}
       FORK_REF_IN: ${{ inputs.fork-ref || 'main' }}
       GH_TOKEN: ${{ github.token }}

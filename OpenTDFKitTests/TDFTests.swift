@@ -45,27 +45,20 @@ final class StandardTDFTests: XCTestCase {
         XCTAssertFalse(binding.alg.isEmpty, "Policy binding algorithm should not be empty")
         XCTAssertFalse(binding.hash.isEmpty, "Policy binding hash should not be empty")
         XCTAssertEqual(binding.alg, "HS256")
-        // Go format: base64(hex(HMAC(base64(policyJSON)))) → 88 chars of base64
-        // (64 hex chars of HMAC-SHA256 → 88 base64 chars with padding).
-        XCTAssertEqual(binding.hash.count, 88, "OpenTDF policy binding hash is base64(hex(hmac))")
-        // Must decode as base64 of a 64-char hex string, not raw 32-byte HMAC.
+        // Spec: Base64(HMAC-SHA256(DEK, Base64(policyJSON))) → 44 chars, 32 raw bytes.
+        XCTAssertEqual(binding.hash.count, 44, "OpenTDF policy binding hash is Base64(HMAC)")
         let hashData = try XCTUnwrap(Data(base64Encoded: binding.hash))
-        let hex = try XCTUnwrap(String(data: hashData, encoding: .utf8))
-        XCTAssertEqual(hex.count, 64)
-        XCTAssertTrue(hex.allSatisfy(\.isHexDigit))
+        XCTAssertEqual(hashData.count, 32)
     }
 
-    func testPolicyBindingMatchesGoFormatVector() {
-        // Fixed DEK + policy so we can lock the go/rust/python wire format.
+    func testPolicyBindingMatchesSpecVector() {
+        // Fixed DEK + policy; the raw HMAC under the Go SDK's legacy hex vector
+        // OGE3MDAy…YTE3Yg== (hex 8a70026b…ab69a17b), Base64-encoded per the spec.
         let keyBytes = Data(repeating: 0x30, count: 32) // ASCII '0' * 32
         let symmetricKey = SymmetricKey(data: keyBytes)
         let policyJSON = #"{"uuid":"u","body":{"dataAttributes":[],"dissem":[]}}"#.data(using: .utf8)!
         let binding = TDFCrypto.policyBinding(policy: policyJSON, symmetricKey: symmetricKey)
-        // Go: base64(hex(HMAC-SHA256(key, base64(policy))))
-        XCTAssertEqual(
-            binding.hash,
-            "OGE3MDAyNmI3OWFiMWVhMTYyMzU4MWViN2E5MmEwNzlmYzJkNWU1OTFhZmU5M2JlMTE3YWJiYjVhYjY5YTE3Yg==",
-        )
+        XCTAssertEqual(binding.hash, "inACa3mrHqFiNYHrepKgefwtXlka/pO+EXq7tatpoXs=")
     }
 
     func testStandardTDFSessionSaltIsSHA256OfTDF() {
