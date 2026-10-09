@@ -50,7 +50,7 @@ on:
         type: string
         # TODO: back to `latest` once an otdfctl/* release includes
         # opentdf/platform#4063 (Go reads the spec manifest.json entry).
-        default: refs/pull/4063/head
+        default: 29498d207c8b7b80ab820ba50b0f674026ab277f
         description: "go/otdfctl peer ref: 'latest'/'lts', branch, tag, or SHA"
       fork-ref:
         required: false
@@ -91,7 +91,7 @@ jobs:
       # Pinned until an otdfctl/* release includes opentdf/platform#4063:
       # released go reads only 0.manifest.json; this repo writes the spec
       # name manifest.json.
-      OTDFCTL_REF_IN: ${{ inputs.otdfctl-ref || 'refs/pull/4063/head' }}
+      OTDFCTL_REF_IN: ${{ inputs.otdfctl-ref || '29498d207c8b7b80ab820ba50b0f674026ab277f' }}
       FORK_REF_IN: ${{ inputs.fork-ref || 'main' }}
       GH_TOKEN: ${{ github.token }}
       # Harness main; SDK PRs pick up infra fixes without a re-tag.
@@ -148,9 +148,12 @@ jobs:
           else
             GO_REF="$OTDFCTL_REF_IN"
             GO_CHANNEL="$OTDFCTL_REF_IN"
-            # otdf-sdk-mgr builds a PR ref from source under the tag pull-<n>
-            # (sdk/go/dist/pull-<n>); a bare SHA is treated as a release tag.
-            if [[ "$OTDFCTL_REF_IN" =~ ^refs/pull/([0-9]+)/ ]]; then
+            # otdf-sdk-mgr builds PR heads from source under the tag pull-<n>
+            # (sdk/go/dist/pull-<n>). The default pin is PR #4063's head commit,
+            # which it resolves through refs/pull/4063/head.
+            if [[ "$OTDFCTL_REF_IN" == "29498d207c8b7b80ab820ba50b0f674026ab277f" ]]; then
+              GO_CHANNEL="pull-4063"
+            elif [[ "$OTDFCTL_REF_IN" =~ ^refs/pull/([0-9]+)/ ]]; then
               GO_CHANNEL="pull-${BASH_REMATCH[1]}"
             fi
           fi
@@ -194,7 +197,8 @@ jobs:
       fail-fast: false
       matrix:
         # upstream: go CLI from opentdf/platform, pinned to PR #4063's head
-        #   (reads the spec manifest.json) until an otdfctl/* tag ships it.
+        #   commit 29498d20 (reads the spec manifest.json) until an otdfctl/*
+        #   tag ships it.
         # arkavo-fork: otdfctl + sdk from arkavo-org/opentdf-platform@fork-ref.
         go-source: [upstream, arkavo-fork]
     permissions:
