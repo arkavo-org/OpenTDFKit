@@ -25,8 +25,10 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/krzyzanowskim/CryptoSwift", from: "1.10.0"),
-        // 0.9.20 still warns on watchOS(.v4); development includes the #388 manifest fix
-        .package(url: "https://github.com/weichsel/ZIPFoundation", revision: "e7a17d57c583067eaa6659cd6d9521265b7664e9"),
+        // A version requirement, not a revision: SwiftPM refuses a stable-version
+        // dependency on a package that pins a revision, so a revision here makes
+        // OpenTDFKit unresolvable for every consumer that requires it by version.
+        .package(url: "https://github.com/weichsel/ZIPFoundation", from: "0.9.20"),
         .package(url: "https://github.com/valpackett/SwiftCBOR", from: "0.6.0"),
     ],
     targets: [
