@@ -5,7 +5,8 @@
 # for swift × go Base TDF only.
 #
 # Two legs run side by side (matrix `go-source`):
-#   upstream    — go CLI from the released opentdf/platform `otdfctl/*` tag.
+#   upstream    — go CLI from opentdf/platform (pinned to the #4063 merge until
+#                 an `otdfctl/*` tag includes it; then the latest tag).
 #   arkavo-fork — go CLI (otdfctl + sdk) built from arkavo-org/opentdf-platform
 #                 at `fork-ref` via the fork's go.work.
 # The platform SERVICE is upstream in both legs: the fork's service auth is
@@ -47,7 +48,9 @@ on:
       otdfctl-ref:
         required: false
         type: string
-        default: latest
+        # TODO: back to `latest` once an otdfctl/* release includes
+        # opentdf/platform#4063 (Go reads the spec manifest.json entry).
+        default: a36b5dfd59a11e76c8a3ac10466b5f1b5a5bce27
         description: "go/otdfctl peer ref: 'latest'/'lts', branch, tag, or SHA"
       fork-ref:
         required: false
@@ -85,7 +88,10 @@ jobs:
       # OpenTDFKit writes spec-form policy bindings, which released KAS
       # versions reject (arkavo-org/OpenTDFKit#56).
       PLATFORM_REF_IN: ${{ inputs.platform-ref || 'ca178b05ee15c0ba5b075f0a2b05d1da6dd585bc' }}
-      OTDFCTL_REF_IN: ${{ inputs.otdfctl-ref || 'latest' }}
+      # Pinned until an otdfctl/* release includes opentdf/platform#4063:
+      # released go reads only 0.manifest.json; this repo writes the spec
+      # name manifest.json.
+      OTDFCTL_REF_IN: ${{ inputs.otdfctl-ref || 'a36b5dfd59a11e76c8a3ac10466b5f1b5a5bce27' }}
       FORK_REF_IN: ${{ inputs.fork-ref || 'main' }}
       GH_TOKEN: ${{ github.token }}
       # Harness main; SDK PRs pick up infra fixes without a re-tag.
@@ -182,9 +188,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # upstream: released opentdf/platform otdfctl tag (stays red until
-        #   opentdf/platform#4063 ships in a tag — released go only reads
-        #   0.manifest.json, this repo writes the spec name manifest.json).
+        # upstream: go CLI from opentdf/platform, pinned to the #4063 merge
+        #   (reads the spec manifest.json) until an otdfctl/* tag ships it.
         # arkavo-fork: otdfctl + sdk from arkavo-org/opentdf-platform@fork-ref.
         go-source: [upstream, arkavo-fork]
     permissions:
