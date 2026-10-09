@@ -230,7 +230,7 @@ enum E2EBenchmark {
     /// Deterministic input shared with the cross-SDK harness: byte i = (i*131 + (i>>8)*17) & 255.
     static func deterministicInput(count: Int) -> Data {
         var data = Data(count: count)
-        data.withUnsafeMutableBytes { buffer in
+        data.withUnsafeMutableBytes { (buffer: UnsafeMutableRawBufferPointer) in
             for index in 0 ..< count {
                 buffer[index] = UInt8(truncatingIfNeeded: index &* 131 &+ (index >> 8) &* 17)
             }
