@@ -573,7 +573,7 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         guard !policyBody.isEmpty, Data(base64Encoded: policyBody) != nil else {
             throw KASRewrapError.invalidTDFRequest("Policy must be non-empty base64")
         }
-        let keyAccessEntries = manifest.encryptionInformation.keyAccess.filter { matchesKasURL($0.url) }
+        let keyAccessEntries = keyAccessObjects(in: manifest)
 
         guard !keyAccessEntries.isEmpty else {
             throw KASRewrapError.invalidTDFRequest("No key access entries for KAS \(kasIdentityURL)")
@@ -723,6 +723,15 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         return first.key
     }
 
+    /// The manifest's key access objects held by this client's KAS (matched by
+    /// scheme, host and effective port), in rewrap request order: the request
+    /// and result id `kao-<i>` refers to element `i`.
+    /// - Parameter manifest: The parsed TDF manifest containing key access entries.
+    /// - Returns: The key access objects a `rewrapTDF` call sends.
+    public func keyAccessObjects(in manifest: TDFManifest) -> [TDFKeyAccessObject] {
+        manifest.encryptionInformation.keyAccess.filter { matchesKasURL($0.url) }
+    }
+
     /// Rewraps every key access object this KAS holds and unwraps each returned
     /// key with the session key, tagged with its object's split ID. For a
     /// split-key manifest, collect shares from every KAS and pass them to
@@ -730,7 +739,7 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     /// - Parameter manifest: The parsed TDF manifest containing key access entries.
     /// - Returns: One share per permitted key access object at this KAS.
     public func rewrapAndUnwrapTDFShares(manifest: TDFManifest) async throws -> [TDFKeyShare] {
-        let entries = manifest.encryptionInformation.keyAccess.filter { matchesKasURL($0.url) }
+        let entries = keyAccessObjects(in: manifest)
         let clientPrivateKey = P256.KeyAgreement.PrivateKey()
         let result = try await rewrapTDF(manifest: manifest, clientPrivateKey: clientPrivateKey)
 

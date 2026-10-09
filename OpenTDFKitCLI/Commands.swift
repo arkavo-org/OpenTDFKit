@@ -245,7 +245,7 @@ enum Commands {
 
             // A legacy RSA client key needs the raw wrapped bytes, so run the rewrap
             // here; the EC session unwrap is still preferred when the KAS offers one.
-            let entries = keyAccess.filter { $0.url == kasURLString }
+            let entries = client.keyAccessObjects(in: container.manifest)
             let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
             let result = try await client.rewrapTDF(
                 manifest: container.manifest,
