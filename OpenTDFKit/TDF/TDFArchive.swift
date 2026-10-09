@@ -131,7 +131,7 @@ public struct TDFArchiveReader {
     public func payloadData() throws -> Data {
         let entry = try payloadEntry()
         var result = Data(capacity: Int(entry.uncompressedSize))
-        let _ = try archive.extract(entry, bufferSize: TDFArchiveWriter.ioChunkSize) { chunk in
+        let _ = try archive.extract(entry) { chunk in
             result.append(chunk)
         }
         return result
@@ -162,26 +162,16 @@ public struct TDFArchiveWriter {
         self.compressionMethod = compressionMethod
     }
 
-    /// Chunk size for ZIP entry I/O. Larger than the stdio buffer behind
-    /// ZIPFoundation's in-memory archive, so chunks pass straight through to it
-    /// instead of being staged in 16 KiB pieces.
-    static let ioChunkSize = 1 << 20
-
     public func buildArchive(manifest: TDFManifest, payload: Data) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let manifestData = try encoder.encode(manifest)
-
-        // Reserve the whole archive up front (entries plus ZIP headers and
-        // directory) so the in-memory archive is not reallocated as it grows.
-        var storage = Data()
-        storage.reserveCapacity(payload.count + manifestData.count + 4096)
         let archive: ZIPFoundation.Archive
         do {
-            archive = try ZIPFoundation.Archive(data: storage, accessMode: .create)
+            archive = try ZIPFoundation.Archive(data: Data(), accessMode: .create)
         } catch {
             throw TDFArchiveError.creationFailed
         }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let manifestData = try encoder.encode(manifest)
         let payloadName = try TDFArchiveEntryNames.payloadEntry(for: manifest)
         try addEntry(named: TDFArchiveEntryNames.manifest, data: manifestData, to: archive)
         try addEntry(named: payloadName, data: payload, to: archive)
@@ -214,15 +204,14 @@ public struct TDFArchiveWriter {
             type: .file,
             uncompressedSize: Int64(data.count),
             compressionMethod: compressionMethod,
-            bufferSize: Self.ioChunkSize,
+            bufferSize: ZIPFoundation.defaultWriteChunkSize,
             provider: { position, size -> Data in
                 let start = Int(position)
                 guard start < data.count, size > 0 else {
                     return Data()
                 }
                 let upper = min(start + size, data.count)
-                // A slice shares `data`'s storage; `subdata` would copy each chunk.
-                return data[data.startIndex + start ..< data.startIndex + upper]
+                return data.subdata(in: start ..< upper)
             },
         )
     }
