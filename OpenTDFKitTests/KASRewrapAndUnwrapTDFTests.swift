@@ -70,19 +70,69 @@ final class KASRewrapAndUnwrapTDFTests: XCTestCase {
         XCTAssertEqual(fakeKAS.requestCount, 0, "no request should reach the KAS")
     }
 
-    /// Several permitted key access objects at one KAS are split-key shares,
-    /// not a DEK; the one-call API refuses rather than guessing.
-    func testRewrapAndUnwrapTDFThrowsOnMultipleWrappedKeys() async throws {
+    /// Key access objects with distinct split IDs hold shares, not the DEK; the
+    /// one-call API refuses before contacting the KAS.
+    func testRewrapAndUnwrapTDFRefusesSplitKeyManifest() async throws {
         let fakeKAS = FakeKAS(salt: Self.standardTDFSalt, dek: SymmetricKey(size: .bits256))
         MockURLProtocol.handler = fakeKAS.handler
 
         let client = try makeClient()
         do {
             _ = try await client.rewrapAndUnwrapTDF(manifest: makeManifest(kaoCount: 2))
-            XCTFail("expected throw for two wrapped keys")
-        } catch let KASRewrapError.multipleWrappedKeys(count) {
-            XCTAssertEqual(count, 2)
+            XCTFail("expected throw for a split-key manifest")
+        } catch let error as KASRewrapError {
+            guard case .invalidTDFRequest = error else {
+                return XCTFail("expected invalidTDFRequest, got \(error)")
+            }
         }
+        XCTAssertEqual(fakeKAS.requestCount, 0, "no request should reach the KAS")
+    }
+
+    /// Key access objects sharing one split ID are alternatives for the same
+    /// DEK; any permitted one is enough.
+    func testRewrapAndUnwrapTDFAcceptsAlternativesInOneSplit() async throws {
+        let dek = SymmetricKey(size: .bits256)
+        let fakeKAS = FakeKAS(salt: Self.standardTDFSalt, dek: dek)
+        MockURLProtocol.handler = fakeKAS.handler
+
+        let client = try makeClient()
+        let unwrapped = try await client.rewrapAndUnwrapTDF(manifest: makeManifest(kaoCount: 2, sharedSplit: true))
+        XCTAssertEqual(TDFCrypto.data(from: unwrapped), TDFCrypto.data(from: dek))
+    }
+
+    /// The shares API tags each unwrapped key with its object's split ID.
+    func testRewrapAndUnwrapTDFSharesTagsSplitIDs() async throws {
+        let fakeKAS = FakeKAS(salt: Self.standardTDFSalt, dek: SymmetricKey(size: .bits256))
+        MockURLProtocol.handler = fakeKAS.handler
+
+        let client = try makeClient()
+        let shares = try await client.rewrapAndUnwrapTDFShares(manifest: makeManifest(kaoCount: 2))
+        XCTAssertEqual(shares.map(\.sid), ["split-0", "split-1"])
+    }
+
+    /// The objects a client sends are chosen by scheme, host and effective
+    /// port, so differently spelled URLs for one KAS are included and other
+    /// hosts are not; request id `kao-<i>` is element `i`.
+    func testKeyAccessObjectsMatchKASBySchemeHostAndPort() throws {
+        let manifest = makeManifest(entries: [
+            (url: "\(kasBaseURL)/kas", sid: "a"),
+            (url: "https://other.example.com/kas", sid: "x"),
+            (url: "https://KAS.example.com:443/kas/", sid: "b"),
+        ])
+        XCTAssertEqual(try makeClient().keyAccessObjects(in: manifest).map(\.sid), ["a", "b"])
+    }
+
+    /// Shares from differently spelled URLs for one KAS keep their own split IDs.
+    func testRewrapAndUnwrapTDFSharesTagAliasURLsBySplit() async throws {
+        let fakeKAS = FakeKAS(salt: Self.standardTDFSalt, dek: SymmetricKey(size: .bits256))
+        MockURLProtocol.handler = fakeKAS.handler
+
+        let shares = try await makeClient().rewrapAndUnwrapTDFShares(manifest: makeManifest(entries: [
+            (url: "\(kasBaseURL)/kas", sid: "a"),
+            (url: "https://other.example.com/kas", sid: "x"),
+            (url: "https://KAS.example.com:443/kas/", sid: "b"),
+        ]))
+        XCTAssertEqual(shares.map(\.sid), ["a", "b"])
     }
 
     /// A permit without `sessionPublicKey` cannot be unwrapped with ECDH.
@@ -120,16 +170,22 @@ final class KASRewrapAndUnwrapTDFTests: XCTestCase {
         )
     }
 
-    private func makeManifest(kaoCount: Int) -> TDFManifest {
-        let keyAccess = (0 ..< kaoCount).map { index in
+    private func makeManifest(kaoCount: Int, sharedSplit: Bool = false) -> TDFManifest {
+        makeManifest(entries: (0 ..< kaoCount).map { index in
+            (url: "\(kasBaseURL)/kas", sid: sharedSplit ? "split" : "split-\(index)")
+        })
+    }
+
+    private func makeManifest(entries: [(url: String, sid: String)]) -> TDFManifest {
+        let keyAccess = entries.enumerated().map { index, entry in
             TDFKeyAccessObject(
                 type: .ecWrapped,
-                url: "\(kasBaseURL)/kas",
+                url: entry.url,
                 protocolValue: .kas,
                 wrappedKey: Data(repeating: UInt8(index), count: 48).base64EncodedString(),
                 policyBinding: TDFPolicyBinding(alg: "HS256", hash: "binding"),
                 kid: "kid-\(index)",
-                sid: "split-\(index)",
+                sid: entry.sid,
             )
         }
         return TDFManifest(

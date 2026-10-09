@@ -75,6 +75,9 @@ public enum StreamingTDFCrypto {
         symmetricKey: SymmetricKey,
         segmentSizes: [Int],
     ) throws -> (encryptedPayload: Data, result: StreamingEncryptionResult) {
+        guard !segmentSizes.isEmpty, segmentSizes.allSatisfy({ $0 > 0 }) else {
+            throw StreamingCryptoError.invalidSegmentSize
+        }
         try inputHandle.seek(toOffset: 0)
 
         var encryptedPayload = Data()
@@ -88,7 +91,12 @@ public enum StreamingTDFCrypto {
         var firstIV: Data?
         var lastTag: Data?
 
-        for segmentSize in segmentSizes {
+        var sizeIndex = 0
+        while true {
+            // The listed sizes first, then the last one repeated until EOF, so
+            // input longer than their sum is not dropped.
+            let segmentSize = segmentSizes[min(sizeIndex, segmentSizes.count - 1)]
+            sizeIndex += 1
             var plaintextAccumulator = Data()
             plaintextAccumulator.reserveCapacity(segmentSize)
             var segmentPlaintextSize: Int64 = 0
@@ -261,6 +269,9 @@ public enum StreamingTDFCrypto {
         symmetricKey: SymmetricKey,
         segmentSizes: [Int],
     ) throws -> StreamingEncryptionResult {
+        guard !segmentSizes.isEmpty, segmentSizes.allSatisfy({ $0 > 0 }) else {
+            throw StreamingCryptoError.invalidSegmentSize
+        }
         try inputHandle.seek(toOffset: 0)
 
         var segments: [EncryptedSegment] = []
@@ -270,7 +281,12 @@ public enum StreamingTDFCrypto {
         var firstIV: Data?
         var lastTag: Data?
 
-        for segmentSize in segmentSizes {
+        var sizeIndex = 0
+        while true {
+            // The listed sizes first, then the last one repeated until EOF, so
+            // input longer than their sum is not dropped.
+            let segmentSize = segmentSizes[min(sizeIndex, segmentSizes.count - 1)]
+            sizeIndex += 1
             var plaintextAccumulator = Data()
             plaintextAccumulator.reserveCapacity(segmentSize)
             var segmentPlaintextSize: Int64 = 0

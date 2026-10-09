@@ -34,7 +34,7 @@ final class NanoTDFBenchmarkTests: XCTestCase {
             let expectation = expectation(description: "Key generation completed")
 
             Task {
-                let _ = await cryptoHelper.generateEphemeralKeyPair(curveType: .secp256r1)
+                let _ = cryptoHelper.generateEphemeralKeyPair(curveType: .secp256r1)
                 expectation.fulfill()
             }
 
@@ -90,7 +90,7 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         print("- Operations per second: \(1000 / avgTime)")
     }
 
-    func testEncryptionPerformanceWithDifferentCurves() async throws {
+    func testEncryptionPerformanceWithDifferentCurves() throws {
         let curves: [Curve] = [.secp256r1, .secp384r1, .secp521r1]
         let plaintext = String(repeating: "Test message for encryption. ", count: 100).data(using: .utf8)!
         let cryptoHelper = CryptoHelper()
@@ -102,27 +102,27 @@ final class NanoTDFBenchmarkTests: XCTestCase {
             let iterations = 20
 
             for _ in 0 ..< iterations {
-                guard let keyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: curve) else {
+                guard let keyPair = cryptoHelper.generateEphemeralKeyPair(curveType: curve) else {
                     continue
                 }
 
                 // Create a recipient public key of the same curve type
-                let recipientKeyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: curve)!
+                let recipientKeyPair = cryptoHelper.generateEphemeralKeyPair(curveType: curve)!
 
                 // Simple encryption with symmetric key derivation
-                let sharedSecret = try await cryptoHelper.deriveSharedSecret(
+                let sharedSecret = try cryptoHelper.deriveSharedSecret(
                     keyPair: keyPair,
                     recipientPublicKey: recipientKeyPair.publicKey,
                 )!
 
-                let symmetricKey = await cryptoHelper.deriveSymmetricKey(
+                let symmetricKey = cryptoHelper.deriveSymmetricKey(
                     sharedSecret: sharedSecret,
                     salt: Data("test".utf8),
                     info: Data("benchmark".utf8),
                 )
 
-                let nonce = try await cryptoHelper.generateNonce()
-                _ = try await cryptoHelper.encryptPayload(
+                let nonce = try cryptoHelper.generateNonce()
+                _ = try cryptoHelper.encryptPayload(
                     plaintext: plaintext,
                     symmetricKey: symmetricKey,
                     nonce: nonce,
@@ -137,13 +137,13 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         }
     }
 
-    func testDecryptionPerformance() async throws {
+    func testDecryptionPerformance() throws {
         let cryptoHelper = CryptoHelper()
         let plaintext = String(repeating: "Test message for decryption benchmark. ", count: 100).data(using: .utf8)!
 
         let symmetricKey = SymmetricKey(size: .bits256)
-        let nonce = try await cryptoHelper.generateNonce()
-        let (ciphertext, tag) = try await cryptoHelper.encryptPayload(
+        let nonce = try cryptoHelper.generateNonce()
+        let (ciphertext, tag) = try cryptoHelper.encryptPayload(
             plaintext: plaintext,
             symmetricKey: symmetricKey,
             nonce: nonce,
@@ -154,7 +154,7 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         let startTime = DispatchTime.now()
 
         for _ in 0 ..< iterations {
-            _ = try await cryptoHelper.decryptPayload(
+            _ = try cryptoHelper.decryptPayload(
                 ciphertext: ciphertext,
                 symmetricKey: symmetricKey,
                 nonce: nonce,
@@ -216,7 +216,7 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         policyBody: Data,
     ) async throws -> (encryptedData: Data, policyBinding: Data) {
         // 1. Derive shared secret
-        guard let sharedSecret = try await cryptoHelper.deriveSharedSecret(
+        guard let sharedSecret = try cryptoHelper.deriveSharedSecret(
             keyPair: keyPair,
             recipientPublicKey: recipientPublicKey,
         ) else {
@@ -224,18 +224,18 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         }
 
         // 2. Derive symmetric key
-        let symmetricKey = await cryptoHelper.deriveSymmetricKey(
+        let symmetricKey = cryptoHelper.deriveSymmetricKey(
             sharedSecret: sharedSecret,
             salt: CryptoConstants.hkdfSalt,
             info: CryptoConstants.hkdfInfoEncryption,
         )
 
         // 3. Create policy binding
-        let binding = try await cryptoHelper.createGMACBinding(policyBody: policyBody, symmetricKey: symmetricKey)
+        let binding = try cryptoHelper.createGMACBinding(policyBody: policyBody, symmetricKey: symmetricKey)
 
         // 4. Encrypt payload
-        let nonce = try await cryptoHelper.generateNonce()
-        let (ciphertext, tag) = try await cryptoHelper.encryptPayload(
+        let nonce = try cryptoHelper.generateNonce()
+        let (ciphertext, tag) = try cryptoHelper.encryptPayload(
             plaintext: plaintext,
             symmetricKey: symmetricKey,
             nonce: nonce,
@@ -248,6 +248,57 @@ final class NanoTDFBenchmarkTests: XCTestCase {
         encryptedData.append(tag)
 
         return (encryptedData, binding)
+    }
+
+    /// Create → decrypt round trips through the public API, sequentially and from
+    /// 8 concurrent tasks, so per-call overhead and cross-task serialization show up.
+    func testNanoTDFRoundTripThroughput() async throws {
+        let keyStore = KeyStore(curve: .secp256r1)
+        let kasService = try KASService(keyStore: keyStore, baseURL: XCTUnwrap(URL(string: "https://kas.example.com")))
+        let kasMetadata = try await kasService.generateKasMetadata()
+        let kasPublicKey = try kasMetadata.getPublicKey()
+        let plaintext = Data(String(repeating: "NanoTDF throughput. ", count: 20).utf8)
+        let policyBody = Data(#"{"body":{"dataAttributes":[],"dissem":[]}}"#.utf8)
+
+        @Sendable func roundTrip() async throws {
+            var policy = Policy(type: .embeddedPlaintext, body: EmbeddedPolicyBody(body: policyBody), remote: nil, binding: nil)
+            let nanoTDF = try await createNanoTDF(kas: kasMetadata, policy: &policy, plaintext: plaintext)
+            let symmetricKey = try await keyStore.derivePayloadSymmetricKey(
+                kasPublicKey: kasPublicKey,
+                tdfEphemeralPublicKey: nanoTDF.header.ephemeralPublicKey,
+            )
+            let decrypted = try await nanoTDF.getPayloadPlaintext(symmetricKey: symmetricKey)
+            XCTAssertEqual(decrypted, plaintext)
+        }
+
+        for _ in 0 ..< 20 {
+            try await roundTrip()
+        }
+
+        let iterations = 400
+        let sequentialStart = DispatchTime.now()
+        for _ in 0 ..< iterations {
+            try await roundTrip()
+        }
+        let sequentialMs = Double(DispatchTime.now().uptimeNanoseconds - sequentialStart.uptimeNanoseconds) / 1e6
+
+        let tasks = 8
+        let concurrentStart = DispatchTime.now()
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0 ..< tasks {
+                group.addTask {
+                    for _ in 0 ..< iterations / tasks {
+                        try await roundTrip()
+                    }
+                }
+            }
+            try await group.waitForAll()
+        }
+        let concurrentMs = Double(DispatchTime.now().uptimeNanoseconds - concurrentStart.uptimeNanoseconds) / 1e6
+
+        print("\nNanoTDF create+decrypt round trip (P-256, \(plaintext.count)-byte payload):")
+        print("- sequential: \(String(format: "%.1f", sequentialMs * 1000 / Double(iterations))) µs per round trip")
+        print("- \(tasks) concurrent tasks: \(String(format: "%.1f", concurrentMs * 1000 / Double(iterations))) µs per round trip (wall clock / total)")
     }
 
     private func runEncryptionBenchmark(messageSize: Int, label: String) throws {
@@ -264,7 +315,7 @@ final class NanoTDFBenchmarkTests: XCTestCase {
             let expectation = expectation(description: "\(label) encryption completed")
 
             Task {
-                let keyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: .secp256r1)!
+                let keyPair = cryptoHelper.generateEphemeralKeyPair(curveType: .secp256r1)!
                 let _ = try await NanoTDFBenchmarkTests.deriveKeysAndEncryptBenchmark(
                     cryptoHelper: cryptoHelper,
                     keyPair: keyPair,

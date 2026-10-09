@@ -167,7 +167,6 @@ export TDF_CLIENT_PUBLIC_KEY_PATH=/path/to/client-public.pem    # RSA public key
 export TDF_MIME_TYPE=application/pdf                         # Content MIME type
 export TDF_POLICY_JSON='{"uuid":"...","body":{...}}'         # Custom policy JSON
 export TDF_POLICY_PATH=/path/to/policy.json                  # Or load from file
-export TDF_SPEC_VERSION=4.3.0                                # TDF spec version (default: 4.3.0)
 ```
 
 ### Integration Testing
@@ -413,7 +412,7 @@ swift test --configuration release --filter "BenchmarkTests"
 **Use Cases:**
 - Document encryption
 - Large file storage
-- Multi-segment files (future)
+- Multi-segment files (2 MiB segments, interoperable with the Go SDK)
 - Cross-platform workflows
 
 **File Size Overhead:**
@@ -438,7 +437,8 @@ OpenTDFKit is designed for high-performance cryptographic operations. When imple
 
 - **Memory Usage**: Current implementation loads entire payload into memory
 - **Large Files**: For files >100MB, consider external chunking before encryption
-- **Single-Segment**: Only single-segment TDFs currently supported
+- **Segments**: `TDFEncryptor.encrypt(plaintext:configuration:segmentSize:)` writes multi-segment payloads; `TDFDecryptor.decrypt(container:symmetricKey:)` opens any segment count and verifies segment hashes and the root signature (hexless TDF 4.3.0+ encoding only)
+- **End-to-end benchmark**: `OpenTDFKitCLI benchmark e2e [--sizes 1m,10m,50m] [--samples 5] [--warmups 5] [--segment-size 2m] [--offline] [--json path] [--keep dir]` times encrypt → KAS rewrap → decrypt in-process (needs `TDF_KAS_URL`/`KASURL`, `PLATFORMURL` and a bearer token via `TDF_OAUTH_TOKEN`/`OAUTH_TOKEN`)
 - **RSA Operations**: Key wrapping/unwrapping is computationally intensive
 
 ## Version Compatibility

@@ -128,6 +128,7 @@ struct OpenTDFKitCLI {
           OpenTDFKitCLI supports <feature>                 Check if feature is supported
           OpenTDFKitCLI verify <file>                      Parse and validate a TDF file
           OpenTDFKitCLI benchmark <input> <format>         Benchmark different chunk sizes
+          OpenTDFKitCLI benchmark e2e [options]            Standard TDF encrypt -> KAS rewrap -> decrypt timing
           OpenTDFKitCLI --help                             Show this help message
 
         Formats:
@@ -141,6 +142,17 @@ struct OpenTDFKitCLI {
         Options:
           --chunk-size <size>    Chunk size for streaming (2m, 5m, 25m, or bytes)
           --segments <sizes>     Comma-separated segment sizes (e.g., 2m,5m,2m)
+
+        benchmark e2e options:
+          --sizes <sizes>        Input sizes (default 1m,10m,50m)
+          --samples <n>          Measured pairs per size (default 5)
+          --warmups <n>          Unmeasured pairs per size first (default 5)
+          --segment-size <size>  Plaintext bytes per segment (default 2m)
+          --offline              Skip KAS; decrypt with the DEK from encryption
+          --json <path>          Also write the JSON report to <path>
+          --keep <dir>           Write each size's last measured archive to <dir>
+          Needs TDF_KAS_URL/KASURL and a bearer token (TDF_OAUTH_TOKEN, OAUTH_TOKEN
+          or TDF_OAUTH_TOKEN_PATH); PLATFORMURL selects the well-known root.
 
         Features (for supports command):
           nano, nano_ecdsa, nano_collection, tdf, json, cbor, hexless, etc.
@@ -269,12 +281,14 @@ struct OpenTDFKitCLI {
                 plaintext: inputData,
                 useECDSA: false,
             )
+            try outputData.write(to: outputURL)
         case .nanoWithECDSA:
             let inputData = try Data(contentsOf: inputURL)
             outputData = try await Commands.encryptNanoTDF(
                 plaintext: inputData,
                 useECDSA: true,
             )
+            try outputData.write(to: outputURL)
         case .nanoCollection:
             try await Commands.encryptFileToCollection(inputURL: inputURL, outputURL: outputURL)
             return
@@ -445,6 +459,11 @@ struct OpenTDFKitCLI {
     }
 
     static func benchmarkCommand(args: [String]) async throws {
+        if args.count >= 3, args[2] == "e2e" {
+            try await E2EBenchmark.run(args: args)
+            return
+        }
+
         guard args.count >= 4 else {
             throw CLIError.missingArgument("benchmark requires: <input> <format>")
         }
@@ -588,8 +607,6 @@ struct OpenTDFKitCLI {
         )
 
         let policy = try TDFPolicy(json: policyData)
-        // Do not fall back to XT_WITH_TARGET_MODE — that is a target-mode name (nano/zip/hexless), not a schema version.
-        let specVersion = env["TDF_SPEC_VERSION"] ?? "4.3.0"
 
         // Parse key size from environment (default: 256-bit)
         let keySize: TDFKeySize = {
@@ -603,7 +620,6 @@ struct OpenTDFKitCLI {
             kas: kasInfo,
             policy: policy,
             mimeType: mimeType,
-            tdfSpecVersion: specVersion,
             keySize: keySize,
         )
     }

@@ -25,6 +25,18 @@ public protocol KASRewrapClientProtocol {
     func rewrapNanoTDF(header: Data, parsedHeader: Header, clientKeyPair: EphemeralKeyPair) async throws -> (wrappedKey: Data, sessionPublicKey: Data)
 }
 
+/// One key share returned by a KAS rewrap, with the split ID (`sid`) of the key
+/// access object it came from.
+public struct TDFKeyShare: Sendable {
+    public let sid: String?
+    public let key: SymmetricKey
+
+    public init(sid: String?, key: SymmetricKey) {
+        self.sid = sid
+        self.key = key
+    }
+}
+
 /// Client for interacting with KAS rewrap endpoint for NanoTDF
 public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     // MARK: - Request/Response Structures
@@ -117,6 +129,10 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
                 .ecP256 // Default to P-256 for EC
             case .wrapped, .remote, .remoteWrapped:
                 .rsa2048
+            case .hybridWrapped, .mlkemWrapped:
+                // The Go SDK sends no algorithm hint for KEM-wrapped keys; send the
+                // KAS's default and leave key selection to the key access type and kid.
+                .rsa2048
             }
         }
     }
@@ -204,6 +220,9 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         let status: String // "permit" or "fail"
         let kasWrappedKey: String?
         let entityWrappedKey: String? // Legacy field
+        /// Per-result failure detail (e.g. "invalid_argument: … wrapped key is empty")
+        /// that the platform sets alongside `status: "fail"`.
+        let error: String?
         /// Platform may return string, array, or object metadata values
         /// (e.g. `X-Required-Obligations` is a string array).
         let metadata: [String: RewrapMetadataValue]?
@@ -508,7 +527,8 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
             }
 
             guard firstResult.status == "permit" else {
-                let reason = firstResult.metadata?["error"]?.stringValue
+                let reason = firstResult.error
+                    ?? firstResult.metadata?["error"]?.stringValue
                     ?? Self.rewrapDenyReason(firstResult.metadata)
                     ?? "status=\(firstResult.status)"
                 throw KASRewrapError.accessDenied(reason)
@@ -553,7 +573,7 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         guard !policyBody.isEmpty, Data(base64Encoded: policyBody) != nil else {
             throw KASRewrapError.invalidTDFRequest("Policy must be non-empty base64")
         }
-        let keyAccessEntries = manifest.encryptionInformation.keyAccess.filter { matchesKasURL($0.url) }
+        let keyAccessEntries = keyAccessObjects(in: manifest)
 
         guard !keyAccessEntries.isEmpty else {
             throw KASRewrapError.invalidTDFRequest("No key access entries for KAS \(kasIdentityURL)")
@@ -641,7 +661,8 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
             for policyEntry in rewrapResponse.responses {
                 for result in policyEntry.results {
                     guard result.status == "permit" else {
-                        let reason = result.metadata?["error"]?.stringValue
+                        let reason = result.error
+                            ?? result.metadata?["error"]?.stringValue
                             ?? Self.rewrapDenyReason(result.metadata)
                             ?? "status=\(result.status)"
                         throw KASRewrapError.accessDenied(reason)
@@ -676,36 +697,70 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     /// KEK with the standard-TDF HKDF salt (`standardTDFSessionSalt`), which
     /// differs from the NanoTDF salt `unwrapKey` defaults to.
     ///
-    /// The manifest must carry exactly one key access object for this client's
-    /// KAS: with none, `rewrapTDF` throws `KASRewrapError.invalidTDFRequest`
-    /// before any request is sent; with several (a split-key manifest, whose
-    /// per-KAO results are shares rather than the DEK) this throws
-    /// `KASRewrapError.multipleWrappedKeys` — use `rewrapTDF` and reconstruct
-    /// the key yourself. A permit without a session public key throws
-    /// `KASRewrapError.missingSessionKey`; a wrapped key that fails to open
-    /// (wrong salt, wrong client key, corrupt bytes) throws
-    /// `KASRewrapError.keyUnwrapFailed`.
+    /// The manifest must hold a single key split: every key access object shares
+    /// one split ID (`sid`, absent counts as one ID), so any of them yields the
+    /// whole DEK and the first returned is used. A split-key manifest throws
+    /// `KASRewrapError.invalidTDFRequest` before any request is sent — call
+    /// `rewrapAndUnwrapTDFShares` at each KAS and combine with
+    /// `TDFDecryptor.combineKeyShares`. With no key access object for this KAS,
+    /// `rewrapTDF` throws `KASRewrapError.invalidTDFRequest`. A permit without a
+    /// session public key throws `KASRewrapError.missingSessionKey`; a wrapped
+    /// key that fails to open (wrong salt, wrong client key, corrupt bytes)
+    /// throws `KASRewrapError.keyUnwrapFailed`.
     /// - Parameter manifest: The parsed TDF manifest containing key access entries.
     /// - Returns: The data encryption key for the TDF payload.
     public func rewrapAndUnwrapTDF(manifest: TDFManifest) async throws -> SymmetricKey {
+        let splitIDs = Set(manifest.encryptionInformation.keyAccess.map { $0.sid ?? "" })
+        guard splitIDs.count <= 1 else {
+            throw KASRewrapError.invalidTDFRequest(
+                "Split-key manifest (\(splitIDs.count) splits): use rewrapAndUnwrapTDFShares at each KAS and TDFDecryptor.combineKeyShares",
+            )
+        }
+        let shares = try await rewrapAndUnwrapTDFShares(manifest: manifest)
+        guard let first = shares.first else {
+            throw KASRewrapError.emptyResponse
+        }
+        return first.key
+    }
+
+    /// The manifest's key access objects held by this client's KAS (matched by
+    /// scheme, host and effective port), in rewrap request order: the request
+    /// and result id `kao-<i>` refers to element `i`.
+    /// - Parameter manifest: The parsed TDF manifest containing key access entries.
+    /// - Returns: The key access objects a `rewrapTDF` call sends.
+    public func keyAccessObjects(in manifest: TDFManifest) -> [TDFKeyAccessObject] {
+        manifest.encryptionInformation.keyAccess.filter { matchesKasURL($0.url) }
+    }
+
+    /// Rewraps every key access object this KAS holds and unwraps each returned
+    /// key with the session key, tagged with its object's split ID. For a
+    /// split-key manifest, collect shares from every KAS and pass them to
+    /// `TDFDecryptor.combineKeyShares`.
+    /// - Parameter manifest: The parsed TDF manifest containing key access entries.
+    /// - Returns: One share per permitted key access object at this KAS.
+    public func rewrapAndUnwrapTDFShares(manifest: TDFManifest) async throws -> [TDFKeyShare] {
+        let entries = keyAccessObjects(in: manifest)
         let clientPrivateKey = P256.KeyAgreement.PrivateKey()
         let result = try await rewrapTDF(manifest: manifest, clientPrivateKey: clientPrivateKey)
 
-        guard result.wrappedKeys.count == 1, let wrappedKey = result.wrappedKeys.values.first else {
-            throw KASRewrapError.multipleWrappedKeys(result.wrappedKeys.count)
-        }
         guard let sessionPEM = result.sessionPublicKeyPEM, !sessionPEM.isEmpty else {
             throw KASRewrapError.missingSessionKey
         }
 
         do {
             let (sessionPublicKey, _) = try Self.validateEcPublicKeyPEM(sessionPEM)
-            return try Self.unwrapKey(
-                wrappedKey: wrappedKey,
-                sessionPublicKey: sessionPublicKey,
-                clientPrivateKey: clientPrivateKey.rawRepresentation,
-                salt: Self.standardTDFSessionSalt,
-            )
+            return try result.wrappedKeys.sorted { $0.key < $1.key }.map { objectID, wrappedKey in
+                // Request ids are `kao-<index into this KAS's entries>`.
+                let index = Int(objectID.dropFirst("kao-".count))
+                let sid = index.flatMap { entries.indices.contains($0) ? entries[$0].sid : nil }
+                let key = try Self.unwrapKey(
+                    wrappedKey: wrappedKey,
+                    sessionPublicKey: sessionPublicKey,
+                    clientPrivateKey: clientPrivateKey.rawRepresentation,
+                    salt: Self.standardTDFSessionSalt,
+                )
+                return TDFKeyShare(sid: sid, key: key)
+            }
         } catch let error as KASRewrapError {
             throw error
         } catch {

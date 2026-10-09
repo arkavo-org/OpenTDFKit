@@ -2,8 +2,9 @@ import Foundation
 
 /// Configuration from xtest environment variables
 struct Config {
-    let clientId: String
-    let clientSecret: String
+    /// Optional: token-only (bearer) deployments have no client-credentials grant.
+    let clientId: String?
+    let clientSecret: String?
     let kasURL: String
     let platformURL: String
 
@@ -23,13 +24,7 @@ struct Config {
     static func fromEnvironment() throws -> Config {
         let env = ProcessInfo.processInfo.environment
 
-        // Required environment variables
-        guard let clientId = env["CLIENTID"] else {
-            throw ConfigError.missingRequired("CLIENTID")
-        }
-        guard let clientSecret = env["CLIENTSECRET"] else {
-            throw ConfigError.missingRequired("CLIENTSECRET")
-        }
+        // Required environment variables (CLIENTID / CLIENTSECRET are optional)
         guard let kasURL = env["KASURL"] else {
             throw ConfigError.missingRequired("KASURL")
         }
@@ -43,8 +38,8 @@ struct Config {
         )
 
         return Config(
-            clientId: clientId,
-            clientSecret: clientSecret,
+            clientId: env["CLIENTID"],
+            clientSecret: env["CLIENTSECRET"],
             kasURL: kasURL,
             platformURL: platformURL,
             withMimeType: env["XT_WITH_MIME_TYPE"],

@@ -50,6 +50,9 @@ enum CryptoConstants {
 /// An actor providing helper functions for common cryptographic operations needed for NanoTDF.
 /// Encapsulates key generation, key derivation (ECDH, HKDF), encryption/decryption (AES-GCM),
 /// nonce handling, and signature generation.
+/// Stateless cryptographic helpers. Instance methods are `nonisolated`, so calls run
+/// on the caller's executor with no actor hop and concurrent callers are not
+/// serialized through a shared instance.
 public actor CryptoHelper {
     /// Computes HKDF salt for a given NanoTDF version by hashing the magic number and version byte.
     /// - Parameter version: The NanoTDF version byte (currently 0x4C for v12).
@@ -128,14 +131,10 @@ public actor CryptoHelper {
         publicKey.compressedRepresentation
     }
 
-    /// Note: `activeSessions` is declared but not currently used in the provided methods.
-    /// It might be intended for future stateful operations.
-    private var activeSessions: [String: EphemeralKeyPair] = [:]
-
     /// Generates a new ephemeral key pair for the specified elliptic curve.
     /// - Parameter curveType: The `Curve` enum value specifying the desired curve (e.g., `.secp256r1`).
     /// - Returns: An `EphemeralKeyPair` containing the raw private key and compressed public key data, or `nil` if the curve is unsupported (`.xsecp256k1`).
-    func generateEphemeralKeyPair(curveType: Curve) -> EphemeralKeyPair? {
+    nonisolated func generateEphemeralKeyPair(curveType: Curve) -> EphemeralKeyPair? {
         switch curveType {
         case .secp256r1:
             let privateKey = P256.KeyAgreement.PrivateKey()
@@ -168,7 +167,7 @@ public actor CryptoHelper {
     ///   - recipientPublicKey: The recipient's public key (compressed representation as `Data`).
     /// - Returns: The derived `SharedSecret` object, or `nil` if the curve is unsupported.
     /// - Throws: `CryptoKitError` if key reconstruction or the key agreement process fails.
-    func deriveSharedSecret(keyPair: EphemeralKeyPair, recipientPublicKey: Data) throws -> SharedSecret? {
+    nonisolated func deriveSharedSecret(keyPair: EphemeralKeyPair, recipientPublicKey: Data) throws -> SharedSecret? {
         switch keyPair.curve {
         case .secp256r1:
             let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: keyPair.privateKey)
@@ -193,7 +192,7 @@ public actor CryptoHelper {
     ///   - info: Info data for HKDF. Defaults to `CryptoConstants.hkdfInfoEncryption`.
     ///   - outputByteCount: Desired length of the derived key. Defaults to `CryptoConstants.symmetricKeyByteCount` (32 bytes for AES-256).
     /// - Returns: A `SymmetricKey` object.
-    func deriveSymmetricKey(
+    nonisolated func deriveSymmetricKey(
         sharedSecret: SharedSecret,
         salt: Data = CryptoConstants.hkdfSalt,
         info: Data = CryptoConstants.hkdfInfoEncryption,
@@ -217,7 +216,7 @@ public actor CryptoHelper {
     ///   - symmetricKey: The symmetric key (derived from ECDH/HKDF) to use for generating the tag.
     /// - Returns: The calculated GMAC tag truncated to 8 bytes as `Data`.
     /// - Throws: `CryptoKitError` if the AES-GCM seal operation fails.
-    func createGMACBinding(policyBody: Data, symmetricKey: SymmetricKey) throws -> Data {
+    nonisolated func createGMACBinding(policyBody: Data, symmetricKey: SymmetricKey) throws -> Data {
         // Seal empty data, authenticating the policyBody. The tag is the GMAC binding.
         // Use a deterministic zero nonce so the binding can be recomputed and verified later.
         // Security note: this is safe only because every NanoTDF derives a unique symmetric key
@@ -233,7 +232,7 @@ public actor CryptoHelper {
     /// Generates a cryptographically secure random nonce (IV) of the specified length.
     /// - Parameter length: The desired length of the nonce in bytes. Defaults to `CryptoConstants.aesGcmNonceSize` (12 bytes).
     /// - Returns: The generated nonce as `Data`.
-    func generateNonce(length: Int = CryptoConstants.aesGcmNonceSize) throws -> Data {
+    nonisolated func generateNonce(length: Int = CryptoConstants.aesGcmNonceSize) throws -> Data {
         var nonce = Data(count: length)
         // Use SecRandomCopyBytes for generating secure random data.
         let status = nonce.withUnsafeMutableBytes { buffer -> OSStatus in
@@ -256,7 +255,7 @@ public actor CryptoHelper {
     ///   - nonce: The input nonce `Data`.
     ///   - length: The target length in bytes.
     /// - Returns: The adjusted nonce `Data`.
-    func adjustNonce(_ nonce: Data, to length: Int) -> Data {
+    nonisolated func adjustNonce(_ nonce: Data, to length: Int) -> Data {
         if nonce.count == length {
             return nonce // Already correct length
         } else if nonce.count > length {
@@ -276,7 +275,7 @@ public actor CryptoHelper {
     ///   - nonce: The `AES.GCM.Nonce` to use. Must be unique for each encryption with the same key.
     /// - Returns: A tuple containing the `ciphertext` and the authentication `tag`.
     /// - Throws: `CryptoKitError` if encryption fails.
-    func encryptPayload(plaintext: Data, symmetricKey: SymmetricKey, nonce: CryptoKit.AES.GCM.Nonce) throws -> (ciphertext: Data, tag: Data) {
+    nonisolated func encryptPayload(plaintext: Data, symmetricKey: SymmetricKey, nonce: CryptoKit.AES.GCM.Nonce) throws -> (ciphertext: Data, tag: Data) {
         let sealedBox = try CryptoKit.AES.GCM.seal(plaintext, using: symmetricKey, nonce: nonce)
         return (sealedBox.ciphertext, sealedBox.tag)
     }
@@ -289,7 +288,7 @@ public actor CryptoHelper {
     ///   - nonce: The nonce as `Data`. Must be unique for each encryption with the same key.
     /// - Returns: A tuple containing the `ciphertext` and the authentication `tag`.
     /// - Throws: `CryptoKitError` if encryption fails or if nonce data cannot be converted.
-    func encryptPayload(plaintext: Data, symmetricKey: SymmetricKey, nonce: Data) throws -> (ciphertext: Data, tag: Data) {
+    nonisolated func encryptPayload(plaintext: Data, symmetricKey: SymmetricKey, nonce: Data) throws -> (ciphertext: Data, tag: Data) {
         // Convert Data to AES.GCM.Nonce before sealing
         let aesNonce = try CryptoKit.AES.GCM.Nonce(data: nonce)
         let sealedBox = try CryptoKit.AES.GCM.seal(plaintext, using: symmetricKey, nonce: aesNonce)
@@ -305,7 +304,7 @@ public actor CryptoHelper {
     ///   - tag: The authentication tag generated during encryption.
     /// - Returns: The original plaintext `Data`.
     /// - Throws: `CryptoKitError` if decryption fails (e.g., incorrect key, invalid tag, corrupted data).
-    func decryptPayload(ciphertext: Data, symmetricKey: SymmetricKey, nonce: CryptoKit.AES.GCM.Nonce, tag: Data) throws -> Data {
+    nonisolated func decryptPayload(ciphertext: Data, symmetricKey: SymmetricKey, nonce: CryptoKit.AES.GCM.Nonce, tag: Data) throws -> Data {
         let sealedBox = try CryptoKit.AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
         return try CryptoKit.AES.GCM.open(sealedBox, using: symmetricKey)
     }
@@ -319,7 +318,7 @@ public actor CryptoHelper {
     ///   - tag: The authentication tag generated during encryption.
     /// - Returns: The original plaintext `Data`.
     /// - Throws: `CryptoKitError` if decryption fails or if nonce data cannot be converted.
-    func decryptPayload(ciphertext: Data, symmetricKey: SymmetricKey, nonce: Data, tag: Data) throws -> Data {
+    nonisolated func decryptPayload(ciphertext: Data, symmetricKey: SymmetricKey, nonce: Data, tag: Data) throws -> Data {
         // Convert Data nonce to AES.GCM.Nonce before constructing SealedBox
         let aesNonce = try CryptoKit.AES.GCM.Nonce(data: nonce)
         let sealedBox = try CryptoKit.AES.GCM.SealedBox(nonce: aesNonce, ciphertext: ciphertext, tag: tag)
@@ -333,7 +332,7 @@ public actor CryptoHelper {
     ///   - message: The `Data` to sign.
     /// - Returns: The raw signature as `Data` (concatenated R and S values, each 32 bytes).
     /// - Throws: `CryptoKitError` if the signing operation fails.
-    func generateECDSASignature(privateKey: P256.Signing.PrivateKey, message: Data) throws -> Data {
+    nonisolated func generateECDSASignature(privateKey: P256.Signing.PrivateKey, message: Data) throws -> Data {
         // Generate the signature using CryptoKit and get raw representation directly
         // rawRepresentation returns the 64-byte R || S format
         let signature = try privateKey.signature(for: message)

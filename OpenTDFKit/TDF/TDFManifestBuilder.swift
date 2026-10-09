@@ -11,7 +11,6 @@ public struct TDFManifestBuilder {
         policy: String,
         iv: String,
         mimeType: String = "application/octet-stream",
-        tdfSpecVersion: String = "4.3.0",
         policyBinding: TDFPolicyBinding,
         integrityInformation: TDFIntegrityInformation? = nil,
         algorithm: String = "AES-256-GCM",
@@ -52,7 +51,7 @@ public struct TDFManifestBuilder {
         )
 
         return TDFManifest(
-            schemaVersion: tdfSpecVersion,
+            schemaVersion: TDFEncryptionConfiguration.specVersion,
             payload: payloadDescriptor,
             encryptionInformation: encryptionInformation,
             assertions: nil,
@@ -65,7 +64,6 @@ public struct TDFManifestBuilder {
         policy: String,
         iv: String,
         mimeType: String = "application/octet-stream",
-        tdfSpecVersion: String = "4.3.0",
         integrityInformation: TDFIntegrityInformation? = nil,
         algorithm: String = "AES-256-GCM",
     ) -> TDFManifest {
@@ -92,7 +90,7 @@ public struct TDFManifestBuilder {
         )
 
         return TDFManifest(
-            schemaVersion: tdfSpecVersion,
+            schemaVersion: TDFEncryptionConfiguration.specVersion,
             payload: payloadDescriptor,
             encryptionInformation: encryptionInformation,
             assertions: nil,

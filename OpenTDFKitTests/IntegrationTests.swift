@@ -20,18 +20,18 @@ final class IntegrationTests: XCTestCase {
     }
 
     private func skipIfEnvironmentNotConfigured() throws {
+        let hasToken = !(oauthToken?.isEmpty ?? true)
+        let hasClientCredentials = clientID != nil && clientSecret != nil
         guard kasURL != nil,
               platformURL != nil,
-              clientID != nil,
-              clientSecret != nil
+              hasToken || hasClientCredentials
         else {
             throw XCTSkip("""
             Integration tests require environment variables:
             - KASURL: KAS endpoint URL (e.g., http://localhost:8080/kas)
-            - PLATFORMURL: Platform endpoint URL (e.g., http://localhost:8080)
-            - CLIENTID: OAuth client ID (e.g., opentdf-client)
-            - CLIENTSECRET: OAuth client secret
-            - OAUTH_TOKEN: (optional) Pre-acquired OAuth token
+            - PLATFORMURL: Platform root URL (e.g., http://localhost:8080)
+            - and either OAUTH_TOKEN (a pre-acquired bearer token: JWT or CWT)
+              or CLIENTID + CLIENTSECRET (client-credentials grant at PLATFORMURL/token)
 
             To run these tests, set the environment variables before running:
                 export KASURL=http://localhost:8080/kas
@@ -43,25 +43,107 @@ final class IntegrationTests: XCTestCase {
         }
     }
 
+    // MARK: - Platform helpers
+
+    /// PLATFORMURL without trailing slashes (the platform root, not the `/kas` path).
+    private func platformRoot() throws -> String {
+        var root = try XCTUnwrap(platformURL).absoluteString
+        while root.hasSuffix("/") {
+            root.removeLast()
+        }
+        return root
+    }
+
+    /// Resolve KAS endpoints from the platform root, mirroring the CLI's
+    /// `resolveConfiguration`: well-known discovery (Connect preferred), with
+    /// synthesized Connect endpoints at the root when well-known is missing or
+    /// has no usable `kas` block (e.g. a local Go platform).
+    private func resolveKasConfiguration() async throws -> OpenTDFConfiguration {
+        let root = try platformRoot()
+        if let configuration = try? await fetchWellKnown(platformURL: root) {
+            return configuration.withKasFallback(baseURL: root)
+        }
+        return OpenTDFConfiguration.forKasConnect(root)
+    }
+
+    /// Fetch a KAS public key over REST: `GET {root}/kas/v2/kas_public_key?algorithm=…`.
+    /// Decodes both `publicKey` (Go platform) and `public_key` (arkavo-rs) spellings, plus `kid`.
+    private func fetchKasPublicKey(algorithm: String, token: String) async throws -> KASRewrapClient.KasEcPublicKeyResponse {
+        var components = try XCTUnwrap(URLComponents(string: "\(platformRoot())/kas/v2/kas_public_key"))
+        components.queryItems = [URLQueryItem(name: "algorithm", value: algorithm)]
+        var request = try URLRequest(url: XCTUnwrap(components.url))
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.addValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard status == 200 else {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            throw NSError(domain: "IntegrationTests", code: status, userInfo: [
+                NSLocalizedDescriptionKey: "GET kas_public_key?algorithm=\(algorithm) failed: HTTP \(status) \(body)",
+            ])
+        }
+        return try JSONDecoder().decode(KASRewrapClient.KasEcPublicKeyResponse.self, from: data)
+    }
+
+    /// `KasMetadata` for the platform KAS's real EC (P-256) key, with the locator the
+    /// CLI's `encryptNanoTDF` writes: scheme from KASURL, body `host[:port]` (port only
+    /// when KASURL names one), identifier = the KAS `kid` (when it is 2, 8, or 32 bytes).
+    private func makePlatformKasMetadata(token: String) async throws -> KasMetadata {
+        let kasURL = try XCTUnwrap(kasURL)
+        let host = try XCTUnwrap(kasURL.host)
+        let body = kasURL.port.map { "\(host):\($0)" } ?? host
+
+        let keyResponse = try await fetchKasPublicKey(algorithm: "ec:secp256r1", token: token)
+        let (compressedKey, _) = try KASRewrapClient.validateEcPublicKeyPEM(keyResponse.publicKey)
+        let identifier = keyResponse.kid
+            .map { Data($0.utf8) }
+            .flatMap { [2, 8, 32].contains($0.count) ? $0 : nil }
+
+        let locator = try XCTUnwrap(ResourceLocator(
+            protocolEnum: kasURL.scheme?.lowercased() == "https" ? .https : .http,
+            body: body,
+            identifier: identifier,
+        ))
+        return try KasMetadata(
+            resourceLocator: locator,
+            publicKey: P256.KeyAgreement.PublicKey(compressedRepresentation: compressedKey),
+            curve: .secp256r1,
+        )
+    }
+
+    /// Open-access embedded policy (no data attributes), as the CLI writes.
+    private func makeOpenPolicyJSON() -> Data {
+        Data("""
+        {"uuid":"\(UUID().uuidString.lowercased())","body":{"dataAttributes":[],"dissem":[]}}
+        """.utf8)
+    }
+
+    /// Fresh client ephemeral key pair (private and public from the same key).
+    private func makeClientKeyPair() -> EphemeralKeyPair {
+        let privateKey = P256.KeyAgreement.PrivateKey()
+        return EphemeralKeyPair(
+            privateKey: privateKey.rawRepresentation,
+            publicKey: privateKey.publicKey.compressedRepresentation,
+            curve: .secp256r1,
+        )
+    }
+
     func testEndToEndNanoTDFWithKASRewrap() async throws {
         try skipIfEnvironmentNotConfigured()
 
-        guard let kasURL,
-              let platformURL
-        else {
-            XCTFail("Environment not configured")
-            return
-        }
-
         let testPlaintext = "Integration test: NanoTDF with KAS rewrap".data(using: .utf8)!
 
-        let keyStore = KeyStore(curve: .secp256r1)
-        let kasService = KASService(keyStore: keyStore, baseURL: platformURL)
+        let token = try await getOAuthToken()
 
-        let kasMetadata = try await kasService.generateKasMetadata()
-
-        let remotePolicy = try XCTUnwrap(ResourceLocator(protocolEnum: .https, body: "\(platformURL.host ?? "localhost")/policy/integration-test"))
-        var policy = Policy(type: .remote, body: nil, remote: remotePolicy, binding: nil)
+        // Encrypt to the platform KAS's real EC key with an embedded policy the KAS can read.
+        let kasMetadata = try await makePlatformKasMetadata(token: token)
+        var policy = Policy(
+            type: .embeddedPlaintext,
+            body: EmbeddedPolicyBody(body: makeOpenPolicyJSON()),
+            remote: nil,
+            binding: nil,
+        )
 
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
@@ -72,18 +154,12 @@ final class IntegrationTests: XCTestCase {
         XCTAssertNotNil(nanoTDF)
         XCTAssertEqual(nanoTDF.header.toData()[2], Header.versionV12, "NanoTDF should use v12")
 
-        let token = try await getOAuthToken()
-
-        let kasRewrapClient = try KASRewrapClient(
-            configuration: OpenTDFConfiguration.forKasLegacyRest(kasURL.absoluteString),
+        let kasRewrapClient = try await KASRewrapClient(
+            configuration: resolveKasConfiguration(),
             oauthToken: token,
         )
 
-        let clientKeyPair = EphemeralKeyPair(
-            privateKey: P256.KeyAgreement.PrivateKey().rawRepresentation,
-            publicKey: P256.KeyAgreement.PrivateKey().publicKey.compressedRepresentation,
-            curve: .secp256r1,
-        )
+        let clientKeyPair = makeClientKeyPair()
 
         let (wrappedKey, sessionPublicKey) = try await kasRewrapClient.rewrapNanoTDF(
             header: nanoTDF.header.toData(),
@@ -108,22 +184,17 @@ final class IntegrationTests: XCTestCase {
     func testKASRewrapWithInvalidToken() async throws {
         try skipIfEnvironmentNotConfigured()
 
-        guard let kasURL,
-              let platformURL
-        else {
-            XCTFail("Environment not configured")
-            return
-        }
-
         let testPlaintext = "Integration test: Invalid token".data(using: .utf8)!
 
-        let keyStore = KeyStore(curve: .secp256r1)
-        let kasService = KASService(keyStore: keyStore, baseURL: platformURL)
-
-        let kasMetadata = try await kasService.generateKasMetadata()
-
-        let remotePolicy = try XCTUnwrap(ResourceLocator(protocolEnum: .https, body: "\(platformURL.host ?? "localhost")/policy/test"))
-        var policy = Policy(type: .remote, body: nil, remote: remotePolicy, binding: nil)
+        // A valid token is only used to fetch the KAS public key; the rewrap uses a bogus one.
+        let token = try await getOAuthToken()
+        let kasMetadata = try await makePlatformKasMetadata(token: token)
+        var policy = Policy(
+            type: .embeddedPlaintext,
+            body: EmbeddedPolicyBody(body: makeOpenPolicyJSON()),
+            remote: nil,
+            binding: nil,
+        )
 
         let nanoTDF = try await createNanoTDF(
             kas: kasMetadata,
@@ -133,16 +204,12 @@ final class IntegrationTests: XCTestCase {
 
         let invalidToken = "invalid_token_12345"
 
-        let kasRewrapClient = try KASRewrapClient(
-            configuration: OpenTDFConfiguration.forKasLegacyRest(kasURL.absoluteString),
+        let kasRewrapClient = try await KASRewrapClient(
+            configuration: resolveKasConfiguration(),
             oauthToken: invalidToken,
         )
 
-        let clientKeyPair = EphemeralKeyPair(
-            privateKey: P256.KeyAgreement.PrivateKey().rawRepresentation,
-            publicKey: P256.KeyAgreement.PrivateKey().publicKey.compressedRepresentation,
-            curve: .secp256r1,
-        )
+        let clientKeyPair = makeClientKeyPair()
 
         do {
             _ = try await kasRewrapClient.rewrapNanoTDF(
@@ -222,34 +289,18 @@ final class IntegrationTests: XCTestCase {
     func testKASPublicKeyRetrieval() async throws {
         try skipIfEnvironmentNotConfigured()
 
-        guard let platformURL else {
-            XCTFail("Environment not configured")
-            return
-        }
-
         let token = try await getOAuthToken()
 
-        let kasPublicKeyURL = platformURL.appendingPathComponent("/kas/v2/kas_public_key")
-        var request = URLRequest(url: kasPublicKeyURL)
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.addValue("ec:secp256r1", forHTTPHeaderField: "algorithm")
+        // `algorithm` is a query parameter (not a header).
+        let keyResponse = try await fetchKasPublicKey(algorithm: "ec:secp256r1", token: token)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200
-        else {
-            XCTFail("Failed to retrieve KAS public key")
-            return
-        }
-
-        let pemKey = String(data: data, encoding: .utf8)
-        XCTAssertNotNil(pemKey, "KAS public key should be in PEM format")
-        XCTAssertTrue(pemKey?.contains("-----BEGIN PUBLIC KEY-----") ?? false, "PEM should have proper header")
+        XCTAssertTrue(keyResponse.publicKey.contains("-----BEGIN PUBLIC KEY-----"), "PEM should have proper header")
+        let (compressedKey, _) = try KASRewrapClient.validateEcPublicKeyPEM(keyResponse.publicKey)
+        XCTAssertEqual(compressedKey.count, 33, "ec:secp256r1 should return a P-256 key")
     }
 
     private func getOAuthToken() async throws -> String {
-        if let token = oauthToken {
+        if let token = oauthToken, !token.isEmpty {
             return token
         }
 
@@ -287,48 +338,21 @@ final class IntegrationTests: XCTestCase {
     func testEndToEndStandardTDFWithKASRewrap() async throws {
         try skipIfEnvironmentNotConfigured()
 
-        guard let platformURL else {
-            XCTFail("Environment not configured")
-            return
-        }
-
+        let kasURL = try XCTUnwrap(kasURL)
         let testPlaintext = "Integration test: Standard TDF with KAS rewrap".data(using: .utf8)!
 
         let token = try await getOAuthToken()
 
-        let kasRSAPublicKeyURL = platformURL.appendingPathComponent("/kas/v2/kas_public_key")
-        var keyRequest = URLRequest(url: kasRSAPublicKeyURL)
-        keyRequest.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        // RSA wrapping key and its kid from the KAS (`publicKey` or `public_key`).
+        let rsaKey = try await fetchKasPublicKey(algorithm: "rsa:2048", token: token)
 
-        let (keyData, keyResponse) = try await URLSession.shared.data(for: keyRequest)
-
-        guard let httpKeyResponse = keyResponse as? HTTPURLResponse,
-              httpKeyResponse.statusCode == 200
-        else {
-            throw XCTSkip("Failed to retrieve KAS RSA public key")
-        }
-
-        struct KASPublicKeyResponse: Codable {
-            let publicKey: String
-        }
-
-        let kasPublicKeyResponse = try JSONDecoder().decode(KASPublicKeyResponse.self, from: keyData)
-        let kasPublicKeyPEM = kasPublicKeyResponse.publicKey
-
-        let policyJSON = """
-        {
-            "uuid": "integration-test-\(UUID().uuidString)",
-            "body": {
-                "dataAttributes": [],
-                "dissem": []
-            }
-        }
-        """.data(using: .utf8)!
+        // The KAS parses `uuid` as a UUID; a non-UUID value fails rewrap with "bad request".
+        let policyJSON = makeOpenPolicyJSON()
 
         let kasInfo = TDFKasInfo(
-            url: platformURL.appendingPathComponent("/kas"),
-            publicKeyPEM: kasPublicKeyPEM,
-            kid: "kas-integration-test",
+            url: kasURL,
+            publicKeyPEM: rsaKey.publicKey,
+            kid: rsaKey.kid,
             schemaVersion: "1.0",
         )
 
@@ -337,7 +361,6 @@ final class IntegrationTests: XCTestCase {
             kas: kasInfo,
             policy: policy,
             mimeType: "text/plain",
-            tdfSpecVersion: "4.3.0",
         )
 
         let encryptor = TDFEncryptor()
@@ -347,54 +370,20 @@ final class IntegrationTests: XCTestCase {
         XCTAssertGreaterThan(tdfData.count, 0, "TDF data should not be empty")
         XCTAssertTrue(tdfData.starts(with: [0x50, 0x4B]), "TDF should be a ZIP archive")
 
-        let clientPrivateKey = try generateTestRSAKeyPair()
-
         let loader = TDFLoader()
         let container = try loader.load(from: tdfData)
+        XCTAssertEqual(container.manifest.encryptionInformation.keyAccess.count, 1)
 
-        guard let kasURL = URL(string: container.manifest.encryptionInformation.keyAccess[0].url) else {
-            XCTFail("Invalid KAS URL in manifest")
-            return
-        }
-
-        // Generate ephemeral P-256 key for JWT signing in rewrap request
-        let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
-
-        let kasClient = try KASRewrapClient(
-            configuration: OpenTDFConfiguration.forKasLegacyRest(kasURL.absoluteString),
+        // One-call Standard TDF path: ephemeral P-256 session key, rewrap, and
+        // EC session unwrap with the Standard TDF salt.
+        let kasClient = try await KASRewrapClient(
+            configuration: resolveKasConfiguration(),
             oauthToken: token,
         )
-        let rewrapResult = try await kasClient.rewrapTDF(
-            manifest: container.manifest,
-            clientPrivateKey: ephemeralPrivateKey,
-        )
-
-        XCTAssertFalse(rewrapResult.wrappedKeys.isEmpty, "Should receive wrapped keys from KAS")
-
-        var reconstructedKeyData: Data?
-        for (_, wrappedKey) in rewrapResult.wrappedKeys.sorted(by: { $0.key < $1.key }) {
-            let unwrappedKey = try TDFCrypto.unwrapSymmetricKeyWithRSA(
-                privateKeyPEM: clientPrivateKey.privateKeyPEM,
-                wrappedKey: wrappedKey.base64EncodedString(),
-            )
-            let keyData = TDFCrypto.data(from: unwrappedKey)
-
-            if let existing = reconstructedKeyData {
-                reconstructedKeyData = Data(zip(existing, keyData).map { $0 ^ $1 })
-            } else {
-                reconstructedKeyData = keyData
-            }
-        }
-
-        guard let finalKeyData = reconstructedKeyData else {
-            XCTFail("Failed to reconstruct key")
-            return
-        }
-
-        let reconstructedKey = SymmetricKey(data: finalKeyData)
+        let symmetricKey = try await kasClient.rewrapAndUnwrapTDF(manifest: container.manifest)
 
         let decryptor = TDFDecryptor()
-        let decryptedPlaintext = try decryptor.decrypt(container: container, symmetricKey: reconstructedKey)
+        let decryptedPlaintext = try decryptor.decrypt(container: container, symmetricKey: symmetricKey)
 
         XCTAssertEqual(decryptedPlaintext, testPlaintext, "Decrypted plaintext should match original")
     }
@@ -404,13 +393,6 @@ final class IntegrationTests: XCTestCase {
     func testEndToEndNanoTDFCollectionWithKASRewrap() async throws {
         try skipIfEnvironmentNotConfigured()
 
-        guard let kasURL,
-              let platformURL
-        else {
-            XCTFail("Environment not configured")
-            return
-        }
-
         // Test with multiple items
         let testItems = try [
             XCTUnwrap("Collection item 1: Hello".data(using: .utf8)),
@@ -418,21 +400,16 @@ final class IntegrationTests: XCTestCase {
             XCTUnwrap("Collection item 3: NanoTDF Collection Test".data(using: .utf8)),
         ]
 
-        let keyStore = KeyStore(curve: .secp256r1)
-        let kasService = KASService(keyStore: keyStore, baseURL: platformURL)
+        // Get token (used for the KAS public key and the rewrap)
+        let token = try await getOAuthToken()
 
-        let kasMetadata = try await kasService.generateKasMetadata()
-
-        // Create policy locator
-        let policyLocator = try XCTUnwrap(ResourceLocator(
-            protocolEnum: .https,
-            body: "\(platformURL.host ?? "localhost")/policy/collection-test",
-        ))
+        // Encrypt to the platform KAS's real EC key with an embedded policy
+        let kasMetadata = try await makePlatformKasMetadata(token: token)
 
         // Build the collection
         let collection = try await NanoTDFCollectionBuilder()
             .kasMetadata(kasMetadata)
-            .policy(.remote(policyLocator))
+            .policy(.embeddedPlaintext(makeOpenPolicyJSON()))
             .build()
 
         // Encrypt all items
@@ -449,24 +426,16 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(encryptedItems[1].ivCounter, 2)
         XCTAssertEqual(encryptedItems[2].ivCounter, 3)
 
-        // Get token for KAS rewrap
-        let token = try await getOAuthToken()
-
         // Get header for rewrap request
         let header = await collection.header
         let headerBytes = await collection.getHeaderBytes()
 
-        let kasRewrapClient = try KASRewrapClient(
-            configuration: OpenTDFConfiguration.forKasLegacyRest(kasURL.absoluteString),
+        let kasRewrapClient = try await KASRewrapClient(
+            configuration: resolveKasConfiguration(),
             oauthToken: token,
         )
 
-        let clientPrivateKey = P256.KeyAgreement.PrivateKey()
-        let clientKeyPair = EphemeralKeyPair(
-            privateKey: clientPrivateKey.rawRepresentation,
-            publicKey: clientPrivateKey.publicKey.compressedRepresentation,
-            curve: .secp256r1,
-        )
+        let clientKeyPair = makeClientKeyPair()
 
         // Single rewrap call for entire collection
         let (wrappedKey, sessionPublicKey) = try await kasRewrapClient.rewrapNanoTDF(
@@ -613,39 +582,5 @@ final class IntegrationTests: XCTestCase {
         for (index, decrypted) in decryptedItems.enumerated() {
             XCTAssertEqual(decrypted, testItems[index])
         }
-    }
-
-    private func generateTestRSAKeyPair() throws -> (privateKeyPEM: String, publicKeyPEM: String) {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
-        task.arguments = ["genrsa", "2048"]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-
-        try task.run()
-        task.waitUntilExit()
-
-        let privateKeyPEM = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)!
-
-        let pubTask = Process()
-        pubTask.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
-        pubTask.arguments = ["rsa", "-pubout"]
-
-        let pubPipe = Pipe()
-        let inPipe = Pipe()
-        pubTask.standardInput = inPipe
-        pubTask.standardOutput = pubPipe
-        pubTask.standardError = Pipe()
-
-        try pubTask.run()
-        inPipe.fileHandleForWriting.write(privateKeyPEM.data(using: .utf8)!)
-        try inPipe.fileHandleForWriting.close()
-        pubTask.waitUntilExit()
-
-        let publicKeyPEM = String(data: pubPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)!
-
-        return (privateKeyPEM, publicKeyPEM)
     }
 }

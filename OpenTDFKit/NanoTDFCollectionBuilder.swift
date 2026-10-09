@@ -127,13 +127,13 @@ public struct NanoTDFCollectionBuilder: Sendable {
         let cryptoHelper = NanoTDF.sharedCryptoHelper
 
         // Step 1: Generate ephemeral key pair (expensive - ~50us)
-        guard let keyPair = await cryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
+        guard let keyPair = cryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
             throw NanoTDFCollectionError.keyDerivationFailed("Failed to generate ephemeral key pair")
         }
 
         // Step 2: Derive shared secret via ECDH (expensive - ~100us)
         let kasPublicKey = try kas.getPublicKey()
-        guard let sharedSecret = try await cryptoHelper.deriveSharedSecret(
+        guard let sharedSecret = try cryptoHelper.deriveSharedSecret(
             keyPair: keyPair,
             recipientPublicKey: kasPublicKey,
         ) else {
@@ -143,7 +143,7 @@ public struct NanoTDFCollectionBuilder: Sendable {
         // Step 3: Derive symmetric key via HKDF (moderate - ~10us)
         // Use v12 salt for KAS compatibility (L1L format)
         let salt = CryptoHelper.computeHKDFSalt(version: Header.versionV12)
-        let symmetricKey = await cryptoHelper.deriveSymmetricKey(
+        let symmetricKey = cryptoHelper.deriveSymmetricKey(
             sharedSecret: sharedSecret,
             salt: salt,
             info: Data(),
@@ -166,7 +166,7 @@ public struct NanoTDFCollectionBuilder: Sendable {
         }
 
         // Create GMAC policy binding
-        let binding = try await cryptoHelper.createGMACBinding(
+        let binding = try cryptoHelper.createGMACBinding(
             policyBody: policyBody,
             symmetricKey: symmetricKey,
         )
