@@ -53,11 +53,11 @@ public enum TDFFormatDetector {
         }
 
         // Check for JSON (speculative - starts with '{')
-        if data.first == jsonStart {
-            // Try to validate it's actually JSON with TDF structure
-            if isTDFJSON(data) {
-                return .json
-            }
+        if data.first == jsonStart,
+           // Try to validate it's actually JSON with TDF structure
+           isTDFJSON(data)
+        {
+            return .json
         }
 
         return nil
@@ -176,14 +176,12 @@ public extension TDFFormatDetector {
         }
 
         // Check for JSON
-        if data.first == jsonStart {
-            if isTDFJSON(data) {
-                return TDFFormatDetectionResult(
-                    format: .json,
-                    confidence: .high,
-                    method: .structuralParse,
-                )
-            }
+        if data.first == jsonStart, isTDFJSON(data) {
+            return TDFFormatDetectionResult(
+                format: .json,
+                confidence: .high,
+                method: .structuralParse,
+            )
         }
 
         return nil

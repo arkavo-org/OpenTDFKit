@@ -34,6 +34,19 @@ jobs:
       - name: Print Swift version
         run: swift --version
 
+      - name: Install SwiftFormat
+        # Pinned rather than the runner's preinstalled copy, whose version
+        # drifts; keep in step with `--minversion` in .swiftformat.
+        env:
+          SWIFTFORMAT_VERSION: "0.64.1"
+          SWIFTFORMAT_SHA256: "0e5762a848d738602c7a983b26812031e634d85e357db070968b9c805f253eff"
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/swiftformat.zip" \
+            "https://github.com/nicklockwood/SwiftFormat/releases/download/${SWIFTFORMAT_VERSION}/swiftformat.zip"
+          echo "${SWIFTFORMAT_SHA256}  $RUNNER_TEMP/swiftformat.zip" | shasum -a 256 -c -
+          unzip -q -o "$RUNNER_TEMP/swiftformat.zip" -d "$RUNNER_TEMP/swiftformat"
+          echo "$RUNNER_TEMP/swiftformat" >> "$GITHUB_PATH"
+
       - name: Cache SwiftFormat
         uses: actions/cache@v4
         with:
@@ -43,9 +56,10 @@ jobs:
             ${{ runner.os }}-swiftformat-
 
       - name: Run SwiftFormat
-        # SwiftFormat is preinstalled on macOS runners. Rules and Swift version
-        # are pinned in the repo's .swiftformat config.
-        run: swiftformat --cache .swiftformat.cache --lint .
+        # Rules and Swift version are pinned in the repo's .swiftformat config.
+        run: |
+          swiftformat --version
+          swiftformat --cache .swiftformat.cache --lint .
 
   build:
     runs-on: macos-latest

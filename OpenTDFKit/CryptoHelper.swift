@@ -477,10 +477,7 @@ public actor CryptoHelper {
         tag: Data,
         tagLength: Int,
     ) throws -> Data {
-        guard key.count == 32 else {
-            throw CryptoHelperError.keyDerivationFailed
-        }
-        guard iv.count == 12 else {
+        guard key.count == 32, iv.count == 12 else {
             throw CryptoHelperError.keyDerivationFailed
         }
 
@@ -511,10 +508,7 @@ public actor CryptoHelper {
         plaintext: Data,
         tagLength: Int,
     ) throws -> (ciphertext: Data, tag: Data) {
-        guard key.count == 32 else {
-            throw CryptoHelperError.keyDerivationFailed
-        }
-        guard iv.count == 12 else {
+        guard key.count == 32, iv.count == 12 else {
             throw CryptoHelperError.keyDerivationFailed
         }
 

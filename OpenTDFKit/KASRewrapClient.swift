@@ -1011,16 +1011,13 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     }
 
     private func matchesKasURL(_ otherURLString: String) -> Bool {
-        guard let otherURL = URL(string: otherURLString) else { return false }
-        guard let kasURL = URL(string: kasIdentityURL) else { return false }
-        guard let baseScheme = kasURL.scheme?.lowercased(),
+        guard let otherURL = URL(string: otherURLString), let kasURL = URL(string: kasIdentityURL),
+              let baseScheme = kasURL.scheme?.lowercased(),
               let otherScheme = otherURL.scheme?.lowercased(),
               let baseHost = kasURL.host?.lowercased(),
-              let otherHost = otherURL.host?.lowercased()
+              let otherHost = otherURL.host?.lowercased(),
+              baseScheme == otherScheme, baseHost == otherHost
         else {
-            return false
-        }
-        guard baseScheme == otherScheme, baseHost == otherHost else {
             return false
         }
         return effectivePort(for: kasURL) == effectivePort(for: otherURL)

@@ -9,9 +9,7 @@ public class BinaryParser {
     }
 
     func read(length: Int) -> Data? {
-        guard length >= 0 else { return nil }
-        guard cursor >= 0 else { return nil }
-        guard cursor + length <= data.count else { return nil }
+        guard length >= 0, cursor >= 0, cursor + length <= data.count else { return nil }
         let range = cursor ..< (cursor + length)
         cursor += length
         // Use zero-copy slicing instead of subdata to avoid allocations
@@ -205,12 +203,9 @@ public class BinaryParser {
         // Parse the legacy single-field ResourceLocator KAS for v12
         guard let kas = readResourceLocator(),
               let policyBindingConfig = readEccAndBindingMode(),
-              let payloadSignatureConfig = readSymmetricAndPayloadConfig()
+              let payloadSignatureConfig = readSymmetricAndPayloadConfig(),
+              let policy = try readPolicyField(bindingMode: policyBindingConfig)
         else {
-            throw ParsingError.invalidFormat
-        }
-
-        guard let policy = try readPolicyField(bindingMode: policyBindingConfig) else {
             throw ParsingError.invalidFormat
         }
 
@@ -244,11 +239,7 @@ public class BinaryParser {
     }
 
     public func parsePayload(config: SignatureAndPayloadConfig) throws -> Payload {
-        guard let lengthData = read(length: FieldSize.payloadLengthSize)
-        else {
-            throw ParsingError.invalidFormat
-        }
-        guard lengthData.count == FieldSize.payloadLengthSize else {
+        guard let lengthData = read(length: FieldSize.payloadLengthSize), lengthData.count == FieldSize.payloadLengthSize else {
             throw ParsingError.invalidFormat
         }
         let b = Array(lengthData)
