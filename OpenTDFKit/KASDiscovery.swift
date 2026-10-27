@@ -406,7 +406,6 @@ public struct ConnectError: Codable, Sendable {
 /// Parse a Connect error envelope from a response body. Returns nil for empty,
 /// non-JSON, or shapes lacking a non-empty `code`.
 public func parseConnectError(_ body: String) -> ConnectError? {
-    guard !body.isEmpty, let data = body.data(using: .utf8) else { return nil }
-    guard let parsed = try? JSONDecoder().decode(ConnectError.self, from: data) else { return nil }
+    guard !body.isEmpty, let data = body.data(using: .utf8), let parsed = try? JSONDecoder().decode(ConnectError.self, from: data) else { return nil }
     return parsed.code.isEmpty ? nil : parsed
 }

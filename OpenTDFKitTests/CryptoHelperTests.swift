@@ -1,8 +1,7 @@
-import Foundation
-import XCTest
-
 @preconcurrency import CryptoKit // Add this to handle Sendable warnings
+import Foundation
 @testable import OpenTDFKit
+import XCTest
 
 final class CryptoHelperTests: XCTestCase {
     func testInitializeSmallNanoTDFPositive() async throws {

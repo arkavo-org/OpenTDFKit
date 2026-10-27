@@ -370,6 +370,21 @@ final class StandardTDFTests: XCTestCase {
         XCTAssertFalse(names.contains("0.manifest.json"))
     }
 
+    /// Writing to a file replaces an existing file only with a complete
+    /// archive and leaves no temporary file behind.
+    func testBuildArchiveToFileReplacesExistingFile() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outputURL = directory.appendingPathComponent("out.tdf")
+        try Data("not an archive".utf8).write(to: outputURL)
+
+        try TDFArchiveWriter().buildArchiveToFile(manifest: createTestManifest(), payload: testPlaintext, outputURL: outputURL)
+
+        XCTAssertEqual(try TDFArchiveReader(url: outputURL).payloadData(), testPlaintext)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), ["out.tdf"])
+    }
+
     func testWriterPayloadEntryFollowsManifestURL() throws {
         var m = createTestManifest()
         m.payload.url = "data.bin"

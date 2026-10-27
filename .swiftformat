@@ -1,6 +1,10 @@
 # SwiftFormat configuration for OpenTDFKit
 # Pinned so `swiftformat .` and the CI lint check agree.
 
+# Same release as the CI lint job (.github/workflows/swift.yaml); older
+# releases format differently, so they refuse to run.
+--minversion 0.64.1
+
 # Match the package's declared language version (Package.swift: swift-tools-version:6.2).
 --swiftversion 6.2
 

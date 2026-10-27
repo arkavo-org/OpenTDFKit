@@ -163,18 +163,14 @@ public struct TDFArchiveWriter {
     }
 
     public func buildArchive(manifest: TDFManifest, payload: Data) throws -> Data {
+        let manifestData = try encodedManifest(manifest)
         let archive: ZIPFoundation.Archive
         do {
             archive = try ZIPFoundation.Archive(data: Data(), accessMode: .create)
         } catch {
             throw TDFArchiveError.creationFailed
         }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let manifestData = try encoder.encode(manifest)
-        let payloadName = try TDFArchiveEntryNames.payloadEntry(for: manifest)
-        try addEntry(named: TDFArchiveEntryNames.manifest, data: manifestData, to: archive)
-        try addEntry(named: payloadName, data: payload, to: archive)
+        try addEntries(manifest: manifest, manifestData: manifestData, payload: payload, to: archive)
         guard let resultData = archive.data else {
             throw TDFArchiveError.creationFailed
         }
@@ -186,16 +182,55 @@ public struct TDFArchiveWriter {
         return try buildArchive(manifest: manifest, payload: payloadData)
     }
 
-    /// Build archive directly to file, avoiding memory overhead for large payloads
+    /// Build archive directly to file, avoiding memory overhead for large payloads.
+    ///
+    /// The archive is written to a temporary file beside `outputURL`, then
+    /// moved over it, so no in-memory copy of the archive is made and an
+    /// existing file is replaced only once the new archive is complete.
     public func buildArchiveToFile(manifest: TDFManifest, payload: Data, outputURL: URL) throws {
-        let archiveData = try buildArchive(manifest: manifest, payload: payload)
-        try archiveData.write(to: outputURL)
+        let manifestData = try encodedManifest(manifest)
+        let temporaryURL = outputURL.deletingLastPathComponent()
+            .appendingPathComponent(".\(outputURL.lastPathComponent).\(UUID().uuidString).partial")
+        do {
+            try writeArchive(manifest: manifest, manifestData: manifestData, payload: payload, to: temporaryURL)
+            if FileManager.default.fileExists(atPath: outputURL.path) {
+                _ = try FileManager.default.replaceItemAt(outputURL, withItemAt: temporaryURL)
+            } else {
+                try FileManager.default.moveItem(at: temporaryURL, to: outputURL)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: temporaryURL)
+            throw error
+        }
     }
 
     /// Build archive directly to file from payload file, avoiding double memory load
     public func buildArchiveToFile(manifest: TDFManifest, payloadURL: URL, outputURL: URL) throws {
         let archiveData = try buildArchive(manifest: manifest, payloadURL: payloadURL)
         try archiveData.write(to: outputURL)
+    }
+
+    private func encodedManifest(_ manifest: TDFManifest) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(manifest)
+    }
+
+    private func addEntries(manifest: TDFManifest, manifestData: Data, payload: Data, to archive: ZIPFoundation.Archive) throws {
+        let payloadName = try TDFArchiveEntryNames.payloadEntry(for: manifest)
+        try addEntry(named: TDFArchiveEntryNames.manifest, data: manifestData, to: archive)
+        try addEntry(named: payloadName, data: payload, to: archive)
+    }
+
+    /// Writes a file-backed archive; it is closed when this returns.
+    private func writeArchive(manifest: TDFManifest, manifestData: Data, payload: Data, to url: URL) throws {
+        let archive: ZIPFoundation.Archive
+        do {
+            archive = try ZIPFoundation.Archive(url: url, accessMode: .create)
+        } catch {
+            throw TDFArchiveError.creationFailed
+        }
+        try addEntries(manifest: manifest, manifestData: manifestData, payload: payload, to: archive)
     }
 
     private func addEntry(named name: String, data: Data, to archive: ZIPFoundation.Archive) throws {
