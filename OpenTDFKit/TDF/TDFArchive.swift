@@ -60,12 +60,21 @@ public struct TDFArchiveReader {
 
     private func manifestEntry() throws -> ZIPFoundation.Entry {
         if let e = archive[TDFArchiveEntryNames.manifest] {
-            return e
+            return try regularFile(e)
         }
         if let e = archive[TDFArchiveEntryNames.legacyManifest] {
-            return e
+            return try regularFile(e)
         }
         throw TDFArchiveError.missingManifest
+    }
+
+    /// ZIPFoundation reads a symlink entry's whole header-declared compressed
+    /// size in one allocation before any consumer runs, bypassing `maxSize`.
+    private func regularFile(_ entry: ZIPFoundation.Entry) throws -> ZIPFoundation.Entry {
+        guard entry.type == .file else {
+            throw TDFArchiveError.unsupportedEntryType(entry.path)
+        }
+        return entry
     }
 
     private func payloadEntry() throws -> ZIPFoundation.Entry {
@@ -77,7 +86,7 @@ public struct TDFArchiveReader {
             throw TDFArchiveError.missingPayloadEntry(name)
         }
         try validateEntryPath(entry.path)
-        return entry
+        return try regularFile(entry)
     }
 
     public func manifestData(maxSize: Int = TDFArchiveReader.defaultManifestMaxSize) throws -> Data {
@@ -128,10 +137,24 @@ public struct TDFArchiveReader {
         try Int64(payloadEntry().uncompressedSize)
     }
 
-    public func payloadData() throws -> Data {
+    /// Reads the whole payload into memory.
+    /// - Parameter maxSize: Largest payload accepted, in bytes; `nil` for no cap.
+    ///   Checked against the ZIP header and again while extracting, since the
+    ///   header's size is not trusted.
+    /// - Throws: `TDFArchiveError.payloadTooLarge` when the payload exceeds `maxSize`.
+    public func payloadData(maxSize: Int? = nil) throws -> Data {
         let entry = try payloadEntry()
-        var result = Data(capacity: Int(entry.uncompressedSize))
+        let declaredSize = Int(clamping: entry.uncompressedSize)
+        if let maxSize, declaredSize > maxSize {
+            throw TDFArchiveError.payloadTooLarge
+        }
+        var total = 0
+        var result = Data(capacity: declaredSize)
         let _ = try archive.extract(entry) { chunk in
+            total += chunk.count
+            if let maxSize, total > maxSize {
+                throw TDFArchiveError.payloadTooLarge
+            }
             result.append(chunk)
         }
         return result
@@ -259,6 +282,8 @@ public enum TDFArchiveError: Error, CustomStringConvertible, Equatable {
     case missingPayloadEntry(String)
     case unsafePayloadURL(String)
     case manifestTooLarge
+    case payloadTooLarge
+    case unsupportedEntryType(String)
     case creationFailed
     case maliciousPath
 
@@ -276,6 +301,10 @@ public enum TDFArchiveError: Error, CustomStringConvertible, Equatable {
             "Unsafe payload url in manifest: '\(url)'"
         case .manifestTooLarge:
             "Manifest exceeds maximum allowed size"
+        case .payloadTooLarge:
+            "Payload exceeds maximum allowed size"
+        case let .unsupportedEntryType(name):
+            "Archive entry '\(name)' is not a regular file"
         case .creationFailed:
             "Failed to create TDF archive"
         case .maliciousPath:

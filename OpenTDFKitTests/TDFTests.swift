@@ -339,10 +339,11 @@ final class StandardTDFTests: XCTestCase {
         }
     }
 
-    private func rawZip(_ members: [(String, Data)]) throws -> Data {
+    private func rawZip(_ members: [(String, Data)], symlinks: Set<String> = []) throws -> Data {
         let archive = try ZIPFoundation.Archive(data: Data(), accessMode: .create)
         for (name, data) in members {
-            try archive.addEntry(with: name, type: .file, uncompressedSize: Int64(data.count),
+            try archive.addEntry(with: name, type: symlinks.contains(name) ? .symlink : .file,
+                                 uncompressedSize: Int64(data.count),
                                  compressionMethod: .none, bufferSize: ZIPFoundation.defaultWriteChunkSize)
             { pos, size in
                 let s = Int(pos); let e = min(s + size, data.count)
@@ -438,6 +439,37 @@ final class StandardTDFTests: XCTestCase {
     func testReaderFallsBackTo0PayloadWhenURLEmpty() throws {
         let data = try rawZip([("manifest.json", manifestData(url: "")), ("0.payload", testPlaintext)])
         XCTAssertEqual(try TDFArchiveReader(data: data).payloadData(), testPlaintext)
+    }
+
+    func testLoaderRefusesPayloadOverMaxSize() throws {
+        let data = try rawZip([("manifest.json", manifestData(url: "0.payload")), ("0.payload", testPlaintext)])
+        XCTAssertThrowsError(try TDFLoader(maxPayloadSize: testPlaintext.count - 1).load(from: data)) { error in
+            XCTAssertEqual(error as? TDFArchiveError, .payloadTooLarge)
+        }
+        XCTAssertEqual(try TDFLoader(maxPayloadSize: testPlaintext.count).load(from: data).payload, testPlaintext)
+        XCTAssertEqual(try TDFLoader().load(from: data).payload, testPlaintext, "no cap by default")
+    }
+
+    /// ZIPFoundation reads a symlink entry's whole compressed size in one
+    /// allocation before any size check runs, so only regular files are read.
+    func testLoaderRefusesSymlinkPayloadEntry() throws {
+        let data = try rawZip(
+            [("manifest.json", manifestData(url: "0.payload")), ("0.payload", Data("target".utf8))],
+            symlinks: ["0.payload"],
+        )
+        XCTAssertThrowsError(try TDFLoader(maxPayloadSize: 1024).load(from: data)) { error in
+            XCTAssertEqual(error as? TDFArchiveError, .unsupportedEntryType("0.payload"))
+        }
+    }
+
+    func testReaderRefusesSymlinkManifestEntry() throws {
+        let data = try rawZip(
+            [("manifest.json", manifestData(url: "0.payload")), ("0.payload", testPlaintext)],
+            symlinks: ["manifest.json"],
+        )
+        XCTAssertThrowsError(try TDFArchiveReader(data: data).manifest()) { error in
+            XCTAssertEqual(error as? TDFArchiveError, .unsupportedEntryType("manifest.json"))
+        }
     }
 
     func testReaderErrorsWhenURLNamesMissingEntry() throws {
