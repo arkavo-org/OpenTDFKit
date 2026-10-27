@@ -159,110 +159,71 @@ final class KASBulkRewrapTests: XCTestCase {
         XCTAssertEqual(request.connectProtocolVersion, "1")
     }
 
-    // MARK: - Batching
+    // MARK: - Limits
 
-    /// The KAS evaluates a call's policies in one decision request capped at
-    /// 1,000 resources; a larger configured cap is clamped to it.
-    func testSplitsAtOneThousandPolicies() async throws {
+    /// The KAS evaluates a call's policies in one access decision capped at
+    /// 1,000 resources, and one call keeps the outcome all-or-nothing.
+    func testOneThousandPoliciesGoInOneRequest() async throws {
         let kas = FakeBulkKAS()
-        let manifests = (0 ..< 1001).map { makeManifest(dek: UInt8($0 % 256)) }
-        let outcomes = try await makeClient(kas).rewrapAndUnwrapTDFs(
-            manifests,
-            options: BulkRewrapOptions(maxPoliciesPerRequest: 5000),
-        )
+        let outcomes = try await makeClient(kas).rewrapAndUnwrapTDFs((0 ..< 1000).map { makeManifest(dek: UInt8($0 % 256)) })
 
         let perRequest = await kas.requests.map(\.policyIDs.count)
-        XCTAssertEqual(perRequest, [1000, 1])
-        XCTAssertEqual(outcomes.map(Self.describe), (0 ..< 1001).map { String(format: "permitted:%02x", $0 % 256) })
+        XCTAssertEqual(perRequest, [1000])
+        XCTAssertEqual(outcomes.map(Self.describe), (0 ..< 1000).map { String(format: "permitted:%02x", $0 % 256) })
     }
 
-    func testSplitsAtConfiguredPolicyCount() async throws {
+    /// Over 1,000 sendable TDFs is refused before anything is sent; the
+    /// caller splits the list.
+    func testMoreThanOneThousandPoliciesIsRefusedUnsent() async {
         let kas = FakeBulkKAS()
-        let outcomes = try await makeClient(kas).rewrapAndUnwrapTDFs(
-            (1 ... 5).map { makeManifest(dek: UInt8($0)) },
-            options: BulkRewrapOptions(maxPoliciesPerRequest: 2),
-        )
-
-        let perRequest = await kas.requests.map(\.policyIDs.count)
-        XCTAssertEqual(perRequest, [2, 2, 1])
-        XCTAssertEqual(outcomes.map(Self.describe), ["permitted:01", "permitted:02", "permitted:03", "permitted:04", "permitted:05"])
+        await assertThrows(.tooManyPolicies(1001)) {
+            _ = try await self.makeClient(kas).rewrapAndUnwrapTDFs((0 ..< 1001).map { self.makeManifest(dek: UInt8($0 % 256)) })
+        }
+        let requestCount = await kas.requests.count
+        XCTAssertEqual(requestCount, 0)
     }
 
-    /// Requests split by their measured encoded size, and no request sent
-    /// exceeds the limit.
-    func testSplitsByMeasuredBodySize() async throws {
+    /// Only TDFs that would be sent count toward the limit.
+    func testLocallyFailedTDFsDoNotCountTowardTheLimit() async throws {
+        let kas = FakeBulkKAS()
+        let manifests = (0 ..< 1000).map { makeManifest(dek: UInt8($0 % 256)) }
+            + [makeManifest(dek: 1, kasURLs: ["https://other.example.com/kas"])]
+        let outcomes = try await makeClient(kas).rewrapAndUnwrapTDFs(manifests)
+        XCTAssertEqual(outcomes.last.map(Self.describe), "failed:noKeyAccess")
+        let requestCount = await kas.requests.count
+        XCTAssertEqual(requestCount, 1)
+    }
+
+    /// A signed body over the limit is refused before anything is sent, and
+    /// the error reports its measured size.
+    func testBodyOverLimitIsRefusedUnsent() async throws {
         let kas = FakeBulkKAS()
         let limit = 8 * 1024
-        let manifests = (1 ... 12).map { makeManifest(dek: UInt8($0), padding: 1000) }
+        do {
+            _ = try await makeClient(kas).rewrapAndUnwrapTDFs(
+                (1 ... 12).map { makeManifest(dek: UInt8($0), padding: 1000) },
+                options: BulkRewrapOptions(maxRequestBodyBytes: limit),
+            )
+            XCTFail("expected requestTooLarge")
+        } catch let BulkRewrapError.requestTooLarge(bytes) {
+            XCTAssertGreaterThan(bytes, limit)
+        }
+        let requestCount = await kas.requests.count
+        XCTAssertEqual(requestCount, 0)
+    }
+
+    /// A body within the limit is sent once, and no larger than the limit.
+    func testBodyWithinLimitIsSentOnce() async throws {
+        let kas = FakeBulkKAS()
+        let limit = 64 * 1024
         let outcomes = try await makeClient(kas).rewrapAndUnwrapTDFs(
-            manifests,
+            (1 ... 12).map { makeManifest(dek: UInt8($0), padding: 1000) },
             options: BulkRewrapOptions(maxRequestBodyBytes: limit),
         )
-
         let sizes = await kas.requests.map(\.bodySize)
-        XCTAssertGreaterThan(sizes.count, 1, "twelve ~1 KB policies (~1.5 KB once signed) cannot fit in 8 KiB")
-        for size in sizes {
-            XCTAssertLessThanOrEqual(size, limit)
-        }
-        let sentPolicies = await kas.requests.flatMap(\.policyIDs)
-        XCTAssertEqual(sentPolicies.count, 12, "each policy is sent exactly once")
+        XCTAssertEqual(sizes.count, 1)
+        XCTAssertLessThanOrEqual(sizes[0], limit)
         XCTAssertEqual(outcomes.map(Self.describe), (1 ... 12).map { String(format: "permitted:%02x", $0) })
-    }
-
-    /// When the size estimate runs low, the measured body decides: the batch
-    /// halves until it fits, and every entry is still sent once, in order.
-    func testUndercountingEstimateHalvesToMeasuredFit() throws {
-        let entries = (0 ..< 8).map { index in
-            BulkEntry(
-                index: index,
-                request: KASRewrapClient.StandardPolicyRequest(
-                    keyAccessObjects: [], policy: KASRewrapClient.Policy(id: "policy-\(index)", body: "e30="), algorithm: nil,
-                ),
-                estimatedSize: 1,
-            )
-        }
-        let limit = 350
-        // 100 bytes of envelope plus 100 per entry: two entries fit, three do not.
-        let measure: (ArraySlice<BulkEntry>) -> Data = { Data(count: 100 + 100 * $0.count) }
-
-        var sent: [Int] = []
-        var start = 0
-        while start < entries.count {
-            let (end, body) = nextBulkBatch(entries, from: start, overhead: 100,
-                                            options: BulkRewrapOptions(maxRequestBodyBytes: limit), measure: measure)
-            let fitted = try XCTUnwrap(body, "entries \(start)..<\(end) fit once halved; none is too large alone")
-            XCTAssertLessThanOrEqual(fitted.count, limit)
-            sent += entries[start ..< end].map(\.index)
-            start = end
-        }
-        XCTAssertEqual(sent, Array(0 ..< 8))
-    }
-
-    /// An entry whose measured body alone exceeds the limit is reported, not sent.
-    func testEntryMeasuredOverLimitAloneHasNoBody() {
-        let entry = BulkEntry(
-            index: 0,
-            request: KASRewrapClient.StandardPolicyRequest(
-                keyAccessObjects: [], policy: KASRewrapClient.Policy(id: "policy-0", body: "e30="), algorithm: nil,
-            ),
-            estimatedSize: 1,
-        )
-        let (end, body) = nextBulkBatch([entry, entry], from: 0, overhead: 100,
-                                        options: BulkRewrapOptions(maxRequestBodyBytes: 350)) { _ in Data(count: 1000) }
-        XCTAssertEqual(end, 1)
-        XCTAssertNil(body)
-    }
-
-    /// An entry that cannot fit in any request under the limit fails alone.
-    func testEntryLargerThanLimitFailsAlone() async throws {
-        let kas = FakeBulkKAS()
-        let outcomes = try await makeClient(kas).rewrapAndUnwrapTDFs(
-            [makeManifest(dek: 1), makeManifest(dek: 2, padding: 8000), makeManifest(dek: 3)],
-            options: BulkRewrapOptions(maxRequestBodyBytes: 4 * 1024),
-        )
-        XCTAssertEqual(outcomes.map(Self.describe), ["permitted:01", "failed:requestTooLarge", "permitted:03"])
-        let sentPolicies = await kas.requests.flatMap(\.policyIDs)
-        XCTAssertEqual(sentPolicies.count, 2)
     }
 
     // MARK: - Whole-batch failures

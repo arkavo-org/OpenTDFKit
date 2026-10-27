@@ -22,8 +22,6 @@ public enum BulkRewrapFailure: String, Sendable, Equatable, CustomStringConverti
     case splitKey
     /// The manifest's policy or a wrapped key is not valid base64.
     case invalidManifest
-    /// This TDF alone encodes larger than `BulkRewrapOptions.maxRequestBodyBytes`.
-    case requestTooLarge
     /// The KAS returned no result for this TDF.
     case noResult
     /// The KAS answered with its generic "bad request": a policy binding or
@@ -41,7 +39,7 @@ public enum BulkRewrapFailure: String, Sendable, Equatable, CustomStringConverti
     }
 }
 
-/// Limits for splitting a bulk rewrap into Rewrap calls.
+/// Limits for the single Rewrap call a bulk rewrap makes.
 public struct BulkRewrapOptions: Sendable {
     /// The KAS evaluates one call's policies in a single access decision
     /// capped at 1,000 resources; going over fails every key access object.
@@ -49,20 +47,12 @@ public struct BulkRewrapOptions: Sendable {
     /// Below the KAS's 4 MiB default request limit, with headroom.
     public static let defaultMaxRequestBodyBytes = 3 * 1024 * 1024
 
-    /// Policies (TDFs) per Rewrap call, in `1 ... policyLimit`.
-    public let maxPoliciesPerRequest: Int
-    /// Largest encoded HTTP body per Rewrap call, in bytes. Lower it when a
-    /// front proxy limits request size more tightly than the KAS.
+    /// Largest signed HTTP body to send, in bytes. Lower it when a front
+    /// proxy limits request size more tightly than the KAS.
     public let maxRequestBodyBytes: Int
 
-    /// - Parameters:
-    ///   - maxPoliciesPerRequest: Clamped to `1 ... policyLimit`.
-    ///   - maxRequestBodyBytes: Measured on the signed body actually sent.
-    public init(
-        maxPoliciesPerRequest: Int = BulkRewrapOptions.policyLimit,
-        maxRequestBodyBytes: Int = BulkRewrapOptions.defaultMaxRequestBodyBytes,
-    ) {
-        self.maxPoliciesPerRequest = min(max(maxPoliciesPerRequest, 1), Self.policyLimit)
+    /// - Parameter maxRequestBodyBytes: Measured on the signed body that would be sent.
+    public init(maxRequestBodyBytes: Int = BulkRewrapOptions.defaultMaxRequestBodyBytes) {
         self.maxRequestBodyBytes = maxRequestBodyBytes
     }
 }
@@ -90,6 +80,13 @@ public enum BulkRewrapError: Error, Sendable, Equatable, CustomStringConvertible
     case malformedResponse
     /// The configured rewrap URL is not a valid URL.
     case invalidEndpoint
+    /// More TDFs to send than `BulkRewrapOptions.policyLimit`; nothing was
+    /// sent. Split the list and call once per part.
+    case tooManyPolicies(Int)
+    /// The signed request (its size in bytes) exceeds
+    /// `BulkRewrapOptions.maxRequestBodyBytes`; nothing was sent. Split the
+    /// list and call once per part.
+    case requestTooLarge(Int)
 
     public var description: String {
         switch self {
@@ -101,6 +98,8 @@ public enum BulkRewrapError: Error, Sendable, Equatable, CustomStringConvertible
         case .missingSessionKey: "Bulk rewrap: KAS response missing session public key"
         case .malformedResponse: "Bulk rewrap: unreadable or empty KAS response"
         case .invalidEndpoint: "Bulk rewrap: invalid rewrap URL"
+        case let .tooManyPolicies(count): "Bulk rewrap: \(count) TDFs exceed the \(BulkRewrapOptions.policyLimit)-policy limit"
+        case let .requestTooLarge(bytes): "Bulk rewrap: \(bytes)-byte request exceeds the size limit"
         }
     }
 
@@ -112,28 +111,30 @@ public enum BulkRewrapError: Error, Sendable, Equatable, CustomStringConvertible
 // MARK: - Bulk Rewrap
 
 public extension KASRewrapClient {
-    /// Rewraps many standard TDFs at this client's KAS and unwraps each
-    /// permitted DEK, using as few Rewrap calls as the limits allow.
+    /// Rewraps many standard TDFs at this client's KAS in one Rewrap call
+    /// and unwraps each permitted DEK.
     ///
     /// Each manifest is one policy request with its own id; its key access
     /// objects for this KAS are alternatives for one DEK (a split-key manifest
     /// fails with `.splitKey`). Manifests this KAS cannot answer fail locally
-    /// and are not sent. Requests split at `options.maxPoliciesPerRequest`
-    /// policies and at `options.maxRequestBodyBytes` of signed body.
+    /// and are not sent. The rest go in one request, so the outcome is
+    /// all-or-nothing: more than `BulkRewrapOptions.policyLimit` of them, or
+    /// a signed body over `options.maxRequestBodyBytes`, is refused before
+    /// anything is sent, and the caller splits the list.
     ///
     /// Results are matched by policy and key access object id, not position.
-    /// Each response's one session key is derived once and opens every result
-    /// in it. The client key exists only for the duration of the call.
+    /// The response's one session key is derived once and opens every result.
+    /// The client key exists only for the duration of the call.
     ///
     /// - Parameters:
     ///   - manifests: The TDFs to rewrap.
-    ///   - options: Batching limits.
+    ///   - options: Request size limit.
     /// - Returns: One outcome per manifest, in input order.
-    /// - Throws: `BulkRewrapError` when a call fails as a whole (HTTP error,
-    ///   access check unavailable, unreadable response), so the caller can
-    ///   retry rather than read it as denials; errors from the transport
-    ///   (including cancellation) propagate unchanged. Outcomes from earlier
-    ///   calls in the same bulk are discarded.
+    /// - Throws: `BulkRewrapError` when the request is over a limit, or when
+    ///   the call fails as a whole (HTTP error, access check unavailable,
+    ///   unreadable response), so the caller can retry rather than read it as
+    ///   denials; errors from the transport (including cancellation)
+    ///   propagate unchanged.
     func rewrapAndUnwrapTDFs(
         _ manifests: [TDFManifest],
         options: BulkRewrapOptions = BulkRewrapOptions(),
@@ -148,58 +149,20 @@ public extension KASRewrapClient {
         }
 
         if !entries.isEmpty {
+            guard entries.count <= BulkRewrapOptions.policyLimit else {
+                throw BulkRewrapError.tooManyPolicies(entries.count)
+            }
             let clientKey = P256.KeyAgreement.PrivateKey()
-            let signer = try BulkSigner(client: self, clientKey: clientKey)
-            let overhead = try signer.body(for: []).count
-            var start = 0
-            while start < entries.count {
-                let (end, body) = try nextBulkBatch(entries, from: start, overhead: overhead, options: options) {
-                    try signer.body(for: $0)
-                }
-                guard let body else {
-                    outcomes[entries[start].index] = .failed(.requestTooLarge)
-                    start = end
-                    continue
-                }
-
-                let batch = entries[start ..< end]
-                for (index, outcome) in try await sendBulkRewrap(body: body, batch: batch, clientKey: clientKey) {
-                    outcomes[index] = outcome
-                }
-                start = end
+            let body = try BulkSigner(client: self, clientKey: clientKey).body(for: entries)
+            guard body.count <= options.maxRequestBodyBytes else {
+                throw BulkRewrapError.requestTooLarge(body.count)
+            }
+            for (index, outcome) in try await sendBulkRewrap(body: body, batch: entries, clientKey: clientKey) {
+                outcomes[index] = outcome
             }
         }
         return outcomes.map { $0 ?? .failed(.noResult) }
     }
-}
-
-/// The next request from `entries[start...]`: entries are added while the
-/// estimated body fits, then the measured body is halved until it fits.
-/// - Returns: The end of the batch and its body, or a `nil` body (with
-///   `end == start + 1`) when `entries[start]` alone measures over the limit.
-func nextBulkBatch(
-    _ entries: [BulkEntry],
-    from start: Int,
-    overhead: Int,
-    options: BulkRewrapOptions,
-    measure: (ArraySlice<BulkEntry>) throws -> Data,
-) rethrows -> (end: Int, body: Data?) {
-    var end = start
-    var estimate = overhead
-    while end < entries.count, end - start < options.maxPoliciesPerRequest {
-        let next = estimate + entries[end].estimatedSize
-        if next > options.maxRequestBodyBytes, end > start {
-            break
-        }
-        estimate = next
-        end += 1
-    }
-    var body = try measure(entries[start ..< end])
-    while body.count > options.maxRequestBodyBytes, end - start > 1 {
-        end = start + (end - start) / 2
-        body = try measure(entries[start ..< end])
-    }
-    return body.count > options.maxRequestBodyBytes ? (start + 1, nil) : (end, body)
 }
 
 /// A manifest's policy request, or why it cannot be sent.
@@ -208,14 +171,11 @@ enum BulkEntryPreparation {
     case unsendable(BulkRewrapFailure)
 }
 
-/// One manifest's policy request, ready to batch.
+/// One manifest's policy request, ready to send.
 struct BulkEntry {
     /// Position in the caller's input.
     let index: Int
     let request: KASRewrapClient.StandardPolicyRequest
-    /// The request's estimated share of the signed body: JSON-escaped into the
-    /// JWT claims, then base64url-encoded.
-    let estimatedSize: Int
 
     var policyID: String {
         request.policy.id
@@ -302,24 +262,19 @@ extension KASRewrapClient {
             return .unsendable(.splitKey)
         }
         guard let request = try? standardPolicyRequest(
-                  manifest: manifest,
-                  keyAccessEntries: keyAccessEntries,
-                  policyID: "policy-\(index)",
-              ),
-              let json = try? bulkEncoder.encode(request)
-        else {
+            manifest: manifest,
+            keyAccessEntries: keyAccessEntries,
+            policyID: "policy-\(index)",
+        ) else {
             return .unsendable(.invalidManifest)
         }
-        // Quotes and backslashes gain an escape inside the JWT claims string;
-        // the claims are base64url-encoded (4 bytes per 3); one comma separates entries.
-        let escaped = json.count + json.count(where: { $0 == UInt8(ascii: "\"") || $0 == UInt8(ascii: "\\") || $0 == UInt8(ascii: "/") })
-        return .ready(BulkEntry(index: index, request: request, estimatedSize: (escaped + 1) * 4 / 3 + 1))
+        return .ready(BulkEntry(index: index, request: request))
     }
 
-    /// Sends one Rewrap call and maps its results to input positions.
+    /// Sends the Rewrap call and maps its results to input positions.
     private func sendBulkRewrap(
         body: Data,
-        batch: ArraySlice<BulkEntry>,
+        batch: [BulkEntry],
         clientKey: P256.KeyAgreement.PrivateKey,
     ) async throws -> [(Int, BulkRewrapOutcome)] {
         let request: URLRequest
