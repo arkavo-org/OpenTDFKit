@@ -153,25 +153,12 @@ public extension KASRewrapClient {
             let overhead = try signer.body(for: []).count
             var start = 0
             while start < entries.count {
-                // Fill by estimate, then measure the signed body and halve until it fits.
-                var end = start
-                var estimate = overhead
-                while end < entries.count, end - start < options.maxPoliciesPerRequest {
-                    let next = estimate + entries[end].estimatedSize
-                    if next > options.maxRequestBodyBytes, end > start {
-                        break
-                    }
-                    estimate = next
-                    end += 1
+                let (end, body) = try nextBulkBatch(entries, from: start, overhead: overhead, options: options) {
+                    try signer.body(for: $0)
                 }
-                var body = try signer.body(for: entries[start ..< end])
-                while body.count > options.maxRequestBodyBytes, end - start > 1 {
-                    end = start + (end - start) / 2
-                    body = try signer.body(for: entries[start ..< end])
-                }
-                if body.count > options.maxRequestBodyBytes {
+                guard let body else {
                     outcomes[entries[start].index] = .failed(.requestTooLarge)
-                    start += 1
+                    start = end
                     continue
                 }
 
@@ -184,6 +171,35 @@ public extension KASRewrapClient {
         }
         return outcomes.map { $0 ?? .failed(.noResult) }
     }
+}
+
+/// The next request from `entries[start...]`: entries are added while the
+/// estimated body fits, then the measured body is halved until it fits.
+/// - Returns: The end of the batch and its body, or a `nil` body (with
+///   `end == start + 1`) when `entries[start]` alone measures over the limit.
+func nextBulkBatch(
+    _ entries: [BulkEntry],
+    from start: Int,
+    overhead: Int,
+    options: BulkRewrapOptions,
+    measure: (ArraySlice<BulkEntry>) throws -> Data,
+) rethrows -> (end: Int, body: Data?) {
+    var end = start
+    var estimate = overhead
+    while end < entries.count, end - start < options.maxPoliciesPerRequest {
+        let next = estimate + entries[end].estimatedSize
+        if next > options.maxRequestBodyBytes, end > start {
+            break
+        }
+        estimate = next
+        end += 1
+    }
+    var body = try measure(entries[start ..< end])
+    while body.count > options.maxRequestBodyBytes, end - start > 1 {
+        end = start + (end - start) / 2
+        body = try measure(entries[start ..< end])
+    }
+    return body.count > options.maxRequestBodyBytes ? (start + 1, nil) : (end, body)
 }
 
 /// A manifest's policy request, or why it cannot be sent.

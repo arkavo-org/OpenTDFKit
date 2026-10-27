@@ -201,6 +201,50 @@ final class KASBulkRewrapTests: XCTestCase {
         XCTAssertEqual(outcomes.map(Self.describe), (1 ... 12).map { String(format: "permitted:%02x", $0) })
     }
 
+    /// When the size estimate runs low, the measured body decides: the batch
+    /// halves until it fits, and every entry is still sent once, in order.
+    func testUndercountingEstimateHalvesToMeasuredFit() throws {
+        let entries = (0 ..< 8).map { index in
+            BulkEntry(
+                index: index,
+                request: KASRewrapClient.StandardPolicyRequest(
+                    keyAccessObjects: [], policy: KASRewrapClient.Policy(id: "policy-\(index)", body: "e30="), algorithm: nil,
+                ),
+                estimatedSize: 1,
+            )
+        }
+        let limit = 350
+        // 100 bytes of envelope plus 100 per entry: two entries fit, three do not.
+        let measure: (ArraySlice<BulkEntry>) -> Data = { Data(count: 100 + 100 * $0.count) }
+
+        var sent: [Int] = []
+        var start = 0
+        while start < entries.count {
+            let (end, body) = nextBulkBatch(entries, from: start, overhead: 100,
+                                            options: BulkRewrapOptions(maxRequestBodyBytes: limit), measure: measure)
+            let fitted = try XCTUnwrap(body, "entries \(start)..<\(end) fit once halved; none is too large alone")
+            XCTAssertLessThanOrEqual(fitted.count, limit)
+            sent += entries[start ..< end].map(\.index)
+            start = end
+        }
+        XCTAssertEqual(sent, Array(0 ..< 8))
+    }
+
+    /// An entry whose measured body alone exceeds the limit is reported, not sent.
+    func testEntryMeasuredOverLimitAloneHasNoBody() {
+        let entry = BulkEntry(
+            index: 0,
+            request: KASRewrapClient.StandardPolicyRequest(
+                keyAccessObjects: [], policy: KASRewrapClient.Policy(id: "policy-0", body: "e30="), algorithm: nil,
+            ),
+            estimatedSize: 1,
+        )
+        let (end, body) = nextBulkBatch([entry, entry], from: 0, overhead: 100,
+                                        options: BulkRewrapOptions(maxRequestBodyBytes: 350)) { _ in Data(count: 1000) }
+        XCTAssertEqual(end, 1)
+        XCTAssertNil(body)
+    }
+
     /// An entry that cannot fit in any request under the limit fails alone.
     func testEntryLargerThanLimitFailsAlone() async throws {
         let kas = FakeBulkKAS()
