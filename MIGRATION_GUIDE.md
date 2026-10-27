@@ -2,6 +2,14 @@
 
 This guide covers breaking changes across all OpenTDFKit versions.
 
+## Unreleased - Bulk rewrap and payload cap
+
+**What changed:** `KASRewrapClient.rewrapAndUnwrapTDFs(_:options:)` rewraps many standard TDFs in as few Rewrap calls as possible. Every `KASRewrapClient` request now goes through a `KASRewrapTransport`; the existing `urlSession:` initializer wraps it in `URLSessionKASTransport`, so behaviour is unchanged. `TDFLoader(maxPayloadSize:)` bounds the payload read. The archive reader now accepts only regular-file manifest and payload entries; a symlink or directory entry throws `TDFArchiveError.unsupportedEntryType(String)`.
+
+### Migration Steps
+
+No migration is required. If you match on `TDFArchiveError` exhaustively, add cases for `.payloadTooLarge` and `.unsupportedEntryType`.
+
 ## Unreleased - Spec-compliant TDF container
 
 **What changed:** `TDFArchive` now writes the TDF manifest zip entry as `manifest.json` (per opentdf/spec) instead of `0.manifest.json`. Readers accept both names — `0.manifest.json` is recognized forever, so files written by older OpenTDFKit versions still load. The payload zip entry is now resolved from `manifest.payload.url` (falling back to `0.payload` when unset) instead of being assumed. New `TDFArchiveEntryNames` enum centralizes the entry-name constants (`manifest`, `legacyManifest`, `payload`). Two new `TDFArchiveError` cases surface payload-resolution failures: `.missingPayloadEntry(String)` when `payload.url` names an entry that isn't in the archive, and `.unsafePayloadURL(String)` when `payload.url` is an absolute path, contains a backslash, or has a `..` path segment.

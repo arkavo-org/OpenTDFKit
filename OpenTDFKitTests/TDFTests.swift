@@ -339,17 +339,42 @@ final class StandardTDFTests: XCTestCase {
         }
     }
 
-    private func rawZip(_ members: [(String, Data)]) throws -> Data {
+    private func rawZip(
+        _ members: [(String, Data)],
+        symlinks: Set<String> = [],
+        compression: ZIPFoundation.CompressionMethod = .none,
+    ) throws -> Data {
         let archive = try ZIPFoundation.Archive(data: Data(), accessMode: .create)
         for (name, data) in members {
-            try archive.addEntry(with: name, type: .file, uncompressedSize: Int64(data.count),
-                                 compressionMethod: .none, bufferSize: ZIPFoundation.defaultWriteChunkSize)
+            try archive.addEntry(with: name, type: symlinks.contains(name) ? .symlink : .file,
+                                 uncompressedSize: Int64(data.count),
+                                 compressionMethod: compression, bufferSize: ZIPFoundation.defaultWriteChunkSize)
             { pos, size in
                 let s = Int(pos); let e = min(s + size, data.count)
                 return s < data.count ? data.subdata(in: s ..< e) : Data()
             }
         }
         return archive.data!
+    }
+
+    /// Rewrites the uncompressed size recorded for `name` in both its local
+    /// header (offset 22) and its central directory header (offset 24).
+    private func forgingUncompressedSize(of name: String, to size: UInt32, in zip: Data) -> Data {
+        var bytes = [UInt8](zip)
+        let nameBytes = [UInt8](name.utf8)
+        let headers: [(signature: [UInt8], sizeOffset: Int, nameOffset: Int)] = [
+            ([0x50, 0x4B, 0x03, 0x04], 22, 30),
+            ([0x50, 0x4B, 0x01, 0x02], 24, 46),
+        ]
+        for header in headers {
+            for i in 0 ..< bytes.count - header.nameOffset - nameBytes.count
+                where Array(bytes[i ..< i + 4]) == header.signature
+                && Array(bytes[i + header.nameOffset ..< i + header.nameOffset + nameBytes.count]) == nameBytes
+            {
+                withUnsafeBytes(of: size.littleEndian) { bytes.replaceSubrange(i + header.sizeOffset ..< i + header.sizeOffset + 4, with: $0) }
+            }
+        }
+        return Data(bytes)
     }
 
     private func entryNames(_ data: Data) throws -> [String] {
@@ -438,6 +463,53 @@ final class StandardTDFTests: XCTestCase {
     func testReaderFallsBackTo0PayloadWhenURLEmpty() throws {
         let data = try rawZip([("manifest.json", manifestData(url: "")), ("0.payload", testPlaintext)])
         XCTAssertEqual(try TDFArchiveReader(data: data).payloadData(), testPlaintext)
+    }
+
+    func testLoaderRefusesPayloadOverMaxSize() throws {
+        let data = try rawZip([("manifest.json", manifestData(url: "0.payload")), ("0.payload", testPlaintext)])
+        XCTAssertThrowsError(try TDFLoader(maxPayloadSize: testPlaintext.count - 1).load(from: data)) { error in
+            XCTAssertEqual(error as? TDFArchiveError, .payloadTooLarge)
+        }
+        XCTAssertEqual(try TDFLoader(maxPayloadSize: testPlaintext.count).load(from: data).payload, testPlaintext)
+        XCTAssertEqual(try TDFLoader().load(from: data).payload, testPlaintext, "no cap by default")
+    }
+
+    /// A ZIP header can understate the payload size; the cap still holds
+    /// while a deflated payload is extracted.
+    func testLoaderCapHoldsWhenHeaderUnderstatesPayloadSize() throws {
+        let payload = Data(repeating: 0x41, count: 64 * 1024)
+        let honest = try rawZip(
+            [("manifest.json", manifestData(url: "0.payload")), ("0.payload", payload)],
+            compression: .deflate,
+        )
+        let forged = forgingUncompressedSize(of: "0.payload", to: 16, in: honest)
+        XCTAssertEqual(try TDFArchiveReader(data: forged).payloadSize(), 16, "fixture must understate the size")
+
+        XCTAssertThrowsError(try TDFLoader(maxPayloadSize: 1024).load(from: forged)) { error in
+            XCTAssertEqual(error as? TDFArchiveError, .payloadTooLarge)
+        }
+    }
+
+    /// ZIPFoundation reads a symlink entry's whole compressed size in one
+    /// allocation before any size check runs, so only regular files are read.
+    func testLoaderRefusesSymlinkPayloadEntry() throws {
+        let data = try rawZip(
+            [("manifest.json", manifestData(url: "0.payload")), ("0.payload", Data("target".utf8))],
+            symlinks: ["0.payload"],
+        )
+        XCTAssertThrowsError(try TDFLoader(maxPayloadSize: 1024).load(from: data)) { error in
+            XCTAssertEqual(error as? TDFArchiveError, .unsupportedEntryType("0.payload"))
+        }
+    }
+
+    func testReaderRefusesSymlinkManifestEntry() throws {
+        let data = try rawZip(
+            [("manifest.json", manifestData(url: "0.payload")), ("0.payload", testPlaintext)],
+            symlinks: ["manifest.json"],
+        )
+        XCTAssertThrowsError(try TDFArchiveReader(data: data).manifest()) { error in
+            XCTAssertEqual(error as? TDFArchiveError, .unsupportedEntryType("manifest.json"))
+        }
     }
 
     func testReaderErrorsWhenURLNamesMissingEntry() throws {
