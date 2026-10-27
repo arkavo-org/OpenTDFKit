@@ -188,8 +188,8 @@ public struct TDFEncryptor {
             payload: payloadData,
         )
 
-        let archiveData = try container.serializedData()
-        try archiveData.write(to: outputURL)
+        try TDFArchiveWriter(compressionMethod: container.compression)
+            .buildArchiveToFile(manifest: container.manifest, payload: container.payload, outputURL: outputURL)
 
         return TDFEncryptionResult(
             container: container,
@@ -300,8 +300,8 @@ public struct TDFEncryptor {
             payload: payloadData,
         )
 
-        let archiveData = try container.serializedData()
-        try archiveData.write(to: outputURL)
+        try TDFArchiveWriter(compressionMethod: container.compression)
+            .buildArchiveToFile(manifest: container.manifest, payload: container.payload, outputURL: outputURL)
 
         return TDFEncryptionResult(
             container: container,

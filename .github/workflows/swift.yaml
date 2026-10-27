@@ -144,6 +144,17 @@ jobs:
           fail_ci_if_error: false
           verbose: true
 
+      - name: Run memory benchmarks, one process each
+        # Measured alone: in a shared process, memory earlier tests freed
+        # absorbs the allocations being measured. Runs after the coverage
+        # upload because each run rewrites the coverage data.
+        env:
+          OPENTDFKIT_MEMORY_BENCHMARK: "1"
+        run: |
+          for test in testMemoryUsageWith2MBChunk testMemoryUsageWith25MBChunk; do
+            swift test --enable-code-coverage --filter "StreamingBenchmarkTests/$test"
+          done
+
   benchmark:
     runs-on: macos-latest
     permissions:

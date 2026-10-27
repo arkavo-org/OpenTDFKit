@@ -24,8 +24,10 @@ public enum StreamingTDFCrypto {
         encryptedPayload.append(Data(nonce))
 
         var totalPlaintextRead: Int64 = 0
+        // Reserve the whole input: a large `Data` grown by `append` keeps its
+        // old pages after it is freed, leaking about one input size per call.
         var plaintextAccumulator = Data()
-        plaintextAccumulator.reserveCapacity(min(Int(totalSize), chunkSize * 2))
+        plaintextAccumulator.reserveCapacity(Int(totalSize))
         var shouldBreak = false
 
         while !shouldBreak {
@@ -218,8 +220,10 @@ public enum StreamingTDFCrypto {
         try outputHandle.write(contentsOf: Data(nonce))
 
         var totalPlaintextRead: Int64 = 0
+        // Reserve the whole input: a large `Data` grown by `append` keeps its
+        // old pages after it is freed, leaking about one input size per call.
         var plaintextAccumulator = Data()
-        plaintextAccumulator.reserveCapacity(min(Int(totalSize), chunkSize * 2))
+        plaintextAccumulator.reserveCapacity(Int(totalSize))
         var shouldBreak = false
 
         while !shouldBreak {
