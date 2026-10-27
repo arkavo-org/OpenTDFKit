@@ -109,6 +109,14 @@ final class KASBulkRewrapTests: XCTestCase {
         XCTAssertEqual(outcomes.map(Self.describe), ["failed:unwrapFailed", "permitted:02"])
     }
 
+    /// A possible tamper on one KAO is not hidden by a denial on another.
+    func testTamperOutranksDenialOnOneTDF() async throws {
+        let outcomes = try await makeClient(FakeBulkKAS()).rewrapAndUnwrapTDFs([
+            makeManifest(dek: 1, mode: "tamperThenDeny", sids: ["s", "s"]),
+        ])
+        XCTAssertEqual(outcomes.map(Self.describe), ["failed:tamperSuspected"])
+    }
+
     /// Several KAOs for one split at this KAS are alternatives for one DEK.
     func testAlternativeKAOsInOneSplitYieldOneKey() async throws {
         let outcomes = try await makeClient(FakeBulkKAS()).rewrapAndUnwrapTDFs([
@@ -437,6 +445,7 @@ struct CapturedRewrap: Sendable {
 /// session KEK (ECDH → HKDF-SHA256 with salt `SHA256("TDF")`, empty info →
 /// AES-256-GCM `nonce || ct || tag`), `deny` fails with forbidden, `tamper`
 /// with the generic bad request, `omit` returns no entry for the policy,
+/// `tamperThenDeny` fails `kao-0` as tamper and the rest as forbidden,
 /// `corrupt` permits with a ciphertext that will not open, and `foreign`
 /// adds a permit for a KAO id the client never sent.
 /// `batchError` fails every KAO the same way, as the KAS's `failAllKaos` does.
@@ -503,6 +512,9 @@ actor FakeBulkKAS: KASRewrapTransport {
                     return ["keyAccessObjectId": kaoID, "status": "fail", "error": Self.forbidden]
                 case "tamper":
                     return ["keyAccessObjectId": kaoID, "status": "fail", "error": Self.tamper]
+                case "tamperThenDeny":
+                    let error = kaoID == "kao-0" ? Self.tamper : Self.forbidden
+                    return ["keyAccessObjectId": kaoID, "status": "fail", "error": error]
                 default:
                     let object = try XCTUnwrap(kao["keyAccessObject"] as? [String: Any])
                     let dek = try XCTUnwrap(Data(base64Encoded: XCTUnwrap(object["wrappedKey"] as? String)))
