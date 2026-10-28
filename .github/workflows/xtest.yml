@@ -1,6 +1,6 @@
 # Community cross-test: OpenTDFKit (this repo) ↔ go peer via opentdf-tests.
 #
-# Pulls arkavo-org/opentdf-tests (default: main branch tip).
+# Pulls arkavo-org/opentdf-tests (pinned until the Swift format fix lands).
 # Runs native macOS platform deps (Postgres + Keycloak + platform) and pytest
 # for swift × go Base TDF only.
 #
@@ -34,7 +34,8 @@ on:
       tests-ref:
         required: false
         type: string
-        default: latest
+        # TODO: restore latest once arkavo-org/opentdf-tests#15 is merged.
+        default: b2def7ed69eea5443815203a98af7fa40feb7847
         description: >-
           arkavo-org/opentdf-tests ref: 'latest' (tracks main
           branch tip), branch, tag, or SHA.
@@ -83,7 +84,8 @@ jobs:
       fork-ref: ${{ steps.resolve.outputs.fork-ref }}
       fork-channel: ${{ steps.resolve.outputs.fork-channel }}
     env:
-      TESTS_REF_IN: ${{ inputs.tests-ref || 'latest' }}
+      # Swift CLI uses tdf; pin the SDK-aware harness dispatch from opentdf-tests#15.
+      TESTS_REF_IN: ${{ inputs.tests-ref || 'b2def7ed69eea5443815203a98af7fa40feb7847' }}
       # Pinned until a service/* release includes opentdf/platform#4081:
       # OpenTDFKit writes spec-form policy bindings, which released KAS
       # versions reject (arkavo-org/OpenTDFKit#56).
