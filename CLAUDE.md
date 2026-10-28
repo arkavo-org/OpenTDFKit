@@ -125,7 +125,6 @@ swift build -c release --product OpenTDFKitCLI
 .build/release/OpenTDFKitCLI supports nano          # exit 0 (supported)
 .build/release/OpenTDFKitCLI supports nano_ecdsa    # exit 0 (supported)
 .build/release/OpenTDFKitCLI supports tdf           # exit 0 (supported)
-.build/release/OpenTDFKitCLI supports ztdf          # exit 0 (supported)
 ```
 
 ### Environment Configuration

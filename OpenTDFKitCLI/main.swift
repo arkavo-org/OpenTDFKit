@@ -26,10 +26,6 @@ enum CLIDataFormat: String {
         if normalized == "tdf-cbor" || normalized == "tdfcbor" {
             return .cbor
         }
-        // Legacy wire name used by some xtest shims for Base TDF ZIP containers.
-        if normalized == "ztdf" {
-            return .tdf
-        }
         guard let format = CLIDataFormat(rawValue: normalized) else {
             throw CLIError.unsupportedFormat(rawValue)
         }
@@ -749,9 +745,8 @@ struct OpenTDFKitCLI {
         switch feature {
         case "nano", "nano_ecdsa", "nano_collection":
             return 0
-        case "tdf", "ztdf":
+        case "tdf":
             // Base TDF ZIP: OAuth + RSA wrap encrypt + ephemeral rewrap decrypt.
-            // "ztdf" remains accepted as a legacy wire alias only (not NATO ZTDF).
             return 0
         case "json", "tdf-json", "tdfjson", "cbor", "tdf-cbor", "tdfcbor":
             return 0
@@ -763,7 +758,7 @@ struct OpenTDFKitCLI {
             return 0
         case "connectrpc":
             return 0
-        case "tdf-ecwrap", "ztdf-ecwrap", "assertions", "assertion_verification",
+        case "tdf-ecwrap", "assertions", "assertion_verification",
              "attribute_traversal", "audit_logging", "autoconfigure",
              "better-messages-2024", "bulk_rewrap", "dpop", "dpop_nonce_challenge",
              "ecwrap", "hexaflexible", "kasallowlist", "key_management",
