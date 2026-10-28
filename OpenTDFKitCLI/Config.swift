@@ -105,22 +105,18 @@ enum ConfigError: Error, CustomStringConvertible {
     }
 }
 
-/// TDF format types supported by xtest (Base / standard TDF ZIP, not NATO ZTDF).
+/// OpenTDF format types recognized by xtest.
 enum TDFFormat: String {
     case nano
     case tdf
-    /// Legacy wire name used by some xtest shims for Base TDF ZIP — treated as `tdf`.
-    case tdfLegacyWire = "ztdf"
     case tdfECWrap = "tdf-ecwrap"
-    /// Legacy alias for `tdf-ecwrap`.
-    case tdfECWrapLegacy = "ztdf-ecwrap"
     case nanoWithECDSA = "nano-with-ecdsa"
 
     var isNano: Bool {
         switch self {
         case .nano, .nanoWithECDSA:
             true
-        case .tdf, .tdfLegacyWire, .tdfECWrap, .tdfECWrapLegacy:
+        case .tdf, .tdfECWrap:
             false
         }
     }
@@ -130,15 +126,6 @@ enum TDFFormat: String {
     }
 
     var useECWrap: Bool {
-        self == .tdfECWrap || self == .tdfECWrapLegacy
-    }
-
-    /// Canonical format for CLI dispatch (legacy wire names collapse to Base TDF).
-    var canonical: TDFFormat {
-        switch self {
-        case .tdfLegacyWire: .tdf
-        case .tdfECWrapLegacy: .tdfECWrap
-        default: self
-        }
+        self == .tdfECWrap
     }
 }

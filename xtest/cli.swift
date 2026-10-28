@@ -82,10 +82,7 @@ enum Command {
     enum TDFFormat: String {
         case nano
         case tdf
-        /// Legacy wire name for Base TDF ZIP (accepted as synonym for `tdf`).
-        case tdfLegacy = "ztdf"
         case tdfECWrap = "tdf-ecwrap"
-        case tdfECWrapLegacy = "ztdf-ecwrap"
         case nanoWithECDSA = "nano-with-ecdsa"
     }
 }
@@ -108,7 +105,10 @@ func main() throws {
             print("Usage: cli.sh encrypt <plaintext> <ciphertext> <format>")
             exit(1)
         }
-        let format = Command.TDFFormat(rawValue: args[4]) ?? .nano
+        guard let format = Command.TDFFormat(rawValue: args[4]) else {
+            print("Unsupported format: \(args[4])")
+            exit(1)
+        }
         try handleEncrypt(plaintext: args[2], ciphertext: args[3], format: format)
 
     case "decrypt":
@@ -116,7 +116,10 @@ func main() throws {
             print("Usage: cli.sh decrypt <ciphertext> <recovered> <format>")
             exit(1)
         }
-        let format = Command.TDFFormat(rawValue: args[4]) ?? .nano
+        guard let format = Command.TDFFormat(rawValue: args[4]) else {
+            print("Unsupported format: \(args[4])")
+            exit(1)
+        }
         try handleDecrypt(ciphertext: args[2], recovered: args[3], format: format)
 
     case "supports":
@@ -173,7 +176,7 @@ func handleEncrypt(plaintext: String, ciphertext: String, format: Command.TDFFor
 
         encryptedData = try nanoTDF.serialize()
 
-    case .tdf, .tdfLegacy, .tdfECWrap, .tdfECWrapLegacy:
+    case .tdf, .tdfECWrap:
         // Prefer OpenTDFKitCLI for Base TDF; this stub is nano-only.
         print("Base TDF format: use OpenTDFKitCLI (not this stub)")
         exit(1)
@@ -206,7 +209,7 @@ func handleDecrypt(ciphertext: String, recovered: String, format: Command.TDFFor
         // For testing, return a placeholder
         decryptedData = "Decryption requires KAS integration".data(using: .utf8)!
 
-    case .tdf, .tdfLegacy, .tdfECWrap, .tdfECWrapLegacy:
+    case .tdf, .tdfECWrap:
         print("Base TDF format: use OpenTDFKitCLI (not this stub)")
         exit(1)
     }
