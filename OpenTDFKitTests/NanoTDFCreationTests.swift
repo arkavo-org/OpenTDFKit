@@ -38,4 +38,13 @@ class NanoTDFCreationTests: XCTestCase {
         XCTAssertEqual(snanoTDF.toData(), serializedData, "Round-tripped NanoTDF should equal original")
         XCTAssertEqual(payload.length, 43)
     }
+
+    func testPayloadLengthValidationEnforcesUInt24Limit() throws {
+        try NanoTDF.validatePayloadLength(0xFFFFFF)
+        XCTAssertThrowsError(try NanoTDF.validatePayloadLength(0x1000000)) { error in
+            guard case NanoTDFError.payloadTooLarge(0x1000000) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
 }

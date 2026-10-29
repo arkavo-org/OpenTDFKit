@@ -252,7 +252,7 @@ final class NanoTDFCollectionTests: XCTestCase {
         let plaintext = Data([0x01, 0x02, 0x03, 0x04])
         let item = try await collection.encryptItem(plaintext: plaintext)
 
-        let serialized = await collection.serialize(item: item)
+        let serialized = try await collection.serialize(item: item)
 
         // Container framing: 3-byte IV + 3-byte length + ciphertext + tag
         let expectedLength = 3 + 3 + item.ciphertext.count + item.tag.count
@@ -275,11 +275,30 @@ final class NanoTDFCollectionTests: XCTestCase {
         let plaintext = Data([0x01, 0x02, 0x03, 0x04])
         let item = try await collection.encryptItem(plaintext: plaintext)
 
-        let serialized = await collection.serialize(item: item)
+        let serialized = try await collection.serialize(item: item)
 
         // Self-describing: 3-byte IV + 4-byte length + ciphertext + tag
         let expectedLength = 3 + 4 + item.ciphertext.count + item.tag.count
         XCTAssertEqual(serialized.count, expectedLength)
+    }
+
+    func testContainerFramingRejectsOversizedItem() async throws {
+        let policyLocator = ResourceLocator(protocolEnum: .https, body: "kas.example.com/policy")!
+        let collection = try await NanoTDFCollectionBuilder()
+            .kasMetadata(kasMetadata)
+            .policy(.remote(policyLocator))
+            .wireFormat(.containerFraming)
+            .build()
+        let item = CollectionItem(
+            ivCounter: 1,
+            ciphertextWithTag: Data(count: 0x1000000),
+            tagSize: 16,
+        )
+
+        do {
+            _ = try await collection.serialize(item: item)
+            XCTFail("Expected oversized frame to be rejected")
+        } catch NanoTDFCollectionError.frameTooLarge(0x1000000) {}
     }
 
     func testContainerFramingParseRoundtrip() async throws {
@@ -294,7 +313,7 @@ final class NanoTDFCollectionTests: XCTestCase {
         let item = try await collection.encryptItem(plaintext: plaintext)
 
         // Serialize
-        let serialized = await collection.serialize(item: item)
+        let serialized = try await collection.serialize(item: item)
 
         // Parse
         let parsed = NanoTDFCollectionParser.parseContainerFramed(from: serialized, tagSize: 16)
@@ -324,7 +343,7 @@ final class NanoTDFCollectionTests: XCTestCase {
         let item = try await collection.encryptItem(plaintext: plaintext)
 
         // Serialize
-        let serialized = await collection.serialize(item: item)
+        let serialized = try await collection.serialize(item: item)
 
         // Parse
         let parsed = NanoTDFCollectionParser.parseSelfDescribing(from: serialized, tagSize: 16)
@@ -385,6 +404,34 @@ final class NanoTDFCollectionTests: XCTestCase {
         XCTAssertNil(result)
     }
 
+    func testParseRejectsContentShorterThanTag() {
+        let containerFrame = Data([0, 0, 1, 0, 0, 1, 0])
+        let selfDescribingFrame = Data([0, 0, 1, 0, 0, 0, 1, 0])
+
+        XCTAssertNil(NanoTDFCollectionParser.parseContainerFramed(from: containerFrame))
+        XCTAssertNil(NanoTDFCollectionParser.parseSelfDescribing(from: selfDescribingFrame))
+    }
+
+    func testParseRejectsInvalidOffsetsAndTagSizes() {
+        let frame = Data([0, 0, 1, 0, 0, 16] + Array(repeating: 0, count: 16))
+
+        XCTAssertNil(NanoTDFCollectionParser.parseContainerFramed(from: frame, at: -1))
+        XCTAssertNil(NanoTDFCollectionParser.parseContainerFramed(from: frame, tagSize: 0))
+        XCTAssertNil(NanoTDFCollectionParser.parseContainerFramed(from: frame, tagSize: -1))
+        XCTAssertThrowsError(try NanoTDFCollectionParser.parseContainerFramedOrThrow(from: frame, at: -1))
+    }
+
+    func testParseContainerFramedFromDataSlice() {
+        let frame = Data([0, 0, 1, 0, 0, 16] + Array(repeating: 0, count: 16))
+        let sliced = Data([0xFF, 0xFF] + frame).dropFirst(2)
+
+        let parsed = NanoTDFCollectionParser.parseContainerFramed(from: sliced)
+
+        XCTAssertEqual(parsed?.item.ivCounter, 1)
+        XCTAssertEqual(parsed?.item.ciphertextWithTag.count, 16)
+        XCTAssertEqual(parsed?.bytesRead, frame.count)
+    }
+
     // MARK: - Configuration Tests
 
     func testCipherTagSize() {
@@ -427,7 +474,7 @@ final class NanoTDFCollectionTests: XCTestCase {
         var serializedItems = Data()
         for plaintext in plaintexts {
             let item = try await collection.encryptItem(plaintext: plaintext)
-            await serializedItems.append(collection.serialize(item: item))
+            try await serializedItems.append(collection.serialize(item: item))
         }
 
         // Create file
@@ -467,7 +514,7 @@ final class NanoTDFCollectionTests: XCTestCase {
 
         for plaintext in testPlaintexts {
             let item = try await collection.encryptItem(plaintext: plaintext)
-            let serialized = await collection.serialize(item: item)
+            let serialized = try await collection.serialize(item: item)
             serializedFrames.append(serialized)
         }
 
@@ -509,7 +556,7 @@ final class NanoTDFCollectionTests: XCTestCase {
         let item = try await collection.encryptItem(plaintext: plaintext)
 
         // Serialize to wire format
-        let serialized = await collection.serialize(item: item)
+        let serialized = try await collection.serialize(item: item)
 
         // Manually parse the wire format (simulating subscriber parsing)
         // Format: [3-byte IV][3-byte length][ciphertext+tag]

@@ -285,30 +285,42 @@ final class NanoTDFTests: XCTestCase {
     }
 
     func testCreateAddVerifySignature() async throws {
-        let locator = ResourceLocator(protocolEnum: .http, body: "localhost:8080")
-        XCTAssertNotNil(locator)
-        var nanoTDF = initializeSmallNanoTDF(kasResourceLocator: locator!)
-        // Generate an ECDSA private key
+        let locator = try XCTUnwrap(ResourceLocator(protocolEnum: .http, body: "localhost:8080"))
+        let template = initializeSmallNanoTDF(kasResourceLocator: locator).header
+        let policy = Policy(type: .remote, body: nil, remote: locator, binding: Data(count: 8))
+        let header = Header(
+            payloadKeyAccess: template.payloadKeyAccess,
+            policyBindingConfig: template.policyBindingConfig,
+            payloadSignatureConfig: template.payloadSignatureConfig,
+            policy: policy,
+            ephemeralPublicKey: Data(count: 33),
+        )
+        let payload = Payload(
+            length: 20,
+            iv: Data([0x07, 0x08, 0x09]),
+            ciphertext: Data([0x00]),
+            mac: Data(count: 16),
+        )
+        var nanoTDF = NanoTDF(header: header, payload: payload)
         let privateKey = P256.Signing.PrivateKey()
 
-        // Add the signature to the NanoTDF
         try await addSignatureToNanoTDF(nanoTDF: &nanoTDF, privateKey: privateKey, config: nanoTDF.header.payloadSignatureConfig)
-        XCTAssertEqual(64, nanoTDF.signature?.signature.count)
-//        // Serialize the NanoTDF
-//        let serializedData = nanoTDF.toData()
-//
-//        // Parse the NanoTDF
-//        let parser = BinaryParser(data: serializedData)
-//        let parsedHeader = try parser.parseHeader()
-//        _ = try parser.parsePayload(config: parsedHeader.payloadSignatureConfig)
-//        let signature = try parser.parseSignature(config: parsedHeader.payloadSignatureConfig)
-//
-//        // Verify the parsed NanoTDF
-//        XCTAssertEqual(parsedHeader.payloadSignatureConfig.signed, true)
-//        XCTAssertEqual(parsedHeader.payloadSignatureConfig.signatureCurve, .secp256r1)
-//        XCTAssertEqual(parsedHeader.payloadSignatureConfig.payloadCipher, .aes256GCM128)
-//        XCTAssertEqual(signature?.publicKey, privateKey.publicKey.rawRepresentation)
-//        XCTAssertEqual(signature?.signature, nanoTDF.signature?.signature)
+
+        let signature = try XCTUnwrap(nanoTDF.signature)
+        XCTAssertEqual(64, signature.signature.count)
+        let publicKey = try P256.Signing.PublicKey(compressedRepresentation: signature.publicKey)
+        let ecdsaSignature = try P256.Signing.ECDSASignature(rawRepresentation: signature.signature)
+        let message = nanoTDF.header.toData() + nanoTDF.payload.toData()
+        XCTAssertTrue(publicKey.isValidSignature(ecdsaSignature, for: message))
+
+        let parser = BinaryParser(data: nanoTDF.toData())
+        let parsedHeader = try parser.parseHeader()
+        let parsedPayload = try parser.parsePayload(config: parsedHeader.payloadSignatureConfig)
+        let parsedSignature = try XCTUnwrap(parser.parseSignature(config: parsedHeader.payloadSignatureConfig))
+        let parsedPublicKey = try P256.Signing.PublicKey(compressedRepresentation: parsedSignature.publicKey)
+        let parsedECDSASignature = try P256.Signing.ECDSASignature(rawRepresentation: parsedSignature.signature)
+        let parsedMessage = parsedHeader.toData() + parsedPayload.toData()
+        XCTAssertTrue(parsedPublicKey.isValidSignature(parsedECDSASignature, for: parsedMessage))
     }
 
     func testPerformanceExample() {

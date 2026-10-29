@@ -212,10 +212,58 @@ public struct TDFArchiveWriter {
     /// existing file is replaced only once the new archive is complete.
     public func buildArchiveToFile(manifest: TDFManifest, payload: Data, outputURL: URL) throws {
         let manifestData = try encodedManifest(manifest)
+        try writeAtomically(outputURL: outputURL) { temporaryURL in
+            try writeArchive(manifest: manifest, manifestData: manifestData, payload: payload, to: temporaryURL)
+        }
+    }
+
+    /// Build an archive from a payload file using bounded reads and atomic output replacement.
+    public func buildArchiveToFile(manifest: TDFManifest, payloadURL: URL, outputURL: URL) throws {
+        let manifestData = try encodedManifest(manifest)
+        let payloadName = try TDFArchiveEntryNames.payloadEntry(for: manifest)
+        let input = try FileHandle(forReadingFrom: payloadURL)
+        defer { try? input.close() }
+        let payloadSize = try input.seekToEnd()
+        guard payloadSize <= UInt64(Int64.max) else { throw TDFArchiveError.creationFailed }
+
+        try writeAtomically(outputURL: outputURL) { temporaryURL in
+            let archive: ZIPFoundation.Archive
+            do {
+                archive = try ZIPFoundation.Archive(url: temporaryURL, accessMode: .create)
+            } catch {
+                throw TDFArchiveError.creationFailed
+            }
+            try addEntry(named: TDFArchiveEntryNames.manifest, data: manifestData, to: archive)
+            try archive.addEntry(
+                with: payloadName,
+                type: .file,
+                uncompressedSize: Int64(payloadSize),
+                compressionMethod: compressionMethod,
+                bufferSize: ZIPFoundation.defaultWriteChunkSize,
+                provider: { position, size in
+                    guard position >= 0, size > 0 else { return Data() }
+                    let offset = UInt64(position)
+                    guard offset < payloadSize else { return Data() }
+                    let readSize = min(UInt64(size), payloadSize - offset)
+                    try input.seek(toOffset: offset)
+                    var chunk = Data()
+                    chunk.reserveCapacity(Int(readSize))
+                    while chunk.count < Int(readSize) {
+                        let part = try input.read(upToCount: Int(readSize) - chunk.count) ?? Data()
+                        guard !part.isEmpty else { throw TDFArchiveError.creationFailed }
+                        chunk.append(part)
+                    }
+                    return chunk
+                },
+            )
+        }
+    }
+
+    private func writeAtomically(outputURL: URL, write: (URL) throws -> Void) throws {
         let temporaryURL = outputURL.deletingLastPathComponent()
             .appendingPathComponent(".\(outputURL.lastPathComponent).\(UUID().uuidString).partial")
         do {
-            try writeArchive(manifest: manifest, manifestData: manifestData, payload: payload, to: temporaryURL)
+            try write(temporaryURL)
             if FileManager.default.fileExists(atPath: outputURL.path) {
                 _ = try FileManager.default.replaceItemAt(outputURL, withItemAt: temporaryURL)
             } else {
@@ -225,12 +273,6 @@ public struct TDFArchiveWriter {
             try? FileManager.default.removeItem(at: temporaryURL)
             throw error
         }
-    }
-
-    /// Build archive directly to file from payload file, avoiding double memory load
-    public func buildArchiveToFile(manifest: TDFManifest, payloadURL: URL, outputURL: URL) throws {
-        let archiveData = try buildArchive(manifest: manifest, payloadURL: payloadURL)
-        try archiveData.write(to: outputURL)
     }
 
     private func encodedManifest(_ manifest: TDFManifest) throws -> Data {
@@ -264,12 +306,11 @@ public struct TDFArchiveWriter {
             compressionMethod: compressionMethod,
             bufferSize: ZIPFoundation.defaultWriteChunkSize,
             provider: { position, size -> Data in
-                let start = Int(position)
-                guard start < data.count, size > 0 else {
-                    return Data()
-                }
-                let upper = min(start + size, data.count)
-                return data.subdata(in: start ..< upper)
+                guard position >= 0, size > 0, position < data.count else { return Data() }
+                let offset = Int(position)
+                let readSize = min(size, data.count - offset)
+                let start = data.startIndex + offset
+                return data[start ..< start + readSize]
             },
         )
     }
