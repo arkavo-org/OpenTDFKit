@@ -31,13 +31,16 @@ public enum StreamingTDFCrypto {
         plaintextAccumulator.reserveCapacity(Int(totalSize))
 
         while totalPlaintextRead < Int64(totalSize) {
-            let remaining = Int64(totalSize) - totalPlaintextRead
-            let readSize = min(remaining, Int64(chunkSize))
-            guard let chunk = try inputHandle.read(upToCount: Int(readSize)), !chunk.isEmpty else {
-                throw StreamingCryptoError.segmentReadFailed
+            // Drain FileHandle's autoreleased read buffers after each append.
+            try autoreleasepool {
+                let remaining = Int64(totalSize) - totalPlaintextRead
+                let readSize = min(remaining, Int64(chunkSize))
+                guard let chunk = try inputHandle.read(upToCount: Int(readSize)), !chunk.isEmpty else {
+                    throw StreamingCryptoError.segmentReadFailed
+                }
+                plaintextAccumulator.append(chunk)
+                totalPlaintextRead += Int64(chunk.count)
             }
-            plaintextAccumulator.append(chunk)
-            totalPlaintextRead += Int64(chunk.count)
         }
 
         let sealed = try AES.GCM.seal(plaintextAccumulator, using: symmetricKey, nonce: nonce)
@@ -106,14 +109,17 @@ public enum StreamingTDFCrypto {
             var reachedEOF = false
 
             while segmentPlaintextSize < segmentSize, !reachedEOF {
-                let remaining = segmentSize - Int(segmentPlaintextSize)
-                let readSize = min(remaining, 1024 * 1024)
-                let chunk = try inputHandle.read(upToCount: readSize) ?? Data()
-                if chunk.isEmpty {
-                    reachedEOF = true
-                } else {
-                    plaintextAccumulator.append(chunk)
-                    segmentPlaintextSize += Int64(chunk.count)
+                // Keep read buffers from accumulating across segments.
+                try autoreleasepool {
+                    let remaining = segmentSize - Int(segmentPlaintextSize)
+                    let readSize = min(remaining, 1024 * 1024)
+                    let chunk = try inputHandle.read(upToCount: readSize) ?? Data()
+                    if chunk.isEmpty {
+                        reachedEOF = true
+                    } else {
+                        plaintextAccumulator.append(chunk)
+                        segmentPlaintextSize += Int64(chunk.count)
+                    }
                 }
             }
 
@@ -225,13 +231,16 @@ public enum StreamingTDFCrypto {
         plaintextAccumulator.reserveCapacity(Int(totalSize))
 
         while totalPlaintextRead < Int64(totalSize) {
-            let remaining = Int64(totalSize) - totalPlaintextRead
-            let readSize = min(remaining, Int64(chunkSize))
-            guard let chunk = try inputHandle.read(upToCount: Int(readSize)), !chunk.isEmpty else {
-                throw StreamingCryptoError.segmentReadFailed
+            // Drain FileHandle's autoreleased read buffers after each append.
+            try autoreleasepool {
+                let remaining = Int64(totalSize) - totalPlaintextRead
+                let readSize = min(remaining, Int64(chunkSize))
+                guard let chunk = try inputHandle.read(upToCount: Int(readSize)), !chunk.isEmpty else {
+                    throw StreamingCryptoError.segmentReadFailed
+                }
+                plaintextAccumulator.append(chunk)
+                totalPlaintextRead += Int64(chunk.count)
             }
-            plaintextAccumulator.append(chunk)
-            totalPlaintextRead += Int64(chunk.count)
         }
 
         let sealed = try AES.GCM.seal(plaintextAccumulator, using: symmetricKey, nonce: nonce)
@@ -289,14 +298,17 @@ public enum StreamingTDFCrypto {
             var reachedEOF = false
 
             while segmentPlaintextSize < segmentSize, !reachedEOF {
-                let remaining = segmentSize - Int(segmentPlaintextSize)
-                let readSize = min(remaining, 1024 * 1024)
-                let chunk = try inputHandle.read(upToCount: readSize) ?? Data()
-                if chunk.isEmpty {
-                    reachedEOF = true
-                } else {
-                    plaintextAccumulator.append(chunk)
-                    segmentPlaintextSize += Int64(chunk.count)
+                // Keep read buffers from accumulating across segments.
+                try autoreleasepool {
+                    let remaining = segmentSize - Int(segmentPlaintextSize)
+                    let readSize = min(remaining, 1024 * 1024)
+                    let chunk = try inputHandle.read(upToCount: readSize) ?? Data()
+                    if chunk.isEmpty {
+                        reachedEOF = true
+                    } else {
+                        plaintextAccumulator.append(chunk)
+                        segmentPlaintextSize += Int64(chunk.count)
+                    }
                 }
             }
 
