@@ -496,7 +496,7 @@ final class IntegrationTests: XCTestCase {
         var serializedItems = Data()
         for plaintext in testItems {
             let item = try await collection.encryptItem(plaintext: plaintext)
-            let serialized = await collection.serialize(item: item)
+            let serialized = try await collection.serialize(item: item)
             serializedItems.append(serialized)
         }
 

@@ -21,24 +21,22 @@ public enum NanoTDFCollectionParser {
         tagSize: Int = 16,
     ) -> (item: CollectionItem, bytesRead: Int)? {
         let headerSize = 6 // 3-byte IV + 3-byte length
-        guard offset + headerSize <= data.count else { return nil }
+        guard offset >= 0, offset <= data.count, data.count - offset >= headerSize, tagSize > 0 else { return nil }
 
-        // Parse IV (3 bytes, big-endian)
-        let iv = UInt32(data[offset]) << 16 |
-            UInt32(data[offset + 1]) << 8 |
-            UInt32(data[offset + 2])
+        let start = data.startIndex + offset
+        let iv = UInt32(data[start]) << 16 |
+            UInt32(data[start + 1]) << 8 |
+            UInt32(data[start + 2])
 
-        // Parse length (3 bytes, big-endian)
-        let length = Int(data[offset + 3]) << 16 |
-            Int(data[offset + 4]) << 8 |
-            Int(data[offset + 5])
+        let length = Int(data[start + 3]) << 16 |
+            Int(data[start + 4]) << 8 |
+            Int(data[start + 5])
 
-        guard offset + headerSize + length <= data.count else { return nil }
-
-        // Extract ciphertext + tag
         let contentStart = offset + headerSize
-        let ciphertextWithTag = data.subdata(in: contentStart ..< (contentStart + length))
+        guard length >= tagSize, length <= data.count - contentStart else { return nil }
 
+        let contentStartIndex = data.startIndex + contentStart
+        let ciphertextWithTag = data[contentStartIndex ..< contentStartIndex + length]
         let item = CollectionItem(ivCounter: iv, ciphertextWithTag: ciphertextWithTag, tagSize: tagSize)
         return (item, headerSize + length)
     }
@@ -57,7 +55,7 @@ public enum NanoTDFCollectionParser {
         tagSize: Int = 16,
     ) throws -> (item: CollectionItem, bytesRead: Int) {
         guard let result = parseContainerFramed(from: data, at: offset, tagSize: tagSize) else {
-            if offset + 6 > data.count {
+            if offset < 0 || offset > data.count || data.count - offset < 6 {
                 throw NanoTDFCollectionError.unexpectedEndOfData
             }
             throw NanoTDFCollectionError.invalidItemFormat("Failed to parse container framed item at offset \(offset)")
@@ -81,25 +79,23 @@ public enum NanoTDFCollectionParser {
         tagSize: Int = 16,
     ) -> (item: CollectionItem, bytesRead: Int)? {
         let headerSize = 7 // 3-byte IV + 4-byte length
-        guard offset + headerSize <= data.count else { return nil }
+        guard offset >= 0, offset <= data.count, data.count - offset >= headerSize, tagSize > 0 else { return nil }
 
-        // Parse IV (3 bytes, big-endian)
-        let iv = UInt32(data[offset]) << 16 |
-            UInt32(data[offset + 1]) << 8 |
-            UInt32(data[offset + 2])
+        let start = data.startIndex + offset
+        let iv = UInt32(data[start]) << 16 |
+            UInt32(data[start + 1]) << 8 |
+            UInt32(data[start + 2])
 
-        // Parse length (4 bytes, big-endian)
-        let length = Int(data[offset + 3]) << 24 |
-            Int(data[offset + 4]) << 16 |
-            Int(data[offset + 5]) << 8 |
-            Int(data[offset + 6])
+        let length = Int(data[start + 3]) << 24 |
+            Int(data[start + 4]) << 16 |
+            Int(data[start + 5]) << 8 |
+            Int(data[start + 6])
 
-        guard offset + headerSize + length <= data.count else { return nil }
-
-        // Extract ciphertext + tag
         let contentStart = offset + headerSize
-        let ciphertextWithTag = data.subdata(in: contentStart ..< (contentStart + length))
+        guard length >= tagSize, length <= data.count - contentStart else { return nil }
 
+        let contentStartIndex = data.startIndex + contentStart
+        let ciphertextWithTag = data[contentStartIndex ..< contentStartIndex + length]
         let item = CollectionItem(ivCounter: iv, ciphertextWithTag: ciphertextWithTag, tagSize: tagSize)
         return (item, headerSize + length)
     }
@@ -118,7 +114,7 @@ public enum NanoTDFCollectionParser {
         tagSize: Int = 16,
     ) throws -> (item: CollectionItem, bytesRead: Int) {
         guard let result = parseSelfDescribing(from: data, at: offset, tagSize: tagSize) else {
-            if offset + 7 > data.count {
+            if offset < 0 || offset > data.count || data.count - offset < 7 {
                 throw NanoTDFCollectionError.unexpectedEndOfData
             }
             throw NanoTDFCollectionError.invalidItemFormat("Failed to parse self-describing item at offset \(offset)")

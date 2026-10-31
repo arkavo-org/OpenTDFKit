@@ -1196,6 +1196,61 @@ final class StandardTDFTests: XCTestCase {
         XCTAssertEqual(accessType, .ecWrapped)
     }
 
+    func testTDFCBORRejectsOutOfRangeVersionElement() {
+        let data = Data([
+            0xD9, 0xD9, 0xF7,
+            0xA2,
+            0x01, 0x64, 0x63, 0x62, 0x6F, 0x72,
+            0x02, 0x81, 0x19, 0x01, 0x00,
+        ])
+
+        XCTAssertThrowsError(try TDFCBOREnvelope.fromCBORData(data))
+    }
+
+    func testTDFCBORRejectsSegmentSizeAboveInt64() {
+        let data = Data([
+            0xD9, 0xD9, 0xF7,
+            0xA4,
+            0x01, 0x64, 0x63, 0x62, 0x6F, 0x72,
+            0x02, 0x83, 0x01, 0x00, 0x00,
+            0x04, 0xA1, 0x01, 0xA3,
+            0x03, 0xA0,
+            0x04, 0xA3,
+            0x01, 0xA0,
+            0x03, 0x80,
+            0x04, 0x1B, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0x05, 0x40,
+            0x05, 0xA1, 0x06, 0x40,
+        ])
+
+        XCTAssertThrowsError(try TDFCBOREnvelope.fromCBORData(data))
+    }
+
+    func testTDFCBOREncodingRejectsNegativeSegmentSizes() throws {
+        let integrity = TDFIntegrityInformation(
+            rootSignature: TDFRootSignature(alg: "HS256", sig: ""),
+            segmentHashAlg: "GMAC",
+            segmentSizeDefault: -1,
+            segments: [],
+        )
+        let encryptionInformation = TDFEncryptionInformation(
+            type: .split,
+            keyAccess: [],
+            method: TDFMethodDescriptor(algorithm: "AES-256-GCM", iv: "", isStreamable: true),
+            integrityInformation: integrity,
+            policy: "",
+        )
+        let envelope = TDFCBOREnvelope(
+            tdf: "cbor",
+            version: [1, 0, 0],
+            created: nil,
+            manifest: TDFCBORManifest(encryptionInformation: encryptionInformation),
+            payload: TDFBinaryPayload(value: Data()),
+        )
+
+        XCTAssertThrowsError(try envelope.toCBORData())
+    }
+
     private func manifestJSON(top: String, payloadExtra: String) -> Data {
         """
         {"payload":{"type":"reference","url":"0.payload","protocol":"zip","isEncrypted":true\(payloadExtra)},

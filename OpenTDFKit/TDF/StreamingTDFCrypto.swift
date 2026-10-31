@@ -11,9 +11,12 @@ public enum StreamingTDFCrypto {
         symmetricKey: SymmetricKey,
         chunkSize: Int = defaultChunkSize,
     ) throws -> (encryptedPayload: Data, result: StreamingEncryptionResult) {
+        guard chunkSize > 0 else { throw StreamingCryptoError.invalidChunkSize }
         let startOffset = try inputHandle.offset()
         let endOffset = try inputHandle.seekToEnd()
-        let totalSize = Int64(endOffset - startOffset)
+        guard endOffset >= startOffset else { throw StreamingCryptoError.segmentReadFailed }
+        let totalSize = endOffset - startOffset
+        guard totalSize <= UInt64(Int.max - 28) else { throw StreamingCryptoError.invalidSegmentSize }
         try inputHandle.seek(toOffset: startOffset)
 
         let nonceData = try TDFCrypto.randomBytes(count: 12)
@@ -24,23 +27,19 @@ public enum StreamingTDFCrypto {
         encryptedPayload.append(Data(nonce))
 
         var totalPlaintextRead: Int64 = 0
-        // Reserve the whole input: a large `Data` grown by `append` keeps its
-        // old pages after it is freed, leaking about one input size per call.
         var plaintextAccumulator = Data()
         plaintextAccumulator.reserveCapacity(Int(totalSize))
-        var shouldBreak = false
 
-        while !shouldBreak {
-            autoreleasepool {
-                if let chunk = try? inputHandle.read(upToCount: chunkSize), !chunk.isEmpty {
-                    plaintextAccumulator.append(chunk)
-                    totalPlaintextRead += Int64(chunk.count)
-                } else {
-                    shouldBreak = true
+        while totalPlaintextRead < Int64(totalSize) {
+            // Drain FileHandle's autoreleased read buffers after each append.
+            try autoreleasepool {
+                let remaining = Int64(totalSize) - totalPlaintextRead
+                let readSize = min(remaining, Int64(chunkSize))
+                guard let chunk = try inputHandle.read(upToCount: Int(readSize)), !chunk.isEmpty else {
+                    throw StreamingCryptoError.segmentReadFailed
                 }
-            }
-            if totalPlaintextRead >= totalSize {
-                break
+                plaintextAccumulator.append(chunk)
+                totalPlaintextRead += Int64(chunk.count)
             }
         }
 
@@ -50,9 +49,7 @@ public enum StreamingTDFCrypto {
         encryptedPayload.append(Data(sealed.tag))
 
         let totalEncrypted = Int64(encryptedPayload.count)
-
-        // OpenTDF GMAC integrity = last 16 bytes of segment (AES-GCM tag), base64.
-        let segmentHash = try TDFCrypto.segmentHashBase64GMAC(encryptedSegment: encryptedPayload)
+        let segmentHash = Data(sealed.tag).base64EncodedString()
 
         let segment = EncryptedSegment(
             segmentIndex: 0,
@@ -82,8 +79,15 @@ public enum StreamingTDFCrypto {
         }
         try inputHandle.seek(toOffset: 0)
 
+        var totalCapacity = 0
+        for segmentSize in segmentSizes {
+            guard segmentSize <= Int.max - totalCapacity else { throw StreamingCryptoError.invalidSegmentSize }
+            totalCapacity += segmentSize
+        }
+        guard segmentSizes.count <= (Int.max - totalCapacity) / 28 else { throw StreamingCryptoError.invalidSegmentSize }
+        totalCapacity += segmentSizes.count * 28
+
         var encryptedPayload = Data()
-        let totalCapacity = segmentSizes.reduce(0, +) + (segmentSizes.count * 28)
         encryptedPayload.reserveCapacity(totalCapacity)
 
         var segments: [EncryptedSegment] = []
@@ -102,17 +106,19 @@ public enum StreamingTDFCrypto {
             var plaintextAccumulator = Data()
             plaintextAccumulator.reserveCapacity(segmentSize)
             var segmentPlaintextSize: Int64 = 0
-            var shouldBreak = false
+            var reachedEOF = false
 
-            while segmentPlaintextSize < segmentSize, !shouldBreak {
-                autoreleasepool {
+            while segmentPlaintextSize < segmentSize, !reachedEOF {
+                // Keep read buffers from accumulating across segments.
+                try autoreleasepool {
                     let remaining = segmentSize - Int(segmentPlaintextSize)
                     let readSize = min(remaining, 1024 * 1024)
-                    if let chunk = try? inputHandle.read(upToCount: readSize), !chunk.isEmpty {
+                    let chunk = try inputHandle.read(upToCount: readSize) ?? Data()
+                    if chunk.isEmpty {
+                        reachedEOF = true
+                    } else {
                         plaintextAccumulator.append(chunk)
                         segmentPlaintextSize += Int64(chunk.count)
-                    } else {
-                        shouldBreak = true
                     }
                 }
             }
@@ -137,9 +143,7 @@ public enum StreamingTDFCrypto {
             let segmentEnd = encryptedPayload.count
 
             let segmentEncryptedSize = Int64(segmentEnd - segmentStart)
-
-            let segmentData = encryptedPayload.subdata(in: segmentStart ..< segmentEnd)
-            let segmentHash = try TDFCrypto.segmentHashBase64GMAC(encryptedSegment: segmentData)
+            let segmentHash = Data(sealed.tag).base64EncodedString()
 
             let segment = EncryptedSegment(
                 segmentIndex: segmentIndex,
@@ -209,9 +213,12 @@ public enum StreamingTDFCrypto {
         symmetricKey: SymmetricKey,
         chunkSize: Int = defaultChunkSize,
     ) throws -> StreamingEncryptionResult {
+        guard chunkSize > 0 else { throw StreamingCryptoError.invalidChunkSize }
         let startOffset = try inputHandle.offset()
         let endOffset = try inputHandle.seekToEnd()
-        let totalSize = Int64(endOffset - startOffset)
+        guard endOffset >= startOffset else { throw StreamingCryptoError.segmentReadFailed }
+        let totalSize = endOffset - startOffset
+        guard totalSize <= UInt64(Int.max) else { throw StreamingCryptoError.invalidSegmentSize }
         try inputHandle.seek(toOffset: startOffset)
 
         let nonceData = try TDFCrypto.randomBytes(count: 12)
@@ -220,23 +227,19 @@ public enum StreamingTDFCrypto {
         try outputHandle.write(contentsOf: Data(nonce))
 
         var totalPlaintextRead: Int64 = 0
-        // Reserve the whole input: a large `Data` grown by `append` keeps its
-        // old pages after it is freed, leaking about one input size per call.
         var plaintextAccumulator = Data()
         plaintextAccumulator.reserveCapacity(Int(totalSize))
-        var shouldBreak = false
 
-        while !shouldBreak {
-            autoreleasepool {
-                if let chunk = try? inputHandle.read(upToCount: chunkSize), !chunk.isEmpty {
-                    plaintextAccumulator.append(chunk)
-                    totalPlaintextRead += Int64(chunk.count)
-                } else {
-                    shouldBreak = true
+        while totalPlaintextRead < Int64(totalSize) {
+            // Drain FileHandle's autoreleased read buffers after each append.
+            try autoreleasepool {
+                let remaining = Int64(totalSize) - totalPlaintextRead
+                let readSize = min(remaining, Int64(chunkSize))
+                guard let chunk = try inputHandle.read(upToCount: Int(readSize)), !chunk.isEmpty else {
+                    throw StreamingCryptoError.segmentReadFailed
                 }
-            }
-            if totalPlaintextRead >= totalSize {
-                break
+                plaintextAccumulator.append(chunk)
+                totalPlaintextRead += Int64(chunk.count)
             }
         }
 
@@ -247,9 +250,7 @@ public enum StreamingTDFCrypto {
         try outputHandle.synchronize()
 
         let totalEncrypted = Int64(nonceData.count + sealed.ciphertext.count + sealed.tag.count)
-
-        let segmentPayload = Data(nonce) + sealed.ciphertext + Data(sealed.tag)
-        let segmentHash = try TDFCrypto.segmentHashBase64GMAC(encryptedSegment: segmentPayload)
+        let segmentHash = Data(sealed.tag).base64EncodedString()
 
         let segment = EncryptedSegment(
             segmentIndex: 0,
@@ -294,17 +295,19 @@ public enum StreamingTDFCrypto {
             var plaintextAccumulator = Data()
             plaintextAccumulator.reserveCapacity(segmentSize)
             var segmentPlaintextSize: Int64 = 0
-            var shouldBreak = false
+            var reachedEOF = false
 
-            while segmentPlaintextSize < segmentSize, !shouldBreak {
-                autoreleasepool {
+            while segmentPlaintextSize < segmentSize, !reachedEOF {
+                // Keep read buffers from accumulating across segments.
+                try autoreleasepool {
                     let remaining = segmentSize - Int(segmentPlaintextSize)
                     let readSize = min(remaining, 1024 * 1024)
-                    if let chunk = try? inputHandle.read(upToCount: readSize), !chunk.isEmpty {
+                    let chunk = try inputHandle.read(upToCount: readSize) ?? Data()
+                    if chunk.isEmpty {
+                        reachedEOF = true
+                    } else {
                         plaintextAccumulator.append(chunk)
                         segmentPlaintextSize += Int64(chunk.count)
-                    } else {
-                        shouldBreak = true
                     }
                 }
             }
@@ -329,9 +332,7 @@ public enum StreamingTDFCrypto {
             let segmentEndOffset = try outputHandle.offset()
 
             let segmentEncryptedSize = Int64(segmentEndOffset - segmentStartOffset)
-
-            let segmentPayload = Data(nonce) + sealed.ciphertext + Data(sealed.tag)
-            let segmentHash = try TDFCrypto.segmentHashBase64GMAC(encryptedSegment: segmentPayload)
+            let segmentHash = Data(sealed.tag).base64EncodedString()
 
             let segment = EncryptedSegment(
                 segmentIndex: segmentIndex,
@@ -373,28 +374,27 @@ public enum StreamingTDFCrypto {
         symmetricKey: SymmetricKey,
         chunkSize: Int = defaultChunkSize,
     ) throws {
+        guard chunkSize > 0 else { throw StreamingCryptoError.invalidChunkSize }
+        guard iv.count == 12, tag.count == 16 else { throw StreamingCryptoError.malformedSegment(0) }
         let startOffset = try inputHandle.offset()
         let endOffset = try inputHandle.seekToEnd()
-        let totalSize = Int64(endOffset - startOffset)
-        try inputHandle.seek(toOffset: startOffset)
+        guard endOffset >= startOffset, endOffset - startOffset >= 28 else {
+            throw StreamingCryptoError.malformedSegment(0)
+        }
+
+        let ciphertextSize = endOffset - startOffset - 28
+        guard ciphertextSize <= UInt64(Int.max) else { throw StreamingCryptoError.invalidSegmentSize }
+        let payloadStart = startOffset + 12
+        try inputHandle.seek(toOffset: payloadStart)
 
         var ciphertextAccumulator = Data()
-
-        let ivSize = 12
-        let tagSize = 16
-        let payloadStart = startOffset + UInt64(ivSize)
-        let payloadEnd = endOffset - UInt64(tagSize)
-
-        try inputHandle.seek(toOffset: payloadStart)
-        let ciphertextSize = Int(payloadEnd - payloadStart)
-
+        ciphertextAccumulator.reserveCapacity(Int(ciphertextSize))
         var totalRead = 0
-        while totalRead < ciphertextSize {
-            let remaining = ciphertextSize - totalRead
+        while totalRead < Int(ciphertextSize) {
+            let remaining = Int(ciphertextSize) - totalRead
             let readSize = min(remaining, chunkSize)
-            let chunk = try inputHandle.read(upToCount: readSize) ?? Data()
-            if chunk.isEmpty {
-                break
+            guard let chunk = try inputHandle.read(upToCount: readSize), !chunk.isEmpty else {
+                throw StreamingCryptoError.segmentReadFailed
             }
             ciphertextAccumulator.append(chunk)
             totalRead += chunk.count
@@ -414,36 +414,44 @@ public enum StreamingTDFCrypto {
         symmetricKey: SymmetricKey,
         chunkSize: Int = defaultChunkSize,
     ) throws {
+        guard chunkSize > 0 else { throw StreamingCryptoError.invalidChunkSize }
         let startOffset = try inputHandle.offset()
+        let endOffset = try inputHandle.seekToEnd()
+        guard endOffset >= startOffset else { throw StreamingCryptoError.segmentReadFailed }
         var currentOffset = startOffset
 
         for segment in segments {
+            guard segment.encryptedSize >= 28 else {
+                throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
+            }
+            let segmentSize = UInt64(segment.encryptedSize)
+            guard currentOffset <= endOffset, segmentSize <= endOffset - currentOffset else {
+                throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
+            }
             try inputHandle.seek(toOffset: currentOffset)
 
-            let ivSize = 12
-            let tagSize = 16
-            let ivData = try inputHandle.read(upToCount: ivSize) ?? Data()
-            guard ivData.count == ivSize else {
+            let ivData = try inputHandle.read(upToCount: 12) ?? Data()
+            guard ivData.count == 12 else {
                 throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
             }
 
-            let ciphertextSize = Int(segment.encryptedSize) - ivSize - tagSize
+            let ciphertextSize = Int(segment.encryptedSize) - 28
             var ciphertextAccumulator = Data()
+            ciphertextAccumulator.reserveCapacity(ciphertextSize)
             var totalRead = 0
 
             while totalRead < ciphertextSize {
                 let remaining = ciphertextSize - totalRead
                 let readSize = min(remaining, chunkSize)
-                let chunk = try inputHandle.read(upToCount: readSize) ?? Data()
-                if chunk.isEmpty {
-                    break
+                guard let chunk = try inputHandle.read(upToCount: readSize), !chunk.isEmpty else {
+                    throw StreamingCryptoError.segmentReadFailed
                 }
                 ciphertextAccumulator.append(chunk)
                 totalRead += chunk.count
             }
 
-            let tagData = try inputHandle.read(upToCount: tagSize) ?? Data()
-            guard tagData.count == tagSize else {
+            let tagData = try inputHandle.read(upToCount: 16) ?? Data()
+            guard tagData.count == 16 else {
                 throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
             }
 
@@ -452,8 +460,11 @@ public enum StreamingTDFCrypto {
             let plaintext = try AES.GCM.open(sealed, using: symmetricKey)
 
             try outputHandle.write(contentsOf: plaintext)
+            currentOffset += segmentSize
+        }
 
-            currentOffset += UInt64(segment.encryptedSize)
+        guard currentOffset == endOffset else {
+            throw StreamingCryptoError.malformedSegment(segments.last?.segmentIndex ?? 0)
         }
     }
 
@@ -463,21 +474,23 @@ public enum StreamingTDFCrypto {
         symmetricKey: SymmetricKey,
     ) throws -> Data {
         var plaintext = Data()
+        plaintext.reserveCapacity(encryptedPayload.count)
         var offset = 0
 
         for segment in segments {
-            let ivSize = 12
-            let tagSize = 16
+            guard segment.encryptedSize >= 28 else {
+                throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
+            }
             let segmentSize = Int(segment.encryptedSize)
-
-            guard offset + segmentSize <= encryptedPayload.count else {
+            guard offset <= encryptedPayload.count, segmentSize <= encryptedPayload.count - offset else {
                 throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
             }
 
-            let ivData = encryptedPayload.subdata(in: offset ..< offset + ivSize)
-            let ciphertextSize = segmentSize - ivSize - tagSize
-            let ciphertextData = encryptedPayload.subdata(in: offset + ivSize ..< offset + ivSize + ciphertextSize)
-            let tagData = encryptedPayload.subdata(in: offset + ivSize + ciphertextSize ..< offset + segmentSize)
+            let start = encryptedPayload.startIndex + offset
+            let ivData = encryptedPayload[start ..< start + 12]
+            let ciphertextSize = segmentSize - 28
+            let ciphertextData = encryptedPayload[start + 12 ..< start + 12 + ciphertextSize]
+            let tagData = encryptedPayload[start + 12 + ciphertextSize ..< start + segmentSize]
 
             let nonce = try AES.GCM.Nonce(data: ivData)
             let sealed = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertextData, tag: tagData)
@@ -487,6 +500,9 @@ public enum StreamingTDFCrypto {
             offset += segmentSize
         }
 
+        guard offset == encryptedPayload.count else {
+            throw StreamingCryptoError.malformedSegment(segments.last?.segmentIndex ?? 0)
+        }
         return plaintext
     }
 }
@@ -497,6 +513,7 @@ extension FileHandle {
         defer {
             try? seek(toOffset: originalOffset)
         }
+        guard offset >= 0, length >= 0 else { throw StreamingCryptoError.invalidSegmentSize }
         try seek(toOffset: UInt64(offset))
         return try read(upToCount: length) ?? Data()
     }
@@ -506,7 +523,9 @@ extension FileHandle {
         defer {
             try? seek(toOffset: originalOffset)
         }
+        guard length >= 0 else { throw StreamingCryptoError.invalidSegmentSize }
         let endOffset = try seekToEnd()
+        guard UInt64(length) <= endOffset else { throw StreamingCryptoError.malformedSegment(0) }
         try seek(toOffset: endOffset - UInt64(length))
         return try read(upToCount: length) ?? Data()
     }
@@ -515,6 +534,7 @@ extension FileHandle {
 public enum StreamingCryptoError: Error, CustomStringConvertible {
     case malformedSegment(Int)
     case invalidSegmentSize
+    case invalidChunkSize
     case segmentReadFailed
 
     public var description: String {
@@ -523,6 +543,8 @@ public enum StreamingCryptoError: Error, CustomStringConvertible {
             "Malformed encrypted segment at index \(index)"
         case .invalidSegmentSize:
             "Invalid segment size specified"
+        case .invalidChunkSize:
+            "Chunk size must be positive"
         case .segmentReadFailed:
             "Failed to read segment data"
         }

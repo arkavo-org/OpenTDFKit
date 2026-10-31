@@ -189,6 +189,43 @@ final class StreamingBenchmarkTests: XCTestCase {
         assertWithinEncryptFileBudget(peakMemory, fileSize: fileSize)
     }
 
+    func testMultiSegmentFileEncryptionBoundsMemory() throws {
+        try requireOwnProcess()
+        let fileSize = 128 * 1024 * 1024
+        let segmentSize = 2 * 1024 * 1024
+        let inputURL = try writeTemporaryFile(data: Data())
+        let outputURL = try writeTemporaryFile(data: Data())
+        defer {
+            try? FileManager.default.removeItem(at: inputURL)
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        let input = try FileHandle(forUpdating: inputURL)
+        defer { try? input.close() }
+        // A sparse input avoids allocating the file in memory before measurement.
+        try input.truncate(atOffset: UInt64(fileSize))
+        let output = try FileHandle(forWritingTo: outputURL)
+        defer { try? output.close() }
+        let key = SymmetricKey(size: .bits256)
+
+        let peakMemory = try measurePeakMemory {
+            try autoreleasepool {
+                let result = try StreamingTDFCrypto.encryptPayloadStreamingMultiSegment(
+                    inputHandle: input,
+                    outputHandle: output,
+                    symmetricKey: key,
+                    segmentSizes: [segmentSize],
+                )
+                XCTAssertEqual(result.totalPlaintextSize, Int64(fileSize))
+                XCTAssertEqual(result.segments.count, 64)
+            }
+        }
+
+        print("Peak memory usage (2MB segments, 128MB file): \(peakMemory / 1024 / 1024) MB")
+        // Allow ample allocator overhead, but not a retained copy of the input.
+        XCTAssertLessThan(peakMemory, 32 * 1024 * 1024)
+    }
+
     private func measureStreamingEncryption(fileSize: Int, chunkSize: Int, chunkName: String) async throws {
         let testData = generateTestData(size: fileSize)
         let inputURL = try writeTemporaryFile(data: testData)

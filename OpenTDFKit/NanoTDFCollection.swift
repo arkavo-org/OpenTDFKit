@@ -23,6 +23,8 @@ public enum NanoTDFCollectionError: Error, CustomStringConvertible {
     case invalidItemFormat(String)
     /// Unexpected end of data while parsing
     case unexpectedEndOfData
+    /// Serialized content exceeds the selected wire format's length field
+    case frameTooLarge(Int)
 
     public var description: String {
         switch self {
@@ -44,6 +46,8 @@ public enum NanoTDFCollectionError: Error, CustomStringConvertible {
             "Invalid collection item format: \(detail)"
         case .unexpectedEndOfData:
             "Unexpected end of data while parsing collection item"
+        case let .frameTooLarge(length):
+            "Collection frame length \(length) exceeds the selected wire format's limit"
         }
     }
 }
@@ -96,15 +100,12 @@ public struct CollectionConfiguration: Sendable {
 // MARK: - Collection Item
 
 /// A single encrypted item in a NanoTDF Collection.
-/// Uses ContiguousArray for cache-friendly memory layout and zero-copy access.
+/// Stores ciphertext and its authentication tag contiguously, with shared slices for access.
 public struct CollectionItem: Sendable {
     /// 3-byte IV counter as UInt32 (range: 1 to 16,777,215; 0 reserved for policy)
     public let ivCounter: UInt32
 
-    /// Ciphertext + authentication tag stored contiguously for memory efficiency
-    private let storage: ContiguousArray<UInt8>
-
-    /// Offset where ciphertext ends and tag begins
+    private let storage: Data
     private let tagOffset: Int
 
     /// Extract the 3-byte IV from the counter
@@ -116,35 +117,16 @@ public struct CollectionItem: Sendable {
         ])
     }
 
-    /// Access the ciphertext portion (zero-copy where possible)
     public var ciphertext: Data {
-        storage.withUnsafeBufferPointer { buffer in
-            guard let baseAddress = buffer.baseAddress else {
-                return Data()
-            }
-            return Data(bytes: baseAddress, count: tagOffset)
-        }
+        storage.prefix(tagOffset)
     }
 
-    /// Access the authentication tag portion (zero-copy where possible)
     public var tag: Data {
-        storage.withUnsafeBufferPointer { buffer in
-            guard let baseAddress = buffer.baseAddress else {
-                return Data()
-            }
-            let tagStart = baseAddress.advanced(by: tagOffset)
-            return Data(bytes: tagStart, count: buffer.count - tagOffset)
-        }
+        storage.suffix(storage.count - tagOffset)
     }
 
-    /// Combined ciphertext and tag as contiguous data
     public var ciphertextWithTag: Data {
-        storage.withUnsafeBufferPointer { buffer in
-            guard let baseAddress = buffer.baseAddress else {
-                return Data()
-            }
-            return Data(bytes: baseAddress, count: buffer.count)
-        }
+        storage
     }
 
     /// Total serialized size: IV (3 bytes) + ciphertext + tag
@@ -171,11 +153,9 @@ public struct CollectionItem: Sendable {
         self.ivCounter = ivCounter
         tagOffset = ciphertext.count
 
-        // Single allocation for ciphertext + tag
-        var bytes = ContiguousArray<UInt8>()
-        bytes.reserveCapacity(ciphertext.count + tag.count)
-        ciphertext.withUnsafeBytes { bytes.append(contentsOf: $0) }
-        tag.withUnsafeBytes { bytes.append(contentsOf: $0) }
+        var bytes = Data(capacity: ciphertext.count + tag.count)
+        bytes.append(ciphertext)
+        bytes.append(tag)
         storage = bytes
     }
 
@@ -192,11 +172,7 @@ public struct CollectionItem: Sendable {
 
         self.ivCounter = ivCounter
         tagOffset = ciphertextWithTag.count - tagSize
-
-        var bytes = ContiguousArray<UInt8>()
-        bytes.reserveCapacity(ciphertextWithTag.count)
-        ciphertextWithTag.withUnsafeBytes { bytes.append(contentsOf: $0) }
-        storage = bytes
+        storage = ciphertextWithTag
     }
 }
 
@@ -397,7 +373,8 @@ public actor NanoTDFCollection {
     ///   - item: The CollectionItem to serialize
     ///   - format: Optional wire format override (defaults to configuration)
     /// - Returns: Serialized data in the specified wire format
-    public func serialize(item: CollectionItem, format: CollectionWireFormat? = nil) -> Data {
+    /// - Throws: `NanoTDFCollectionError.frameTooLarge` if the length field cannot represent the item.
+    public func serialize(item: CollectionItem, format: CollectionWireFormat? = nil) throws -> Data {
         let wireFormat = format ?? configuration.wireFormat
         var data = Data()
 
@@ -405,15 +382,19 @@ public actor NanoTDFCollection {
         data.append(contentsOf: item.iv)
 
         // Write length
-        let contentLength = item.ciphertext.count + item.tag.count
+        let contentLength = item.ciphertextWithTag.count
         switch wireFormat {
         case .containerFraming:
-            // 3-byte length (big-endian)
+            guard contentLength <= 0xFFFFFF else {
+                throw NanoTDFCollectionError.frameTooLarge(contentLength)
+            }
             data.append(UInt8((contentLength >> 16) & 0xFF))
             data.append(UInt8((contentLength >> 8) & 0xFF))
             data.append(UInt8(contentLength & 0xFF))
         case .selfDescribing:
-            // 4-byte length (big-endian)
+            guard UInt64(contentLength) <= UInt64(UInt32.max) else {
+                throw NanoTDFCollectionError.frameTooLarge(contentLength)
+            }
             data.append(UInt8((contentLength >> 24) & 0xFF))
             data.append(UInt8((contentLength >> 16) & 0xFF))
             data.append(UInt8((contentLength >> 8) & 0xFF))

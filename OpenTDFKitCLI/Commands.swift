@@ -997,7 +997,7 @@ extension Commands {
         var serializedData = Data()
         for (index, plaintext) in plaintexts.enumerated() {
             let item = try await collection.encryptItem(plaintext: plaintext)
-            let serialized = await collection.serialize(item: item)
+            let serialized = try await collection.serialize(item: item)
             serializedData.append(serialized)
 
             if (index + 1) % 100 == 0 || index == plaintexts.count - 1 {

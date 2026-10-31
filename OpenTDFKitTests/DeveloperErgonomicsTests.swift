@@ -203,6 +203,17 @@ final class DeveloperErgonomicsTests: XCTestCase {
         let reader = try TDFArchiveReader(url: outputURL)
         let payload = try reader.payloadData()
         XCTAssertEqual(payload, testPlaintext)
+
+        let updatedPlaintext = Data("replacement payload".utf8)
+        try updatedPlaintext.write(to: payloadURL)
+        try writer.buildArchiveToFile(
+            manifest: manifest,
+            payloadURL: payloadURL,
+            outputURL: outputURL,
+        )
+
+        let replacementReader = try TDFArchiveReader(url: outputURL)
+        XCTAssertEqual(try replacementReader.payloadData(), updatedPlaintext)
     }
 
     // MARK: - Helper Methods

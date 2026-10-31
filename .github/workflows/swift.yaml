@@ -151,7 +151,7 @@ jobs:
         env:
           OPENTDFKIT_MEMORY_BENCHMARK: "1"
         run: |
-          for test in testMemoryUsageWith2MBChunk testMemoryUsageWith25MBChunk; do
+          for test in testMemoryUsageWith2MBChunk testMemoryUsageWith25MBChunk testMultiSegmentFileEncryptionBoundsMemory; do
             swift test --enable-code-coverage --filter "StreamingBenchmarkTests/$test"
           done
 

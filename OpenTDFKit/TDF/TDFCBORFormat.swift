@@ -508,10 +508,12 @@ extension TDFCBOREnvelope {
         // Segment hash algorithm enum
         let segHashAlgEnum = try hashAlgToEnum(integrity.segmentHashAlg)
 
-        // Encode segments
         let segmentsArray: [CBOR] = try integrity.segments.map { seg in
             guard let hashData = Data(base64Encoded: seg.hash) else {
                 throw TDFCBORError.cborEncodingFailed("Invalid segment hash base64")
+            }
+            guard seg.segmentSize >= 0 else {
+                throw TDFCBORError.cborEncodingFailed("Segment size must not be negative")
             }
 
             var segMap: [CBOR: CBOR] = [
@@ -520,12 +522,18 @@ extension TDFCBOREnvelope {
             ]
 
             if let size = seg.encryptedSegmentSize {
+                guard size >= 0 else {
+                    throw TDFCBORError.cborEncodingFailed("Encrypted segment size must not be negative")
+                }
                 segMap[.unsignedInt(UInt64(TDFCBORSegmentKey.encryptedSegmentSize.rawValue))] = .unsignedInt(UInt64(size))
             }
 
             return .map(segMap)
         }
 
+        guard integrity.segmentSizeDefault >= 0 else {
+            throw TDFCBORError.cborEncodingFailed("Segment size default must not be negative")
+        }
         var integrityMap: [CBOR: CBOR] = [
             .unsignedInt(UInt64(TDFCBORIntegrityKey.rootSignature.rawValue)): .map(rootSigMap),
             .unsignedInt(UInt64(TDFCBORIntegrityKey.segmentHashAlg.rawValue)): .unsignedInt(segHashAlgEnum),
@@ -533,8 +541,10 @@ extension TDFCBOREnvelope {
             .unsignedInt(UInt64(TDFCBORIntegrityKey.segmentSizeDefault.rawValue)): .unsignedInt(UInt64(integrity.segmentSizeDefault)),
         ]
 
-        // Add optional encryptedSegmentSizeDefault if present
         if let encSize = integrity.encryptedSegmentSizeDefault {
+            guard encSize >= 0 else {
+                throw TDFCBORError.cborEncodingFailed("Encrypted segment size default must not be negative")
+            }
             integrityMap[.unsignedInt(UInt64(TDFCBORIntegrityKey.encryptedSegmentSizeDefault.rawValue))] = .unsignedInt(UInt64(encSize))
         }
 
@@ -606,11 +616,11 @@ extension TDFCBOREnvelope {
         else {
             throw TDFCBORError.missingField("version")
         }
-        let version: [UInt8] = versionArray.compactMap { cbor -> UInt8? in
-            if case let .unsignedInt(v) = cbor {
-                return UInt8(v)
+        let version: [UInt8] = try versionArray.map { cbor in
+            guard case let .unsignedInt(value) = cbor, let byte = UInt8(exactly: value) else {
+                throw TDFCBORError.cborDecodingFailed("Version elements must be unsigned 8-bit integers")
             }
-            return nil
+            return byte
         }
 
         // Extract created (optional)
@@ -989,26 +999,31 @@ extension TDFCBOREnvelope {
             }
         }
 
-        // Segment size defaults
-        var segmentSizeDefault = 0
+        var segmentSizeDefault: Int64 = 0
         if let ssdValue = intMap[.unsignedInt(UInt64(TDFCBORIntegrityKey.segmentSizeDefault.rawValue))],
            case let .unsignedInt(ssd) = ssdValue
         {
-            segmentSizeDefault = Int(ssd)
+            guard let size = Int64(exactly: ssd) else {
+                throw TDFCBORError.cborDecodingFailed("Segment size default exceeds Int64")
+            }
+            segmentSizeDefault = size
         }
 
-        var encryptedSegmentSizeDefault = 0
+        var encryptedSegmentSizeDefault: Int64 = 0
         if let essdValue = intMap[.unsignedInt(UInt64(TDFCBORIntegrityKey.encryptedSegmentSizeDefault.rawValue))],
            case let .unsignedInt(essd) = essdValue
         {
-            encryptedSegmentSizeDefault = Int(essd)
+            guard let size = Int64(exactly: essd) else {
+                throw TDFCBORError.cborDecodingFailed("Encrypted segment size default exceeds Int64")
+            }
+            encryptedSegmentSizeDefault = size
         }
 
         return TDFIntegrityInformation(
             rootSignature: rootSig,
             segmentHashAlg: segmentHashAlg,
-            segmentSizeDefault: Int64(segmentSizeDefault),
-            encryptedSegmentSizeDefault: Int64(encryptedSegmentSizeDefault),
+            segmentSizeDefault: segmentSizeDefault,
+            encryptedSegmentSizeDefault: encryptedSegmentSizeDefault,
             segments: segments,
         )
     }
@@ -1045,14 +1060,20 @@ extension TDFCBOREnvelope {
         if let ssValue = segMap[.unsignedInt(UInt64(TDFCBORSegmentKey.segmentSize.rawValue))],
            case let .unsignedInt(ss) = ssValue
         {
-            segmentSize = Int64(ss)
+            guard let size = Int64(exactly: ss) else {
+                throw TDFCBORError.cborDecodingFailed("Segment size exceeds Int64")
+            }
+            segmentSize = size
         }
 
         var encryptedSegmentSize: Int64?
         if let essValue = segMap[.unsignedInt(UInt64(TDFCBORSegmentKey.encryptedSegmentSize.rawValue))],
            case let .unsignedInt(ess) = essValue
         {
-            encryptedSegmentSize = Int64(ess)
+            guard let size = Int64(exactly: ess) else {
+                throw TDFCBORError.cborDecodingFailed("Encrypted segment size exceeds Int64")
+            }
+            encryptedSegmentSize = size
         }
 
         return TDFSegment(hash: hash, segmentSize: segmentSize, encryptedSegmentSize: encryptedSegmentSize)

@@ -9,6 +9,12 @@ import Security
 ///   See the migration guide at `docs/NANOTDF_MIGRATION.md` for details.
 @available(*, deprecated, message: "NanoTDF is deprecated. Use TDFCBORBuilder instead. See docs/NANOTDF_MIGRATION.md")
 public struct NanoTDF: Sendable {
+    static func validatePayloadLength(_ length: Int) throws {
+        guard length >= 0, length <= 0xFFFFFF else {
+            throw NanoTDFError.payloadTooLarge(length)
+        }
+    }
+
     /// The header section of the NanoTDF, containing metadata like KAS info, policy, and ephemeral key.
     public var header: Header
     /// The encrypted payload section of the NanoTDF.
@@ -75,6 +81,17 @@ public struct NanoTDF: Sendable {
             ciphertext: payload.ciphertext,
             tag: payload.mac,
         )
+    }
+}
+
+public enum NanoTDFError: Error, CustomStringConvertible {
+    case payloadTooLarge(Int)
+
+    public var description: String {
+        switch self {
+        case let .payloadTooLarge(length):
+            "NanoTDF payload length \(length) exceeds the 24-bit limit of 16,777,215 bytes"
+        }
     }
 }
 
@@ -267,13 +284,13 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
         nonce: nonce12,
     )
 
-    // Calculate the total payload length (IV + Ciphertext + Auth Tag)
     // The payload length field uses UInt24 (3 bytes) in the spec.
-    let payloadLength = UInt32(nonce.count + ciphertext.count + tag.count)
+    let payloadLength = nonce.count + ciphertext.count + tag.count
+    try NanoTDF.validatePayloadLength(payloadLength)
 
     // Create the Payload struct
     let payload = Payload(
-        length: payloadLength,
+        length: UInt32(payloadLength),
         iv: nonce, // Store the original 3-byte IV
         ciphertext: ciphertext,
         mac: tag, // Store the 16-byte authentication tag
@@ -303,35 +320,26 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
 }
 
 /// Adds an ECDSA signature to an existing NanoTDF object.
-/// Calculates the signature over the header and payload data, then updates the NanoTDF's signature field and header configuration.
+/// Updates the header configuration, then signs the final serialized header and payload.
 /// - Parameters:
 ///   - nanoTDF: The `inout` `NanoTDF` object to modify.
 ///   - privateKey: The `P256.Signing.PrivateKey` used to generate the signature.
 ///   - config: The `SignatureAndPayloadConfig` indicating the desired signature settings (especially the curve).
 /// - Throws: `SignatureError.invalidSigning` if signature generation fails, or errors from `CryptoKit`.
 public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signing.PrivateKey, config: SignatureAndPayloadConfig) async throws {
-    // Use shared CryptoHelper instance to avoid per-call instantiation overhead
-    // The message to be signed is the concatenation of the serialized header and payload.
-    let message = nanoTDF.header.toData() + nanoTDF.payload.toData()
+    nanoTDF.header.payloadSignatureConfig.signed = true
+    nanoTDF.header.payloadSignatureConfig.signatureCurve = config.signatureCurve
 
-    // Generate the ECDSA signature using the provided private key.
-    // Returns the raw 64-byte R || S signature directly.
+    let message = nanoTDF.header.toData() + nanoTDF.payload.toData()
     let signatureData = try NanoTDF.sharedCryptoHelper.generateECDSASignature(
         privateKey: privateKey,
         message: message,
     )
 
-    // Get the compressed public key corresponding to the private signing key.
-    let publicKeyData = privateKey.publicKey.compressedRepresentation
-    // Create the Signature struct.
-    let signature = Signature(publicKey: publicKeyData, signature: signatureData)
-
-    // Update the NanoTDF object:
-    // 1. Set the signature field.
-    nanoTDF.signature = signature
-    // 2. Update the header's signature configuration to indicate it's signed and specify the curve used.
-    nanoTDF.header.payloadSignatureConfig.signed = true
-    nanoTDF.header.payloadSignatureConfig.signatureCurve = config.signatureCurve
+    nanoTDF.signature = Signature(
+        publicKey: privateKey.publicKey.compressedRepresentation,
+        signature: signatureData,
+    )
 }
 
 /// Represents the KAS (Key Access Service) information structure in the NanoTDF header.
