@@ -18,6 +18,81 @@ public enum TDFKAS {
     /// Size of every key share this path accepts.
     static let shareByteCount = 32
 
+    /// Smallest wrapped key that can hold a share: nonce (12) + 1 byte + tag (16).
+    private static let minimumWrappedKeyCount = 12 + 1 + 16
+
+    /// A key share sealed to a receiver by `rewrap`.
+    public struct RewrapResult: Sendable {
+        /// nonce (12) ‖ ciphertext ‖ tag (16).
+        public let wrappedKey: Data
+        /// The fresh session public key the receiver needs to open `wrappedKey`.
+        public let sessionPublicKey: P256.KeyAgreement.PublicKey
+
+        public init(wrappedKey: Data, sessionPublicKey: P256.KeyAgreement.PublicKey) {
+            self.wrappedKey = wrappedKey
+            self.sessionPublicKey = sessionPublicKey
+        }
+    }
+
+    /// The KAS side of a rewrap: opens the key share in an `ec-wrapped` key
+    /// access object, verifies the policy binding, and seals the share to the
+    /// receiver under a fresh session key. The binding is checked before
+    /// anything is sealed, and the opened share is wiped on every exit.
+    ///
+    /// **What success proves.** Anyone holding the KAS *public* key can wrap a
+    /// key of their choosing to it and compute a valid binding over a policy of
+    /// their choosing, and `rewrap` will accept that. A passing binding proves
+    /// only that `policyBase64` belongs to this key access object, not who made
+    /// it. Match the key access object and policy against your own records
+    /// before calling, and decide access yourself: this function evaluates no
+    /// attributes and does not check the object's `url` or `kid`.
+    ///
+    /// **Do not forward which step failed.** `.keyUnwrapFailed` versus
+    /// `.policyBindingRefused` tells the caller whether a submitted ciphertext
+    /// authenticated under the KAS key. Keep that for your own audit; answer a
+    /// requester with one failure code for every error.
+    ///
+    /// - Parameters:
+    ///   - keyAccessObject: An `ec-wrapped` key access object with a PEM P-256
+    ///     `ephemeralPublicKey`, as the go SDK and `TDFEncryptor` write it.
+    ///   - policyBase64: The manifest's `encryptionInformation.policy` string,
+    ///     unchanged. The binding is an HMAC over this base64 text, not over the
+    ///     decoded JSON.
+    ///   - kasPrivateKey: The KAS private key the object was wrapped to.
+    ///   - receiverPublicKey: The receiver's P-256 public key.
+    /// - Returns: The sealed share and the session public key.
+    /// - Throws: `TDFKASError`; a CryptoKit error only if sealing itself fails.
+    public static func rewrap(
+        keyAccessObject: TDFKeyAccessObject,
+        policyBase64: String,
+        kasPrivateKey: P256.KeyAgreement.PrivateKey,
+        receiverPublicKey: P256.KeyAgreement.PublicKey,
+    ) throws -> RewrapResult {
+        guard keyAccessObject.type == .ecWrapped else {
+            throw TDFKASError.unsupportedKeyAccessType(keyAccessObject.type.rawValue)
+        }
+        guard let ephemeralPEM = keyAccessObject.ephemeralPublicKey else {
+            throw TDFKASError.missingEphemeralPublicKey
+        }
+        let ephemeralPublicKey = try parseEphemeralPublicKey(ephemeralPEM)
+        guard let wrappedKey = Data(base64Encoded: keyAccessObject.wrappedKey) else {
+            throw TDFKASError.invalidWrappedKeyEncoding
+        }
+
+        var share = try openShare(wrappedKey, kasPrivateKey: kasPrivateKey, ephemeralPublicKey: ephemeralPublicKey)
+        defer {
+            share.secureZero()
+        }
+        guard share.count == shareByteCount else {
+            throw TDFKASError.keyUnwrapFailed
+        }
+        try verifyPolicyBinding(keyAccessObject.policyBinding, policyBase64: policyBase64, share: share)
+
+        let sessionPrivateKey = P256.KeyAgreement.PrivateKey()
+        let sealed = try AES.GCM.seal(share, using: derivedKey(sessionPrivateKey, receiverPublicKey))
+        return RewrapResult(wrappedKey: sealed.combined!, sessionPublicKey: sessionPrivateKey.publicKey)
+    }
+
     /// Opens a rewrapped key share on the client, for a response that did not
     /// come from an HTTP rewrap (for example, one relayed from an on-device KAS).
     /// `KASRewrapClient` uses the same implementation for HTTP responses.
@@ -48,6 +123,78 @@ public enum TDFKAS {
             throw TDFKASError.keyUnwrapFailed
         }
         return share
+    }
+
+    // MARK: Scheme
+
+    /// ECDH, then HKDF-SHA256 with salt `SHA256("TDF")`, empty info, 32 bytes:
+    /// the go SDK's `tdfSalt()` scheme, used for the key access object wrap and
+    /// for the rewrap session alike.
+    static func derivedKey(
+        _ privateKey: P256.KeyAgreement.PrivateKey,
+        _ publicKey: P256.KeyAgreement.PublicKey,
+    ) throws -> SymmetricKey {
+        try privateKey.sharedSecretFromKeyAgreement(with: publicKey).hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: KASRewrapClient.standardTDFSessionSalt,
+            sharedInfo: Data(),
+            outputByteCount: 32,
+        )
+    }
+
+    /// Parses a PEM P-256 public key, as the platform KAS requires; CRLF line
+    /// endings and a missing trailing newline are accepted.
+    private static func parseEphemeralPublicKey(_ text: String) throws -> P256.KeyAgreement.PublicKey {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("-----BEGIN PUBLIC KEY-----") else {
+            throw TDFKASError.ephemeralKeyNotPEM
+        }
+        do {
+            return try P256.KeyAgreement.PublicKey(
+                pemRepresentation: trimmed.replacingOccurrences(of: "\r\n", with: "\n"),
+            )
+        } catch {
+            throw TDFKASError.invalidEphemeralPublicKey
+        }
+    }
+
+    /// Opens nonce ‖ ciphertext ‖ tag with the KAS key. Every failure is
+    /// `.keyUnwrapFailed`, so the caller cannot tell which step failed.
+    private static func openShare(
+        _ wrappedKey: Data,
+        kasPrivateKey: P256.KeyAgreement.PrivateKey,
+        ephemeralPublicKey: P256.KeyAgreement.PublicKey,
+    ) throws -> Data {
+        guard wrappedKey.count >= minimumWrappedKeyCount else {
+            throw TDFKASError.keyUnwrapFailed
+        }
+        do {
+            let key = try derivedKey(kasPrivateKey, ephemeralPublicKey)
+            return try AES.GCM.open(AES.GCM.SealedBox(combined: wrappedKey), using: key)
+        } catch {
+            throw TDFKASError.keyUnwrapFailed
+        }
+    }
+
+    /// Spec-form binding only: `alg` is `HS256` and `hash` is Base64 of the raw
+    /// 32-byte `HMAC-SHA256(share, policyBase64)`, compared in constant time.
+    /// go's legacy `Base64(hex(HMAC))` form is refused.
+    private static func verifyPolicyBinding(
+        _ binding: TDFPolicyBinding,
+        policyBase64: String,
+        share: Data,
+    ) throws {
+        guard binding.alg == "HS256",
+              let expected = Data(base64Encoded: binding.hash),
+              expected.count == SHA256.byteCount,
+              HMAC<SHA256>.isValidAuthenticationCode(
+                  expected,
+                  authenticating: Data(policyBase64.utf8),
+                  using: SymmetricKey(data: share),
+              )
+        else {
+            throw TDFKASError.policyBindingRefused
+        }
     }
 }
 

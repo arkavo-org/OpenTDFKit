@@ -437,6 +437,36 @@ public enum TDFCrypto {
         return SymmetricKey(data: decryptedKey)
     }
 
+    // MARK: - EC Key Wrapping for a KAS (`ec-wrapped`)
+
+    /// Wraps a key share to a KAS P-256 public key in the go SDK / opentdf-platform
+    /// `ec-wrapped` scheme (go SDK `generateWrapKeyWithEC`): a fresh ephemeral
+    /// P-256 key, ECDH, HKDF-SHA256 with salt `SHA256("TDF")`, empty info and a
+    /// 32-byte output, AES-256-GCM. A platform KAS with EC enabled, and `TDFKAS.rewrap`,
+    /// can rewrap the result.
+    ///
+    /// This is not the scheme of `wrapSymmetricKeyWithEC`, which the TDF-JSON and
+    /// TDF-CBOR containers use (empty salt, compressed SEC1 ephemeral key).
+    /// - Parameters:
+    ///   - publicKeyPEM: The KAS's P-256 public key, PEM SubjectPublicKeyInfo.
+    ///   - symmetricKey: The key share to wrap (the DEK for a single-split TDF).
+    /// - Returns: The base64 wrapped key and the PEM ephemeral public key.
+    public static func wrapSymmetricKeyWithECForKAS(
+        publicKeyPEM: String,
+        symmetricKey: SymmetricKey,
+    ) throws -> KASECWrappedKey {
+        let kasPublicKey = try loadECPublicKeyP256(fromPEM: publicKeyPEM)
+        let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
+        let sealed = try AES.GCM.seal(
+            symmetricKey.withUnsafeBytes { Data($0) },
+            using: TDFKAS.derivedKey(ephemeralPrivateKey, kasPublicKey),
+        )
+        return KASECWrappedKey(
+            wrappedKey: sealed.combined!.base64EncodedString(),
+            ephemeralPublicKeyPEM: ephemeralPrivateKey.publicKey.pemRepresentation,
+        )
+    }
+
     // MARK: - P-256 EC Wrapping
 
     private static func wrapWithP256(publicKeyPEM: String, symmetricKey: SymmetricKey) throws -> ECWrappedKeyResult {
@@ -602,6 +632,16 @@ public struct ECWrappedKeyResult: Sendable {
     public let wrappedKey: String
     /// The ephemeral public key in PEM format
     public let ephemeralPublicKey: String
+}
+
+/// A key share wrapped to a KAS by `TDFCrypto.wrapSymmetricKeyWithECForKAS`, in the
+/// go SDK / opentdf-platform `ec-wrapped` scheme.
+public struct KASECWrappedKey: Sendable {
+    /// Base64 of nonce (12) ‖ ciphertext ‖ tag (16); the key access object's `wrappedKey`.
+    public let wrappedKey: String
+    /// The ephemeral P-256 public key, PEM SubjectPublicKeyInfo; the key access
+    /// object's `ephemeralPublicKey`.
+    public let ephemeralPublicKeyPEM: String
 }
 
 /// Supported EC curves for TDF3 EC key wrapping
