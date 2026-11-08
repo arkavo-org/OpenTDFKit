@@ -73,44 +73,52 @@ final class TDFKASEncryptorTests: XCTestCase {
     // MARK: - Refusals
 
     func testECKasWithoutKidIsRefused() throws {
-        for kid in [nil, ""] as [String?] {
+        for kid in [nil, "", "  \t"] as [String?] {
             let (kas, _) = Self.makeECKas(kid: kid)
-            let configuration = try Self.configuration(kas)
-            XCTAssertThrowsError(try TDFEncryptor().encrypt(plaintext: Data("x".utf8), configuration: configuration)) {
-                XCTAssertEqual($0 as? TDFEncryptError, .ecKasRequiresKeyID)
+            try assertEveryEntryPointRefuses(Self.configuration(kas)) {
+                XCTAssertEqual($0 as? TDFEncryptError, .ecKasRequiresKeyID, "kid \(String(describing: kid))")
             }
-            let (input, output) = try writeInput(Data("x".utf8))
-            XCTAssertThrowsError(try TDFEncryptor().encryptFile(
-                inputURL: input,
-                outputURL: output,
-                configuration: configuration,
-            )) {
-                XCTAssertEqual($0 as? TDFEncryptError, .ecKasRequiresKeyID)
-            }
-            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path), "nothing is written")
         }
     }
 
     func testECKasWithAES128IsRefused() throws {
         let (kas, _) = Self.makeECKas()
         let configuration = try TDFEncryptionConfiguration(kas: kas, policy: Self.policy(), keySize: .bits128)
-        XCTAssertThrowsError(try TDFEncryptor().encrypt(plaintext: Data("x".utf8), configuration: configuration)) {
+        try assertEveryEntryPointRefuses(configuration) {
             XCTAssertEqual($0 as? TDFEncryptError, .ecKasRequiresAES256)
         }
     }
 
     func testKeyTypeAndPEMMismatchThrows() throws {
-        let url = try XCTUnwrap(URL(string: "https://kas.example.com"))
-        let rsaPEM = try TDFSegmentedPayloadTests.makeRSAPublicKeyPEM()
-        let ecPEM = P256.KeyAgreement.PrivateKey().publicKey.pemRepresentation
-        for kas in [
-            TDFKasInfo(url: url, publicKeyPEM: rsaPEM, kid: "e1", keyType: .ecP256),
-            TDFKasInfo(url: url, publicKeyPEM: ecPEM, kid: "r1", keyType: .rsa),
-        ] {
-            XCTAssertThrowsError(try TDFEncryptor().encrypt(
-                plaintext: Data("x".utf8),
-                configuration: Self.configuration(kas),
-            ))
+        for kas in try Self.mismatchedKasInfos() {
+            try assertEveryEntryPointRefuses(Self.configuration(kas)) {
+                XCTAssertTrue($0 is TDFCryptoError, "expected a key error, got \($0)")
+            }
+        }
+    }
+
+    /// A key type that does not match its PEM is refused before the input is
+    /// read: with an input file that does not exist, the key error still wins.
+    func testKeyTypeAndPEMMismatchIsRefusedBeforeReadingInput() throws {
+        let missing = tempDirectory.appendingPathComponent("missing.txt")
+        let output = tempDirectory.appendingPathComponent("out.tdf")
+        for kas in try Self.mismatchedKasInfos() {
+            let configuration = try Self.configuration(kas)
+            XCTAssertThrowsError(try TDFEncryptor().encryptFile(
+                inputURL: missing,
+                outputURL: output,
+                configuration: configuration,
+            )) {
+                XCTAssertTrue($0 is TDFCryptoError, "expected a key error, got \($0)")
+            }
+            XCTAssertThrowsError(try TDFEncryptor().encryptFileMultiSegment(
+                inputURL: missing,
+                outputURL: output,
+                configuration: configuration,
+                segmentSizes: [1],
+            )) {
+                XCTAssertTrue($0 is TDFCryptoError, "expected a key error, got \($0)")
+            }
         }
     }
 
@@ -146,39 +154,53 @@ final class TDFKASEncryptorTests: XCTestCase {
 
     // MARK: - Swift → go check
 
-    /// Writes a key access object from `TDFEncryptor` and a `TDFKAS.rewrap`
-    /// response to `OPENTDFKIT_INTEROP_OUT`, in `GoFixture`'s shape, for
+    /// Writes a key access object and a `TDFKAS.rewrap` response to
+    /// `OPENTDFKIT_INTEROP_OUT`, in `GoFixture`'s shape, for
     /// `scripts/interop/ec-wrapped` (`go run . verify <path>`) to open with go.
+    /// The key access object and policy are copied byte for byte from the
+    /// `manifest.json` an `encryptFile` archive holds, so go reads what ships.
     /// Skipped unless that variable is set; required before a release is tagged.
     func testWriteSwiftFixtureForGo() throws {
         guard let path = ProcessInfo.processInfo.environment["OPENTDFKIT_INTEROP_OUT"], !path.isEmpty else {
             throw XCTSkip("Set OPENTDFKIT_INTEROP_OUT to write the Swift → go interop fixture")
         }
         let (kas, kasKey) = Self.makeECKas()
-        let configuration = try Self.configuration(kas)
-        let result = try TDFEncryptor().encrypt(plaintext: Data("interop".utf8), configuration: configuration)
-        let encryption = result.container.manifest.encryptionInformation
+        let (input, output) = try writeInput(Data("interop".utf8))
+        let result = try TDFEncryptor().encryptFile(
+            inputURL: input,
+            outputURL: output,
+            configuration: Self.configuration(kas),
+        )
+
+        let manifestJSON = try TDFArchiveReader(url: output).manifestData()
+        let manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: manifestJSON) as? [String: Any])
+        let encryption = try XCTUnwrap(manifest["encryptionInformation"] as? [String: Any])
+        let kaoObject = try XCTUnwrap((encryption["keyAccess"] as? [[String: Any]])?.first)
+        let policyBase64 = try XCTUnwrap(encryption["policy"] as? String)
+
         let receiver = P256.KeyAgreement.PrivateKey()
         let rewrapped = try TDFKAS.rewrap(
-            keyAccessObject: encryption.keyAccess[0],
-            policyBase64: encryption.policy,
+            keyAccessObject: JSONDecoder().decode(
+                TDFKeyAccessObject.self,
+                from: JSONSerialization.data(withJSONObject: kaoObject),
+            ),
+            policyBase64: policyBase64,
             kasPrivateKey: kasKey,
             receiverPublicKey: receiver.publicKey,
         )
-        let fixture = GoFixture(
-            kasPrivateKeyPEM: kasKey.pemRepresentation,
-            policyBase64: encryption.policy,
-            kao: encryption.keyAccess[0],
-            dekBase64: result.symmetricKey.withUnsafeBytes { Data($0) }.base64EncodedString(),
-            receiverPrivateKeyPEM: receiver.pemRepresentation,
-            response: GoFixture.Response(
-                wrappedKeyBase64: rewrapped.wrappedKey.base64EncodedString(),
-                sessionPublicKeyPEM: rewrapped.sessionPublicKey.pemRepresentation,
-            ),
-        )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        try encoder.encode(fixture).write(to: URL(fileURLWithPath: path))
+        let fixture: [String: Any] = [
+            "kasPrivateKeyPEM": kasKey.pemRepresentation,
+            "policyBase64": policyBase64,
+            "kao": kaoObject,
+            "dekBase64": result.symmetricKey.withUnsafeBytes { Data($0) }.base64EncodedString(),
+            "receiverPrivateKeyPEM": receiver.pemRepresentation,
+            "response": [
+                "wrappedKeyBase64": rewrapped.wrappedKey.base64EncodedString(),
+                "sessionPublicKeyPEM": rewrapped.sessionPublicKey.pemRepresentation,
+            ],
+        ]
+        try JSONSerialization.data(withJSONObject: fixture, options: [.prettyPrinted, .sortedKeys])
+            .write(to: URL(fileURLWithPath: path))
     }
 
     // MARK: - Helpers
@@ -244,6 +266,50 @@ final class TDFKASEncryptorTests: XCTestCase {
             receiverPrivateKey: receiver,
         )
         return try TDFDecryptor().decrypt(container: container, symmetricKey: dek)
+    }
+
+    /// `.ecP256` with an RSA PEM, and `.rsa` with an EC PEM.
+    static func mismatchedKasInfos() throws -> [TDFKasInfo] {
+        let url = try XCTUnwrap(URL(string: "https://kas.example.com"))
+        return try [
+            TDFKasInfo(url: url, publicKeyPEM: TDFSegmentedPayloadTests.makeRSAPublicKeyPEM(), kid: "e1", keyType: .ecP256),
+            TDFKasInfo(url: url, publicKeyPEM: P256.KeyAgreement.PrivateKey().publicKey.pemRepresentation, kid: "r1"),
+        ]
+    }
+
+    /// Runs all four `TDFEncryptor` entry points with `configuration`; each must
+    /// throw an error `check` accepts, and the file entry points write nothing.
+    private func assertEveryEntryPointRefuses(
+        _ configuration: TDFEncryptionConfiguration,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        check: (Error) -> Void,
+    ) throws {
+        let plaintext = Self.plaintext(count: 100)
+        let encryptor = TDFEncryptor()
+        XCTAssertThrowsError(
+            try encryptor.encrypt(plaintext: plaintext, configuration: configuration),
+            file: file, line: line, check,
+        )
+        XCTAssertThrowsError(
+            try encryptor.encrypt(plaintext: plaintext, configuration: configuration, segmentSize: 64),
+            file: file, line: line, check,
+        )
+        let (input, output) = try writeInput(plaintext)
+        XCTAssertThrowsError(
+            try encryptor.encryptFile(inputURL: input, outputURL: output, configuration: configuration),
+            file: file, line: line, check,
+        )
+        XCTAssertThrowsError(
+            try encryptor.encryptFileMultiSegment(
+                inputURL: input,
+                outputURL: output,
+                configuration: configuration,
+                segmentSizes: [64, 36],
+            ),
+            file: file, line: line, check,
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output.path), "nothing is written", file: file, line: line)
     }
 
     private func writeInput(_ plaintext: Data) throws -> (input: URL, output: URL) {

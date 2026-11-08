@@ -464,13 +464,27 @@ public enum TDFCrypto {
     ) throws -> KASECWrappedKey {
         let kasPublicKey = try loadECPublicKeyP256(fromPEM: publicKeyPEM)
         let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
-        let sealed = try AES.GCM.seal(
-            symmetricKey.withUnsafeBytes { Data($0) },
-            using: TDFKAS.derivedKey(ephemeralPrivateKey, kasPublicKey),
-        )
+        let wrapKey = try deriveKASWrapKey(ephemeralPrivateKey, kasPublicKey)
+        // Seal straight from the key's own storage, so no copy of the share is left behind.
+        let sealed = try symmetricKey.withUnsafeBytes { try AES.GCM.seal($0, using: wrapKey) }
         return KASECWrappedKey(
             wrappedKey: sealed.combined!.base64EncodedString(),
             ephemeralPublicKeyPEM: ephemeralPrivateKey.publicKey.pemRepresentation,
+        )
+    }
+
+    /// ECDH, then HKDF-SHA256 with salt `SHA256("TDF")`, empty info, 32 bytes:
+    /// the go SDK's `tdfSalt()` scheme, used for the `ec-wrapped` key access
+    /// object wrap and for the rewrap session alike (`TDFKAS`).
+    static func deriveKASWrapKey(
+        _ privateKey: P256.KeyAgreement.PrivateKey,
+        _ publicKey: P256.KeyAgreement.PublicKey,
+    ) throws -> SymmetricKey {
+        try privateKey.sharedSecretFromKeyAgreement(with: publicKey).hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: KASRewrapClient.standardTDFSessionSalt,
+            sharedInfo: Data(),
+            outputByteCount: 32,
         )
     }
 

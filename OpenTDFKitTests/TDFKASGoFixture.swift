@@ -39,8 +39,8 @@ enum TDFKASGoFixture {
 
 /// The decoded form of `TDFKASGoFixture.json`. The Swift → go check
 /// (`TDFKASEncryptorTests.testWriteSwiftFixtureForGo`) writes the same shape.
-struct GoFixture: Codable {
-    struct Response: Codable {
+struct GoFixture: Decodable {
+    struct Response: Decodable {
         let wrappedKeyBase64: String
         let sessionPublicKeyPEM: String
     }

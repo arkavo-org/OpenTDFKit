@@ -1082,9 +1082,23 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         clientPrivateKey: Data,
         salt: Data? = nil,
     ) throws -> SymmetricKey {
+        try unwrapKey(
+            wrappedKey: wrappedKey,
+            sessionPublicKey: P256.KeyAgreement.PublicKey(compressedRepresentation: sessionPublicKey),
+            clientPrivateKey: P256.KeyAgreement.PrivateKey(rawRepresentation: clientPrivateKey),
+            salt: salt,
+        )
+    }
+
+    /// `unwrapKey` with the keys as CryptoKit values, so no caller has to make a
+    /// raw copy of the private key to call it.
+    static func unwrapKey(
+        wrappedKey: Data,
+        sessionPublicKey publicKey: P256.KeyAgreement.PublicKey,
+        clientPrivateKey privateKey: P256.KeyAgreement.PrivateKey,
+        salt: Data?,
+    ) throws -> SymmetricKey {
         // Perform ECDH with session public key
-        let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: clientPrivateKey)
-        let publicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: sessionPublicKey)
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
 
         // Derive symmetric key using HKDF

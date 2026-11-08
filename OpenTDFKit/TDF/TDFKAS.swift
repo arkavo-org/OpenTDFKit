@@ -71,7 +71,9 @@ public enum TDFKAS {
         guard keyAccessObject.type == .ecWrapped else {
             throw TDFKASError.unsupportedKeyAccessType(keyAccessObject.type.rawValue)
         }
-        guard let ephemeralPEM = keyAccessObject.ephemeralPublicKey else {
+        guard let ephemeralPEM = keyAccessObject.ephemeralPublicKey,
+              !ephemeralPEM.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
             throw TDFKASError.missingEphemeralPublicKey
         }
         let ephemeralPublicKey = try parseEphemeralPublicKey(ephemeralPEM)
@@ -89,7 +91,7 @@ public enum TDFKAS {
         try verifyPolicyBinding(keyAccessObject.policyBinding, policyBase64: policyBase64, share: share)
 
         let sessionPrivateKey = P256.KeyAgreement.PrivateKey()
-        let sealed = try AES.GCM.seal(share, using: derivedKey(sessionPrivateKey, receiverPublicKey))
+        let sealed = try AES.GCM.seal(share, using: TDFCrypto.deriveKASWrapKey(sessionPrivateKey, receiverPublicKey))
         return RewrapResult(wrappedKey: sealed.combined!, sessionPublicKey: sessionPrivateKey.publicKey)
     }
 
@@ -112,8 +114,8 @@ public enum TDFKAS {
         do {
             share = try KASRewrapClient.unwrapKey(
                 wrappedKey: wrappedKey,
-                sessionPublicKey: sessionPublicKey.compressedRepresentation,
-                clientPrivateKey: receiverPrivateKey.rawRepresentation,
+                sessionPublicKey: sessionPublicKey,
+                clientPrivateKey: receiverPrivateKey,
                 salt: KASRewrapClient.standardTDFSessionSalt,
             )
         } catch {
@@ -126,21 +128,6 @@ public enum TDFKAS {
     }
 
     // MARK: Scheme
-
-    /// ECDH, then HKDF-SHA256 with salt `SHA256("TDF")`, empty info, 32 bytes:
-    /// the go SDK's `tdfSalt()` scheme, used for the key access object wrap and
-    /// for the rewrap session alike.
-    static func derivedKey(
-        _ privateKey: P256.KeyAgreement.PrivateKey,
-        _ publicKey: P256.KeyAgreement.PublicKey,
-    ) throws -> SymmetricKey {
-        try privateKey.sharedSecretFromKeyAgreement(with: publicKey).hkdfDerivedSymmetricKey(
-            using: SHA256.self,
-            salt: KASRewrapClient.standardTDFSessionSalt,
-            sharedInfo: Data(),
-            outputByteCount: 32,
-        )
-    }
 
     /// Parses a PEM P-256 public key the way the platform KAS does (go's
     /// `pem.Decode`): any line length and line ending, spaces and tabs inside
@@ -178,7 +165,7 @@ public enum TDFKAS {
             throw TDFKASError.keyUnwrapFailed
         }
         do {
-            let key = try derivedKey(kasPrivateKey, ephemeralPublicKey)
+            let key = try TDFCrypto.deriveKASWrapKey(kasPrivateKey, ephemeralPublicKey)
             return try AES.GCM.open(AES.GCM.SealedBox(combined: wrappedKey), using: key)
         } catch {
             throw TDFKASError.keyUnwrapFailed
@@ -215,7 +202,7 @@ public enum TDFKAS {
 public enum TDFKASError: Error, CustomStringConvertible, Equatable {
     /// The key access object's `type` is not `ec-wrapped`.
     case unsupportedKeyAccessType(String)
-    /// The key access object has no `ephemeralPublicKey`.
+    /// The key access object has no `ephemeralPublicKey`, or an empty one.
     case missingEphemeralPublicKey
     /// The `ephemeralPublicKey` is not PEM.
     case ephemeralKeyNotPEM

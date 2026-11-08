@@ -224,6 +224,16 @@ final class TDFKASTests: XCTestCase {
         assertRewrapFails(input, kao: kao, .missingEphemeralPublicKey)
     }
 
+    /// go's `omitempty` treats an empty string as absent; so does `rewrap`.
+    func testEmptyEphemeralKeyIsMissing() throws {
+        let input = try Self.makeInput()
+        for empty in ["", " \n"] {
+            var kao = input.kao
+            kao.ephemeralPublicKey = empty
+            assertRewrapFails(input, kao: kao, .missingEphemeralPublicKey)
+        }
+    }
+
     func testSEC1EphemeralKeyIsRefused() throws {
         let input = try Self.makeInput()
         var kao = input.kao

@@ -386,17 +386,25 @@ public struct TDFEncryptor {
         )
     }
 
-    /// Refuses a configuration no KAS could rewrap, before anything is encrypted
-    /// or written: an `.ecP256` KAS needs a `kid` (the platform finds EC keys by
-    /// `kid` alone) and AES-256 (the go SDK only reconstructs a 32-byte key, and
-    /// `TDFKAS.rewrap` only accepts 32-byte shares).
+    /// Refuses a configuration no KAS could rewrap, before the input is read or
+    /// anything is written: the KAS public key must load as its declared
+    /// `keyType` (a `TDFCryptoError` otherwise), and an `.ecP256` KAS needs a
+    /// `kid` (the platform finds EC keys by `kid` alone) and AES-256 (the go SDK
+    /// only reconstructs a 32-byte key, and `TDFKAS.rewrap` only accepts
+    /// 32-byte shares).
     private func validate(_ configuration: TDFEncryptionConfiguration) throws {
-        guard configuration.kas.keyType == .ecP256 else { return }
-        guard let kid = configuration.kas.kid, !kid.isEmpty else {
-            throw TDFEncryptError.ecKasRequiresKeyID
-        }
-        guard configuration.keySize == .bits256 else {
-            throw TDFEncryptError.ecKasRequiresAES256
+        let kas = configuration.kas
+        switch kas.keyType {
+        case .rsa:
+            _ = try TDFCrypto.loadRSAPublicKey(fromPEM: kas.publicKeyPEM)
+        case .ecP256:
+            _ = try TDFCrypto.loadECPublicKeyP256(fromPEM: kas.publicKeyPEM)
+            guard let kid = kas.kid, !kid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw TDFEncryptError.ecKasRequiresKeyID
+            }
+            guard configuration.keySize == .bits256 else {
+                throw TDFEncryptError.ecKasRequiresAES256
+            }
         }
     }
 

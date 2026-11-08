@@ -29,9 +29,14 @@ OPENTDFKIT_INTEROP_OUT="$PWD/swift-interop.json" \
 rm swift-interop.json
 ```
 
-The test writes a key access object from `TDFEncryptor` and a `TDFKAS.rewrap`
-response. `verify` opens the key access object the way the platform KAS does,
-checks the spec-form policy binding, opens the response the way the go SDK
-client does, and prints `OK`.
+The test encrypts a file with `TDFEncryptor.encryptFile`, copies the key access
+object and policy byte for byte from the archive's `manifest.json`, and adds a
+`TDFKAS.rewrap` response. `verify` checks the key access object's fields
+(`type`, `url`, `protocol`, `kid`, `schemaVersion`), opens it the way the
+platform KAS does, checks the spec-form policy binding, opens the response the
+way the go SDK client does, and prints `OK`.
+
+`go test ./...` in this directory checks that `verify` accepts what `generate`
+writes and refuses each kind of tampering.
 
 The keys in the fixture are generated for the test and protect nothing.

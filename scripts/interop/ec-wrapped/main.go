@@ -140,6 +140,10 @@ func verify(path string) error {
 	if err := json.Unmarshal(must(os.ReadFile(path)), &f); err != nil {
 		return fmt.Errorf("reading %s: %w", path, err)
 	}
+	return verifyFixture(f)
+}
+
+func verifyFixture(f fixture) error {
 	dek, err := base64.StdEncoding.DecodeString(f.DEKBase64)
 	if err != nil {
 		return fmt.Errorf("dekBase64: %w", err)
@@ -149,6 +153,16 @@ func verify(path string) error {
 	}
 	if f.KAO.Kid == "" {
 		return errors.New("kao has no kid; a platform KAS finds EC keys by kid")
+	}
+	// Field spellings: a writer whose JSON keys differ from go's tags leaves these empty.
+	if f.KAO.URL == "" {
+		return errors.New("kao has no url")
+	}
+	if f.KAO.Protocol != "kas" {
+		return fmt.Errorf("kao protocol is %q, want kas", f.KAO.Protocol)
+	}
+	if f.KAO.SchemaVersion == "" {
+		return errors.New("kao has no schemaVersion")
 	}
 
 	// Key access object, as service/kas/access/rewrap.go case "ec-wrapped".
