@@ -338,6 +338,11 @@ public enum TDFCrypto {
 
     /// Wrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM).
     /// This generates an ephemeral key pair and uses ECDH with the recipient's public key.
+    ///
+    /// This is the TDF-JSON / TDF-CBOR draft scheme: an **empty** HKDF salt and a
+    /// base64 compressed SEC1 ephemeral key. It is not the go SDK / opentdf-platform
+    /// `ec-wrapped` scheme, which a platform KAS and `TDFKAS.rewrap` expect; use
+    /// `wrapSymmetricKeyWithECForKAS` for that.
     /// - Parameters:
     ///   - publicKeyPEM: The recipient's EC public key in PEM format
     ///   - symmetricKey: The symmetric key to wrap
@@ -358,7 +363,8 @@ public enum TDFCrypto {
         }
     }
 
-    /// Unwrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM).
+    /// Unwrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM), in the
+    /// TDF-JSON / TDF-CBOR draft scheme (empty HKDF salt); see `wrapSymmetricKeyWithEC`.
     /// - Parameters:
     ///   - privateKeyPEM: The recipient's PEM-encoded EC private key
     ///   - wrappedKey: The wrapped key data (base64-encoded nonce + ciphertext + tag)
@@ -377,7 +383,8 @@ public enum TDFCrypto {
         )
     }
 
-    /// Unwrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM).
+    /// Unwrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM), in the
+    /// TDF-JSON / TDF-CBOR draft scheme (empty HKDF salt); see `wrapSymmetricKeyWithEC`.
     /// - Parameters:
     ///   - privateKey: The recipient's private key for ECDH
     ///   - wrappedKey: The wrapped key data (base64-encoded nonce + ciphertext + tag)
@@ -626,11 +633,12 @@ public enum TDFCrypto {
     }
 }
 
-/// Result of EC key wrapping containing wrapped key and ephemeral public key
+/// Result of `TDFCrypto.wrapSymmetricKeyWithEC` (the TDF-JSON / TDF-CBOR draft
+/// scheme): the wrapped key and the ephemeral public key
 public struct ECWrappedKeyResult: Sendable {
-    /// The wrapped symmetric key (nonce + ciphertext + tag)
+    /// The wrapped symmetric key, base64 (nonce + ciphertext + tag)
     public let wrappedKey: String
-    /// The ephemeral public key in PEM format
+    /// The ephemeral public key, base64 compressed SEC1 (not PEM)
     public let ephemeralPublicKey: String
 }
 
