@@ -1106,7 +1106,10 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
 
         // Use the SealedBox combined initializer which expects nonce+ciphertext+tag
         let sealedBox = try AES.GCM.SealedBox(combined: wrappedKey)
-        let decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKey)
+        var decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKey)
+        defer {
+            decryptedKey.secureZero()
+        }
         return SymmetricKey(data: decryptedKey)
     }
 
