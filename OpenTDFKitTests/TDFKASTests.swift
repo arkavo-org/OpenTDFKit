@@ -137,6 +137,15 @@ final class TDFKASTests: XCTestCase {
         assertRewrapFails(input, kao: kao, .policyBindingRefused)
     }
 
+    /// An empty `alg` means HS256 (OpenTDF spec PR #70), also on a key access
+    /// object built by hand rather than decoded.
+    func testEmptyAlgIsTreatedAsHS256() throws {
+        let input = try Self.makeInput()
+        var kao = input.kao
+        kao.policyBinding.alg = ""
+        XCTAssertNoThrow(try input.rewrap(kao: kao, to: P256.KeyAgreement.PrivateKey().publicKey))
+    }
+
     /// Some writers emit `policyBinding` as a bare string; it decodes as HS256
     /// and verifies normally.
     func testBareStringBindingVerifies() throws {
@@ -264,6 +273,55 @@ final class TDFKASTests: XCTestCase {
                 kasPrivateKey: kasKey,
                 receiverPublicKey: P256.KeyAgreement.PrivateKey().publicKey,
             ))
+        }
+    }
+
+    /// go's `pem.Decode`, which the platform KAS uses, accepts any line length,
+    /// spaces and tabs inside the body, and text after the END line; so does
+    /// `rewrap`.
+    func testRewrapAcceptsPEMLayoutsGoAccepts() throws {
+        let fixture = try GoFixture.load()
+        let kasKey = try P256.KeyAgreement.PrivateKey(pemRepresentation: fixture.kasPrivateKeyPEM)
+        let der = try P256.KeyAgreement.PublicKey(pemRepresentation: XCTUnwrap(fixture.kao.ephemeralPublicKey))
+            .derRepresentation
+        let body = der.base64EncodedString()
+        func pem(_ lines: [String], after: String = "") -> String {
+            (["-----BEGIN PUBLIC KEY-----"] + lines + ["-----END PUBLIC KEY-----"]).joined(separator: "\n") + "\n" + after
+        }
+        func chunks(_ width: Int) -> [String] {
+            stride(from: 0, to: body.count, by: width).map { start in
+                let from = body.index(body.startIndex, offsetBy: start)
+                return String(body[from ..< body.index(from, offsetBy: min(width, body.count - start))])
+            }
+        }
+        let variants = [
+            "one line": pem([body]),
+            "48 columns": pem(chunks(48)),
+            "76 columns": pem(chunks(76)),
+            "trailing spaces and a tab": pem(chunks(64).map { $0 + " \t " }),
+            "text after END": pem(chunks(64), after: "trailing text\n"),
+        ]
+        for (name, variant) in variants {
+            var kao = fixture.kao
+            kao.ephemeralPublicKey = variant
+            XCTAssertNoThrow(try TDFKAS.rewrap(
+                keyAccessObject: kao,
+                policyBase64: fixture.policyBase64,
+                kasPrivateKey: kasKey,
+                receiverPublicKey: P256.KeyAgreement.PrivateKey().publicKey,
+            ), name)
+        }
+    }
+
+    func testMalformedPEMBodyIsRefused() throws {
+        let input = try Self.makeInput()
+        for variant in [
+            "-----BEGIN PUBLIC KEY-----\n!!!!\n-----END PUBLIC KEY-----\n",
+            "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\n",
+        ] {
+            var kao = input.kao
+            kao.ephemeralPublicKey = variant
+            assertRewrapFails(input, kao: kao, .invalidEphemeralPublicKey)
         }
     }
 

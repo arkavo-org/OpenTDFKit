@@ -142,17 +142,26 @@ public enum TDFKAS {
         )
     }
 
-    /// Parses a PEM P-256 public key, as the platform KAS requires; CRLF line
-    /// endings and a missing trailing newline are accepted.
+    /// Parses a PEM P-256 public key the way the platform KAS does (go's
+    /// `pem.Decode`): any line length and line ending, spaces and tabs inside
+    /// the body, and text after the END line are accepted.
     private static func parseEphemeralPublicKey(_ text: String) throws -> P256.KeyAgreement.PublicKey {
+        let begin = "-----BEGIN PUBLIC KEY-----"
+        let end = "-----END PUBLIC KEY-----"
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("-----BEGIN PUBLIC KEY-----") else {
+        guard trimmed.hasPrefix(begin) else {
             throw TDFKASError.ephemeralKeyNotPEM
         }
+        guard let endRange = trimmed.range(of: end) else {
+            throw TDFKASError.invalidEphemeralPublicKey
+        }
+        let body = trimmed[trimmed.index(trimmed.startIndex, offsetBy: begin.count) ..< endRange.lowerBound]
+            .filter { !$0.isWhitespace }
+        guard let der = Data(base64Encoded: String(body)) else {
+            throw TDFKASError.invalidEphemeralPublicKey
+        }
         do {
-            return try P256.KeyAgreement.PublicKey(
-                pemRepresentation: trimmed.replacingOccurrences(of: "\r\n", with: "\n"),
-            )
+            return try P256.KeyAgreement.PublicKey(derRepresentation: der)
         } catch {
             throw TDFKASError.invalidEphemeralPublicKey
         }
@@ -176,15 +185,16 @@ public enum TDFKAS {
         }
     }
 
-    /// Spec-form binding only: `alg` is `HS256` and `hash` is Base64 of the raw
-    /// 32-byte `HMAC-SHA256(share, policyBase64)`, compared in constant time.
-    /// go's legacy `Base64(hex(HMAC))` form is refused.
+    /// Spec-form binding only: `alg` is `HS256` (empty means `HS256`, OpenTDF
+    /// spec PR #70) and `hash` is Base64 of the raw 32-byte
+    /// `HMAC-SHA256(share, policyBase64)`, compared in constant time. go's
+    /// legacy `Base64(hex(HMAC))` form is refused.
     private static func verifyPolicyBinding(
         _ binding: TDFPolicyBinding,
         policyBase64: String,
         share: Data,
     ) throws {
-        guard binding.alg == "HS256",
+        guard binding.alg == "HS256" || binding.alg.isEmpty,
               let expected = Data(base64Encoded: binding.hash),
               expected.count == SHA256.byteCount,
               HMAC<SHA256>.isValidAuthenticationCode(
