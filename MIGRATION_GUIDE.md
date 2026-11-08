@@ -2,6 +2,19 @@
 
 This guide covers breaking changes across all OpenTDFKit versions.
 
+## v5.2.0 - KAS-side EC rewrap and `ec-wrapped` encryption
+
+**What changed:** additive only.
+
+- `TDFKAS.rewrap(keyAccessObject:policyBase64:kasPrivateKey:receiverPublicKey:)` is the KAS side of a TDF `ec-wrapped` rewrap, and `TDFKAS.unwrap(wrappedKey:sessionPublicKey:receiverPrivateKey:)` the matching client unwrap, as pure functions for an on-device KAS. Failures are `TDFKASError`. The policy binding must be the spec form (Base64 of the raw HMAC-SHA256); go's legacy hex form is refused.
+- `TDFKasInfo` gains `keyType` (`.rsa` by default, `.ecP256`). With `.ecP256`, `TDFEncryptor` writes an `ec-wrapped` key access object in the go SDK / opentdf-platform scheme, which needs a `kid` and AES-256; otherwise it throws `TDFEncryptError` before writing anything.
+- `TDFCrypto.wrapSymmetricKeyWithECForKAS(publicKeyPEM:symmetricKey:)` returns `KASECWrappedKey`. The existing `wrapSymmetricKeyWithEC` / `unwrapSymmetricKeyWithEC` are the TDF-JSON / TDF-CBOR draft scheme (empty salt, compressed SEC1 ephemeral key), now documented as such; their behaviour is unchanged.
+- `KASRewrapClient.unwrapKey` wipes the opened key bytes before returning.
+
+### Migration Steps
+
+No migration is required. Existing `TDFKasInfo` callers default to `.rsa` and write the same output as before.
+
 ## v5.1.0 - Bulk rewrap and payload cap
 
 **What changed:** `KASRewrapClient.rewrapAndUnwrapTDFs(_:options:)` rewraps up to 1,000 standard TDFs in one Rewrap call; more TDFs, or a signed request over `BulkRewrapOptions.maxRequestBodyBytes`, is refused before sending, so split the list. Every `KASRewrapClient` request now goes through a `KASRewrapTransport`; the existing `urlSession:` initializer wraps it in `URLSessionKASTransport`, so behaviour is unchanged. `TDFLoader(maxPayloadSize:)` bounds the payload read. `encryptFile` and `buildArchiveToFile` write through a temporary `.partial` file beside the output, so its directory must be writable. The archive reader now accepts only regular-file manifest and payload entries; a symlink or directory entry throws `TDFArchiveError.unsupportedEntryType(String)`.

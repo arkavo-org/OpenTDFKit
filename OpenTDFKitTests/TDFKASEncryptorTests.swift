@@ -144,6 +144,43 @@ final class TDFKASEncryptorTests: XCTestCase {
         XCTAssertEqual(dek, result.symmetricKey.withUnsafeBytes { Data($0) })
     }
 
+    // MARK: - Swift → go check
+
+    /// Writes a key access object from `TDFEncryptor` and a `TDFKAS.rewrap`
+    /// response to `OPENTDFKIT_INTEROP_OUT`, in `GoFixture`'s shape, for
+    /// `scripts/interop/ec-wrapped` (`go run . verify <path>`) to open with go.
+    /// Skipped unless that variable is set; required before a release is tagged.
+    func testWriteSwiftFixtureForGo() throws {
+        guard let path = ProcessInfo.processInfo.environment["OPENTDFKIT_INTEROP_OUT"], !path.isEmpty else {
+            throw XCTSkip("Set OPENTDFKIT_INTEROP_OUT to write the Swift → go interop fixture")
+        }
+        let (kas, kasKey) = Self.makeECKas()
+        let configuration = try Self.configuration(kas)
+        let result = try TDFEncryptor().encrypt(plaintext: Data("interop".utf8), configuration: configuration)
+        let encryption = result.container.manifest.encryptionInformation
+        let receiver = P256.KeyAgreement.PrivateKey()
+        let rewrapped = try TDFKAS.rewrap(
+            keyAccessObject: encryption.keyAccess[0],
+            policyBase64: encryption.policy,
+            kasPrivateKey: kasKey,
+            receiverPublicKey: receiver.publicKey,
+        )
+        let fixture = GoFixture(
+            kasPrivateKeyPEM: kasKey.pemRepresentation,
+            policyBase64: encryption.policy,
+            kao: encryption.keyAccess[0],
+            dekBase64: result.symmetricKey.withUnsafeBytes { Data($0) }.base64EncodedString(),
+            receiverPrivateKeyPEM: receiver.pemRepresentation,
+            response: GoFixture.Response(
+                wrappedKeyBase64: rewrapped.wrappedKey.base64EncodedString(),
+                sessionPublicKeyPEM: rewrapped.sessionPublicKey.pemRepresentation,
+            ),
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        try encoder.encode(fixture).write(to: URL(fileURLWithPath: path))
+    }
+
     // MARK: - Helpers
 
     static func makeECKas(kid: String? = "e1") -> (TDFKasInfo, P256.KeyAgreement.PrivateKey) {
