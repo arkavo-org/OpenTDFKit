@@ -1039,6 +1039,9 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         }
     }
 
+    /// Whether a key access object's URL names this client's KAS: scheme and host
+    /// (case-insensitive), effective port, and normalized path. A platform KAS and
+    /// owner KASs share one host, so the path decides.
     private func matchesKasURL(_ otherURLString: String) -> Bool {
         guard let otherURL = URL(string: otherURLString), let kasURL = URL(string: kasIdentityURL),
               let baseScheme = kasURL.scheme?.lowercased(),
@@ -1050,6 +1053,18 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
             return false
         }
         return effectivePort(for: kasURL) == effectivePort(for: otherURL)
+            && Self.normalizedKasPath(kasURL) == Self.normalizedKasPath(otherURL)
+    }
+
+    /// A KAS URL's path for matching: trailing `/` trimmed (case kept), and `/kas`
+    /// the same as no path, because a platform KAS is served at `<platform>/kas`
+    /// for REST and at the root for Connect, and discovery reports it without one.
+    static func normalizedKasPath(_ url: URL) -> String {
+        var path = url.path(percentEncoded: true)
+        while path.hasSuffix("/") {
+            path.removeLast()
+        }
+        return path == "/kas" ? "" : path
     }
 
     private func effectivePort(for url: URL) -> Int {
