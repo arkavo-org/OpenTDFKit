@@ -323,6 +323,19 @@ final class TDFKASTests: XCTestCase {
         }
     }
 
+    /// The END marker overlapping the BEGIN marker's dashes must throw, not trap.
+    func testOverlappingPEMMarkersRefused() throws {
+        let input = try Self.makeInput()
+        for variant in ["-----BEGIN PUBLIC KEY-----END PUBLIC KEY-----",
+                        "-----BEGIN PUBLIC KEY-----END PUBLIC KEY-----\n",
+                        "-----BEGIN PUBLIC KEY-----"]
+        {
+            var kao = input.kao
+            kao.ephemeralPublicKey = variant
+            assertRewrapFails(input, kao: kao, .invalidEphemeralPublicKey)
+        }
+    }
+
     func testMalformedPEMBodyIsRefused() throws {
         let input = try Self.makeInput()
         for variant in [

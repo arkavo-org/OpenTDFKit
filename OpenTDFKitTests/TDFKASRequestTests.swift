@@ -104,6 +104,13 @@ final class TDFKASRequestTests: XCTestCase {
     }
 
     /// The phone must parse an expired request so it can sign REQUEST_EXPIRED.
+    func testOverlappingPEMMarkersInClientKeyRefused() throws {
+        var bodyObject = try requestBody()
+        bodyObject["clientPublicKey"] = "-----BEGIN PUBLIC KEY-----END PUBLIC KEY-----"
+        let (body, _) = try signedRequest(requestBody: bodyObject, exp: now + 60, iat: now)
+        assertMalformed(body)
+    }
+
     func testExpiredTokenStillParses() throws {
         let (body, _) = try signedRequest(requestBody: requestBody(), exp: now - 3600, iat: now - 4500)
         let request = try TDFKAS.verifyRewrapRequest(body: body, signingPublicKey: signingKey.publicKey)

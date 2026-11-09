@@ -89,7 +89,7 @@ public extension KASRewrapClient {
         let expiresAt: Int
         if let requested = options.expiresAt?.timeIntervalSince1970 {
             // NumericDate up to 9999-12-31; also keeps Int(_:) from trapping.
-            guard requested.isFinite, requested <= 253_402_300_799 else {
+            guard requested.isFinite, requested >= 0, requested <= 253_402_300_799 else {
                 throw KASRewrapError.invalidRewrapOptions("expiresAt is out of range")
             }
             expiresAt = Int(requested)
@@ -313,11 +313,17 @@ public extension KASRewrapClient {
         return .answered(answer, shares: shares)
     }
 
-    /// `Retry-After` as delta-seconds, clamped to 1–60; anything else (an
-    /// HTTP-date, a negative value, nothing) is the default of 2 seconds.
+    /// `Retry-After` as delta-seconds (ASCII digits only), clamped to 1–60, with
+    /// a value too large for `Int` taken as 60; anything else (an HTTP-date, a
+    /// sign, nothing) is the default of 2 seconds.
     internal static func retryAfterSeconds(_ value: String?) -> TimeInterval {
-        guard let value, let seconds = Int(value.trimmingCharacters(in: .whitespaces)), seconds >= 0 else {
+        guard let text = value?.trimmingCharacters(in: .whitespaces), !text.isEmpty,
+              text.utf8.allSatisfy({ (UInt8(ascii: "0") ... UInt8(ascii: "9")).contains($0) })
+        else {
             return 2
+        }
+        guard let seconds = Int(text) else {
+            return 60
         }
         return TimeInterval(min(max(seconds, 1), 60))
     }

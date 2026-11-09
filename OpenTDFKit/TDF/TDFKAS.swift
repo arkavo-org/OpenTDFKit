@@ -139,11 +139,12 @@ public enum TDFKAS {
         guard trimmed.hasPrefix(begin) else {
             throw TDFKASError.ephemeralKeyNotPEM
         }
-        guard let endRange = trimmed.range(of: end) else {
+        // Search for END only after BEGIN: the markers' dashes can overlap.
+        let bodyStart = trimmed.index(trimmed.startIndex, offsetBy: begin.count)
+        guard let endRange = trimmed.range(of: end, range: bodyStart ..< trimmed.endIndex) else {
             throw TDFKASError.invalidEphemeralPublicKey
         }
-        let body = trimmed[trimmed.index(trimmed.startIndex, offsetBy: begin.count) ..< endRange.lowerBound]
-            .filter { !$0.isWhitespace }
+        let body = trimmed[bodyStart ..< endRange.lowerBound].filter { !$0.isWhitespace }
         guard let der = Data(base64Encoded: String(body)) else {
             throw TDFKASError.invalidEphemeralPublicKey
         }

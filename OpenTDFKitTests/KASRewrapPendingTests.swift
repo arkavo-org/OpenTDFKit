@@ -358,7 +358,7 @@ final class KASRewrapPendingTests: XCTestCase {
     }
 
     func testOutOfRangeExpiresAtRefused() throws {
-        for seconds in [Double.infinity, 1e300, Double.nan] {
+        for seconds in [Double.infinity, 1e300, Double.nan, -1e300, -Double.infinity] {
             XCTAssertThrowsError(try makeClient().prepareRewrap(
                 manifest: makeManifest(), clientPrivateKey: clientKey,
                 options: .init(expiresAt: Date(timeIntervalSince1970: seconds)),
@@ -374,6 +374,9 @@ final class KASRewrapPendingTests: XCTestCase {
         XCTAssertEqual(KASRewrapClient.retryAfterSeconds("Wed, 21 Oct 2015 07:28:00 GMT"), 2)
         XCTAssertEqual(KASRewrapClient.retryAfterSeconds(nil), 2)
         XCTAssertEqual(KASRewrapClient.retryAfterSeconds(" 4 "), 4)
+        XCTAssertEqual(KASRewrapClient.retryAfterSeconds("99999999999999999999"), 60, "overflow clamps to the cap")
+        XCTAssertEqual(KASRewrapClient.retryAfterSeconds("+5"), 2, "delta-seconds is digits only")
+        XCTAssertEqual(KASRewrapClient.retryAfterSeconds("٣"), 2, "ASCII digits only")
     }
 
     func testLocationOriginRules() async throws {
