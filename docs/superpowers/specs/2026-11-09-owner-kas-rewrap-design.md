@@ -266,12 +266,18 @@ extension KASRewrapClient {
   request is unknown to the relay (a wrong token, or lost state), which the app shows as unavailable, never as a
   denial.
 - Other statuses throw.
-- It never sleeps past `deadline`: if the next wait would end after it, it returns `.deadlineReached(pending)` with
-  the current handle, so the app can resume later.
+- It never sleeps past `deadline`. If the next wait would end after it, it sleeps only until `deadline`, polls once
+  more, and returns `.deadlineReached(pending)` with the current handle if that poll is still pending. If the app
+  wakes after `deadline` (suspended mid-wait), it returns at once without polling. Each poll's timeout is clamped to
+  the time left (1–30 s). *(Revised after the final review, 2026-11-09.)*
+- It first checks that the handle's `location` is on this client's KAS origin. A handle from another client throws
+  `.unsafeLocation`, and nothing is sent.
+- A `403` on submit or poll is `.httpError(403, …)`, never `.accessDenied`: on this path a denial is always a
+  result.
 - The sleep goes through an internal, injectable sleeper, so tests run instantly.
 
 **`rewrap`** runs prepare, submit and poll, with `deadline` defaulting to `expiresAt`, and unwraps the permitted
-shares.
+shares. Reaching that default deadline is `.expired`, because the KAS's own deadline has passed.
 - On task cancellation it throws, and the pending handle is lost. A receiver that must survive backgrounding calls the
   three steps itself and keeps the `PendingRewrap`.
 

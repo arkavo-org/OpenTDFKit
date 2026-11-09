@@ -60,6 +60,18 @@ final class KASRewrapMatchingTests: XCTestCase {
                        ["https://platform.arkavo.net/api/kas"])
     }
 
+    /// Percent-encoded unreserved characters are the same path (RFC 3986 6.2.2.2);
+    /// an encoded slash is not.
+    func testPercentEncodedUnreservedPathMatches() throws {
+        XCTAssertEqual(try Self.selected(by: "https://platform.arkavo.net",
+                                         from: ["https://platform.arkavo.net/%6bas", "https://platform.arkavo.net/%6Bas"]),
+                       ["https://platform.arkavo.net/%6bas", "https://platform.arkavo.net/%6Bas"])
+        let encodedO = Self.owner.replacingOccurrences(of: "/owner-kas/", with: "/%6Fwner-kas/")
+        XCTAssertEqual(try Self.selected(by: Self.owner, from: [encodedO]), [encodedO])
+        let encodedSlash = Self.owner.replacingOccurrences(of: "/owner-kas/v1/", with: "/owner-kas%2Fv1/")
+        XCTAssertEqual(try Self.selected(by: Self.owner, from: [encodedSlash]), [])
+    }
+
     // MARK: - Helpers
 
     /// URLs of the key access objects a client configured with `uri` selects.

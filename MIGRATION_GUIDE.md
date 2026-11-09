@@ -4,7 +4,7 @@ This guide covers breaking changes across all OpenTDFKit versions.
 
 ## v5.2.0 - KAS-side EC rewrap and `ec-wrapped` encryption
 
-**What changed:** additive only.
+**What changed:** additive, except that key access object matching is now path-aware (see below) and `KASRewrapError` has new cases.
 
 - `TDFKAS.rewrap(keyAccessObject:policyBase64:kasPrivateKey:receiverPublicKey:)` is the KAS side of a TDF `ec-wrapped` rewrap, and `TDFKAS.unwrap(wrappedKey:sessionPublicKey:receiverPrivateKey:)` the matching client unwrap, as pure functions for an on-device KAS. Failures are `TDFKASError`. The policy binding must be the spec form (Base64 of the raw HMAC-SHA256); go's legacy hex form is refused.
 - `TDFKasInfo` gains `keyType` (`.rsa` by default, `.ecP256`). With `.ecP256`, `TDFEncryptor` writes an `ec-wrapped` key access object in the go SDK / opentdf-platform scheme, which needs a `kid` and AES-256; otherwise it throws `TDFEncryptError` before writing anything.

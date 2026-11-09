@@ -103,6 +103,25 @@ final class TDFKASDigestTests: XCTestCase {
         XCTAssertEqual(TDFKAS.keyAccessObjectDigest(forwarded), TDFKAS.keyAccessObjectDigest(manifestKAO))
     }
 
+    /// The same, for an object with every digest field set, `sid` and
+    /// `encryptedMetadata` included.
+    func testKAODigestSameForForwardedKAOWithAllFields() throws {
+        let manifestKAO = Self.fullKAO()
+        let client = try KASRewrapClient(configuration: .forKasConnect("https://h"), oauthToken: "token")
+        var manifest = try KASRewrapMatchingTests.manifest(kaoURLs: ["https://h/kas"])
+        manifest.encryptionInformation.keyAccess = [manifestKAO]
+        let entry = try client.standardPolicyRequest(manifest: manifest, keyAccessEntries: [manifestKAO])
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(entry)) as? [String: Any])
+        let wrapper = try XCTUnwrap((json["keyAccessObjects"] as? [[String: Any]])?.first)
+        let forwarded = try JSONDecoder().decode(
+            TDFKeyAccessObject.self,
+            from: JSONSerialization.data(withJSONObject: XCTUnwrap(wrapper["keyAccessObject"])),
+        )
+        XCTAssertEqual(forwarded.sid, "s1")
+        XCTAssertEqual(forwarded.encryptedMetadata, "bWV0YQ==")
+        XCTAssertEqual(TDFKAS.keyAccessObjectDigest(forwarded), TDFKAS.keyAccessObjectDigest(manifestKAO))
+    }
+
     func testFingerprintIndependentOfKeyEncoding() throws {
         let key = P256.KeyAgreement.PrivateKey().publicKey
         let expected = Data(SHA256.hash(data: key.x963Representation))

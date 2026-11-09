@@ -86,7 +86,16 @@ public extension KASRewrapClient {
         }
 
         let issuedAt = Int(now().timeIntervalSince1970)
-        let expiresAt = options.expiresAt.map { Int($0.timeIntervalSince1970) } ?? issuedAt + 60
+        let expiresAt: Int
+        if let requested = options.expiresAt?.timeIntervalSince1970 {
+            // NumericDate up to 9999-12-31; also keeps Int(_:) from trapping.
+            guard requested.isFinite, requested <= 253_402_300_799 else {
+                throw KASRewrapError.invalidRewrapOptions("expiresAt is out of range")
+            }
+            expiresAt = Int(requested)
+        } else {
+            expiresAt = issuedAt + 60
+        }
         guard expiresAt > issuedAt else {
             throw KASRewrapError.invalidRewrapOptions("expiresAt must be in the future")
         }
@@ -195,7 +204,8 @@ public extension KASRewrapClient {
     /// on the same scheme, host and port. Never retries; resending the same
     /// `PreparedRewrap` is safe.
     /// - Throws: `KASRewrapError.pendingWithoutLocation`, `.unsafeLocation`, or
-    ///   the error for any other HTTP status.
+    ///   the error for any other HTTP status. A `403` is `.httpError(403, …)`,
+    ///   never `.accessDenied`: on this path a denial is always a result.
     func submitRewrap(_ prepared: PreparedRewrap) async throws -> RewrapSubmission {
         let (data, response) = try await transport.send(rewrapURLRequest(body: prepared.body))
         switch response.statusCode {
@@ -214,26 +224,38 @@ public extension KASRewrapClient {
                 keyAccessObjects: prepared.keyAccessObjects,
             ))
         default:
-            throw mapRewrapHTTPError(status: response.statusCode, data: data)
+            throw pendingPathError(status: response.statusCode, data: data)
         }
     }
 
     /// Polls a pending Rewrap with the same bearer, waiting `Retry-After` between
-    /// polls, until it is answered (`200`), expires (`410`, or `404` at or after
-    /// `expiresAt`), or the next wait would pass `deadline`.
-    /// - Throws: `KASRewrapError.httpError` for any other status, including a
-    ///   `404` before `expiresAt` (an unknown request: show the KAS as unavailable).
+    /// polls, until it is answered (`200`) or expires (`410`, or `404` at or after
+    /// `expiresAt`). When the next wait would pass `deadline`, it waits only until
+    /// `deadline`, polls once more, and returns `.deadlineReached` if that poll is
+    /// still pending. It never polls after `deadline` (a suspended app that wakes
+    /// late returns at once), and each poll's timeout ends at `deadline`.
+    /// - Throws: `KASRewrapError.unsafeLocation` for a handle that isn't on this
+    ///   client's KAS origin (nothing is sent), and `.httpError` for any other
+    ///   status, including a `404` before `expiresAt` (an unknown request: show
+    ///   the KAS as unavailable) and a `403`.
     func pollRewrap(_ pending: PendingRewrap, until deadline: Date) async throws -> RewrapPollOutcome {
+        // The handle may come from another client: this client's bearer only goes
+        // to this client's KAS origin.
+        let location = try sameOriginLocation(pending.location.absoluteString)
         var current = pending
         while true {
-            if now().addingTimeInterval(current.retryAfter) > deadline {
+            let remaining = deadline.timeIntervalSince(now())
+            guard remaining > 0 else {
                 return .deadlineReached(current)
             }
-            try await sleeper(current.retryAfter)
+            try await sleeper(min(current.retryAfter, remaining))
+            guard now() <= deadline else {
+                return .deadlineReached(current)
+            }
 
-            var request = URLRequest(url: current.location)
+            var request = URLRequest(url: location)
             request.httpMethod = "GET"
-            request.timeoutInterval = 30
+            request.timeoutInterval = min(30, max(1, deadline.timeIntervalSince(now())))
             request.addValue("Bearer \(oauthToken)", forHTTPHeaderField: "Authorization")
             let (data, response) = try await transport.send(request)
 
@@ -254,15 +276,16 @@ public extension KASRewrapClient {
             case 404 where now() >= current.expiresAt:
                 return .expired
             default:
-                throw mapRewrapHTTPError(status: response.statusCode, data: data)
+                throw pendingPathError(status: response.statusCode, data: data)
             }
         }
     }
 
     /// Prepares, submits and polls a Rewrap, and unwraps every permitted share.
-    /// `deadline` defaults to the request token's `exp`. A cancelled task throws
-    /// and loses the pending handle; a caller that must resume after an
-    /// interruption calls the three steps itself.
+    /// `deadline` defaults to the request token's `exp`; reaching that default
+    /// deadline is `.expired`, because the KAS's own deadline has then passed. A
+    /// cancelled task throws and loses the pending handle; a caller that must
+    /// resume after an interruption calls the three steps itself.
     func rewrap(
         manifest: TDFManifest,
         clientPrivateKey: P256.KeyAgreement.PrivateKey,
@@ -281,7 +304,7 @@ public extension KASRewrapClient {
             case .expired:
                 return .expired
             case let .deadlineReached(handle):
-                return .deadlineReached(handle)
+                return deadline == nil ? .expired : .deadlineReached(handle)
             }
         }
         let shares = try answer.results.filter { $0.status == "permit" }.map {
@@ -304,10 +327,12 @@ public extension KASRewrapClient {
 
 extension KASRewrapClient {
     /// `location` resolved against the Rewrap URL, refused unless it keeps the
-    /// Rewrap URL's scheme, host and effective port: the bearer token goes there.
+    /// Rewrap URL's scheme, host and effective port and carries no user info: the
+    /// bearer token goes there.
     func sameOriginLocation(_ location: String) throws -> URL {
         guard let rewrapURL = URL(string: endpoints.rewrapURL),
               let resolved = URL(string: location, relativeTo: rewrapURL)?.absoluteURL,
+              resolved.user == nil, resolved.password == nil,
               resolved.scheme?.lowercased() == rewrapURL.scheme?.lowercased(),
               resolved.host?.lowercased() == rewrapURL.host?.lowercased(),
               effectivePort(for: resolved) == effectivePort(for: rewrapURL)
@@ -317,8 +342,23 @@ extension KASRewrapClient {
         return resolved
     }
 
+    /// The error for a non-answer status on the pending path: as for `rewrapTDF`,
+    /// except that a `403` is `.httpError(403, …)` and never `.accessDenied`, so
+    /// a middlebox's refusal can't read as the KAS's decision.
+    func pendingPathError(status: Int, data: Data) -> KASRewrapError {
+        let error = mapRewrapHTTPError(status: status, data: data)
+        if case let .accessDenied(detail) = error {
+            return .httpError(status, detail)
+        }
+        return error
+    }
+
     /// Maps a `200` Rewrap response body to a `RewrapAnswer`, keeping every
-    /// result. Result `kao-<i>` takes the split ID of `keyAccessObjects[i]`.
+    /// result. Result `kao-<i>` takes the split ID of `keyAccessObjects[i]`. A
+    /// result whose `kasWrappedKey` is not base64 is kept with no key (`share`
+    /// then throws), so the other results and its metadata survive.
+    /// - Throws: `KASRewrapError.emptyResponse` when no result answers a key
+    ///   access object that was sent.
     func answer(from data: Data, digest: Data, keyAccessObjects: [TDFKeyAccessObject]) throws -> RewrapAnswer {
         let response = try JSONDecoder().decode(RewrapResponse.self, from: data)
         let sessionPublicKey: P256.KeyAgreement.PublicKey?
@@ -333,12 +373,7 @@ extension KASRewrapClient {
         }
         let results = try response.responses.flatMap { policy in
             try policy.results.map { result in
-                let wrapped = try (result.kasWrappedKey ?? result.entityWrappedKey).map { base64 in
-                    guard let data = Data(base64Encoded: base64) else {
-                        throw KASRewrapError.invalidWrappedKeyFormat
-                    }
-                    return data
-                }
+                let wrapped = (result.kasWrappedKey ?? result.entityWrappedKey).flatMap { Data(base64Encoded: $0) }
                 let index = result.keyAccessObjectId.hasPrefix("kao-")
                     ? Int(result.keyAccessObjectId.dropFirst("kao-".count)) : nil
                 let sid = index.flatMap { keyAccessObjects.indices.contains($0) ? keyAccessObjects[$0].sid : nil }
@@ -351,6 +386,13 @@ extension KASRewrapClient {
                     metadata: result.metadata ?? [:],
                 )
             }
+        }
+        let answersSentObject = results.contains { result in
+            result.keyAccessObjectId.hasPrefix("kao-")
+                && Int(result.keyAccessObjectId.dropFirst("kao-".count)).map(keyAccessObjects.indices.contains) == true
+        }
+        guard answersSentObject else {
+            throw KASRewrapError.emptyResponse
         }
         return RewrapAnswer(requestTokenDigest: digest, sessionPublicKey: sessionPublicKey, results: results)
     }

@@ -756,8 +756,9 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     }
 
     /// The manifest's key access objects held by this client's KAS (matched by
-    /// scheme, host and effective port), in rewrap request order: the request
-    /// and result id `kao-<i>` refers to element `i`.
+    /// scheme, host, effective port and normalized path, with `/kas` the same
+    /// as no path), in rewrap request order: the request and result id
+    /// `kao-<i>` refers to element `i`.
     /// - Parameter manifest: The parsed TDF manifest containing key access entries.
     /// - Returns: The key access objects a `rewrapTDF` call sends.
     public func keyAccessObjects(in manifest: TDFManifest) -> [TDFKeyAccessObject] {
@@ -1082,15 +1083,44 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
             && Self.normalizedKasPath(kasURL) == Self.normalizedKasPath(otherURL)
     }
 
-    /// A KAS URL's path for matching: trailing `/` trimmed (case kept), and `/kas`
-    /// the same as no path, because a platform KAS is served at `<platform>/kas`
-    /// for REST and at the root for Connect, and discovery reports it without one.
+    /// A KAS URL's path for matching: percent-encoded unreserved characters
+    /// decoded and other escapes upper-cased (RFC 3986 §6.2.2), trailing `/`
+    /// trimmed (case kept), and `/kas` the same as no path, because a platform
+    /// KAS is served at `<platform>/kas` for REST and at the root for Connect,
+    /// and discovery reports it without one.
     static func normalizedKasPath(_ url: URL) -> String {
-        var path = url.path(percentEncoded: true)
+        var path = normalizedPercentEncoding(url.path(percentEncoded: true))
         while path.hasSuffix("/") {
             path.removeLast()
         }
         return path == "/kas" ? "" : path
+    }
+
+    /// Decodes `%XX` escapes of unreserved characters (`A–Z a–z 0–9 - . _ ~`)
+    /// and upper-cases the hex of the rest, which stay encoded (an encoded `/`
+    /// is not a path separator).
+    static func normalizedPercentEncoding(_ path: String) -> String {
+        var output = ""
+        var bytes = Array(path.utf8)[...]
+        while let byte = bytes.first {
+            bytes = bytes.dropFirst()
+            guard byte == UInt8(ascii: "%"), bytes.count >= 2,
+                  let value = UInt8(String(decoding: bytes.prefix(2), as: UTF8.self), radix: 16)
+            else {
+                output.unicodeScalars.append(Unicode.Scalar(byte))
+                continue
+            }
+            bytes = bytes.dropFirst(2)
+            let scalar = Unicode.Scalar(value)
+            if CharacterSet(charactersIn: "-._~").contains(scalar) || (scalar.isASCII && scalar.properties.isAlphabetic)
+                || ("0" ... "9").contains(scalar)
+            {
+                output.unicodeScalars.append(scalar)
+            } else {
+                output += String(format: "%%%02X", value)
+            }
+        }
+        return output
     }
 
     func effectivePort(for url: URL) -> Int {

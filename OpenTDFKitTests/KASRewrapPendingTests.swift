@@ -187,10 +187,13 @@ final class KASRewrapPendingTests: XCTestCase {
         }
     }
 
+    /// When the next wait would pass the deadline, the client sleeps to the
+    /// deadline and polls once more, then hands back the handle.
     func testDeadlineReachedReturnsHandleAndResumes() async throws {
         let encryption = try makeEncryption()
         let transport = try ScriptedTransport([
             .init(202, headers: ["Location": "/owner-kas/v1/requests/abc", "Retry-After": "10"]),
+            .init(202, headers: ["Retry-After": "10"]),
             .init(200, body: permitBody(for: encryption)),
         ])
         let clock = TestClock()
@@ -204,11 +207,162 @@ final class KASRewrapPendingTests: XCTestCase {
         ) else {
             return XCTFail("expected deadlineReached")
         }
-        let afterFirst = await transport.requests.count
-        XCTAssertEqual(afterFirst, 1, "no poll is sent when the wait would pass the deadline")
-        XCTAssertEqual(clock.sleeps, [])
+        XCTAssertEqual(clock.sleeps, [5], "slept only to the deadline")
+        let methods = await transport.requests.map(\.method)
+        XCTAssertEqual(methods, ["POST", "GET"], "one last poll at the deadline")
         guard case .answered = try await client.pollRewrap(handle, until: clock.start.addingTimeInterval(100)) else {
             return XCTFail("expected answered after resuming")
+        }
+        XCTAssertEqual(clock.sleeps, [5, 10])
+    }
+
+    /// An iPhone suspended mid-wait wakes after the deadline: no poll is sent.
+    func testOversleepPastDeadlineDoesNotPoll() async throws {
+        let transport = ScriptedTransport([
+            .init(202, headers: ["Location": "/owner-kas/v1/requests/abc", "Retry-After": "2"]),
+        ])
+        let clock = TestClock(oversleep: 3)
+        let client = try makeClient(transport: transport, clock: clock)
+        let prepared = try client.prepareRewrap(manifest: makeManifest(), clientPrivateKey: clientKey)
+        guard case let .pending(pending) = try await client.submitRewrap(prepared) else {
+            return XCTFail("expected pending")
+        }
+        guard case .deadlineReached = try await client.pollRewrap(pending, until: clock.start.addingTimeInterval(5))
+        else {
+            return XCTFail("expected deadlineReached")
+        }
+        let count = await transport.requests.count
+        XCTAssertEqual(count, 1, "only the POST; no poll after the deadline")
+    }
+
+    func testPollTimeoutClampedToDeadline() async throws {
+        let transport = ScriptedTransport([
+            .init(202, headers: ["Location": "/owner-kas/v1/requests/abc", "Retry-After": "2"]),
+            .init(202, headers: ["Retry-After": "60"]),
+            .init(202, headers: ["Retry-After": "60"]),
+        ])
+        let clock = TestClock()
+        let client = try makeClient(transport: transport, clock: clock)
+        let prepared = try client.prepareRewrap(manifest: makeManifest(), clientPrivateKey: clientKey)
+        guard case let .pending(pending) = try await client.submitRewrap(prepared) else {
+            return XCTFail("expected pending")
+        }
+        _ = try await client.pollRewrap(pending, until: clock.start.addingTimeInterval(10))
+        let timeouts = await transport.requests.dropFirst().map(\.timeout)
+        XCTAssertEqual(timeouts, [8, 1], "8 s left at the first poll; the floor of 1 s at the deadline")
+    }
+
+    func testRewrapDefaultDeadlineIsExpired() async throws {
+        let clock = TestClock()
+        let transport = ScriptedTransport([
+            .init(202, headers: ["Location": "/owner-kas/v1/requests/abc", "Retry-After": "60"]),
+            .init(202, headers: ["Retry-After": "60"]),
+        ])
+        let outcome = try await makeClient(transport: transport, clock: clock).rewrap(
+            manifest: makeManifest(), clientPrivateKey: clientKey,
+            options: .init(expiresAt: clock.start.addingTimeInterval(30)),
+        )
+        guard case .expired = outcome else { return XCTFail("expected expired, got \(outcome)") }
+    }
+
+    func testPollRefusesHandleFromAnotherClient() async throws {
+        let ownerTransport = ScriptedTransport([.init(202, headers: ["Location": "/owner-kas/v1/requests/abc"])])
+        let owner = try makeClient(transport: ownerTransport)
+        let prepared = try owner.prepareRewrap(manifest: makeManifest(), clientPrivateKey: clientKey)
+        guard case let .pending(pending) = try await owner.submitRewrap(prepared) else {
+            return XCTFail("expected pending")
+        }
+        let otherTransport = ScriptedTransport([.init(200)])
+        let other = try KASRewrapClient(
+            configuration: .forKasConnect("https://other.example/owner-kas/v1/routes/01HZXK3Q8R4M5N6P7Q8R9S0T1V"),
+            oauthToken: "other-token", transport: otherTransport, signingKey: signingKey,
+            sleeper: { _ in }, now: { Date() },
+        )
+        do {
+            _ = try await other.pollRewrap(pending, until: Date().addingTimeInterval(600))
+            XCTFail("expected unsafeLocation")
+        } catch KASRewrapError.unsafeLocation {
+            let count = await otherTransport.requests.count
+            XCTAssertEqual(count, 0, "the other client's bearer goes nowhere")
+        }
+    }
+
+    func testPoll202WithNewLocationIgnored() async throws {
+        let encryption = try makeEncryption()
+        let transport = try ScriptedTransport([
+            .init(202, headers: ["Location": "/owner-kas/v1/requests/abc", "Retry-After": "1"]),
+            .init(202, headers: ["Location": "https://evil.example/x", "Retry-After": "1"]),
+            .init(200, body: permitBody(for: encryption)),
+        ])
+        let client = try makeClient(transport: transport)
+        let prepared = try client.prepareRewrap(manifest: encryption.container.manifest, clientPrivateKey: clientKey)
+        guard case let .pending(pending) = try await client.submitRewrap(prepared) else {
+            return XCTFail("expected pending")
+        }
+        guard case .answered = try await client.pollRewrap(pending, until: Date().addingTimeInterval(600)) else {
+            return XCTFail("expected answered")
+        }
+        let urls = await transport.requests.dropFirst().map(\.url)
+        XCTAssertEqual(urls, Array(repeating: "https://platform.arkavo.net/owner-kas/v1/requests/abc", count: 2))
+    }
+
+    func test403IsHTTPErrorNotDenial() async throws {
+        let client = try makeClient(transport: ScriptedTransport([.init(403, body: Data("blocked".utf8))]))
+        let prepared = try client.prepareRewrap(manifest: makeManifest(), clientPrivateKey: clientKey)
+        do {
+            _ = try await client.submitRewrap(prepared)
+            XCTFail("expected a throw")
+        } catch let KASRewrapError.httpError(status, _) {
+            XCTAssertEqual(status, 403)
+        }
+        do {
+            _ = try await pollOutcome(after: [.init(403)])
+            XCTFail("expected a throw")
+        } catch let KASRewrapError.httpError(status, _) {
+            XCTAssertEqual(status, 403)
+        }
+    }
+
+    func testEmptyAnswerThrows() async throws {
+        for body in [#"{"responses":[]}"#,
+                     #"{"responses":[{"policyId":"policy","results":[{"keyAccessObjectId":"kao-7","status":"fail"}]}]}"#]
+        {
+            let client = try makeClient(transport: ScriptedTransport([.init(200, body: Data(body.utf8))]))
+            let prepared = try client.prepareRewrap(manifest: makeManifest(), clientPrivateKey: clientKey)
+            do {
+                _ = try await client.submitRewrap(prepared)
+                XCTFail("expected emptyResponse for \(body)")
+            } catch KASRewrapError.emptyResponse {}
+        }
+    }
+
+    func testMalformedWrappedKeyKeepsResult() async throws {
+        let session = P256.KeyAgreement.PrivateKey().publicKey.pemRepresentation
+        let object: [String: Any] = [
+            "sessionPublicKey": session,
+            "responses": [["policyId": "policy", "results": [
+                ["keyAccessObjectId": "kao-0", "status": "permit", "kasWrappedKey": "!!!",
+                 "metadata": ["arkavo.decision": "ZGVj"]],
+            ]]],
+        ]
+        let client = try makeClient(transport: ScriptedTransport([
+            .init(200, body: JSONSerialization.data(withJSONObject: object)),
+        ]))
+        let prepared = try client.prepareRewrap(manifest: makeManifest(), clientPrivateKey: clientKey)
+        guard case let .answered(answer) = try await client.submitRewrap(prepared) else {
+            return XCTFail("expected answered")
+        }
+        XCTAssertNil(answer.results.first?.kasWrappedKey)
+        XCTAssertEqual(answer.results.first?.metadata["arkavo.decision"], .string("ZGVj"))
+        XCTAssertThrowsError(try answer.share(for: answer.results[0], clientPrivateKey: clientKey))
+    }
+
+    func testOutOfRangeExpiresAtRefused() throws {
+        for seconds in [Double.infinity, 1e300, Double.nan] {
+            XCTAssertThrowsError(try makeClient().prepareRewrap(
+                manifest: makeManifest(), clientPrivateKey: clientKey,
+                options: .init(expiresAt: Date(timeIntervalSince1970: seconds)),
+            )) { assertInvalidOptions($0) }
         }
     }
 
@@ -238,7 +392,8 @@ final class KASRewrapPendingTests: XCTestCase {
             XCTAssertEqual(pending.location.absoluteString, resolved)
         }
         for location in ["https://evil.example/x", "//evil.example/x", "http://platform.arkavo.net/x",
-                         "https://platform.arkavo.net:8443/x"]
+                         "https://platform.arkavo.net:8443/x", "https://evil@platform.arkavo.net/x",
+                         "https://u:p@platform.arkavo.net/x", "https://platform.arkavo.net\\@evil.example/x"]
         {
             let transport = ScriptedTransport([.init(202, headers: ["Location": location])])
             let client = try makeClient(transport: transport)
@@ -412,6 +567,7 @@ actor ScriptedTransport: KASRewrapTransport {
         let url: String
         let authorization: String?
         let body: Data?
+        let timeout: TimeInterval
     }
 
     private var replies: [Reply]
@@ -427,6 +583,7 @@ actor ScriptedTransport: KASRewrapTransport {
             url: request.url?.absoluteString ?? "",
             authorization: request.value(forHTTPHeaderField: "Authorization"),
             body: request.httpBody,
+            timeout: request.timeoutInterval,
         ))
         guard !replies.isEmpty else {
             throw URLError(.badServerResponse)
@@ -438,9 +595,16 @@ actor ScriptedTransport: KASRewrapTransport {
     }
 }
 
-/// A clock that only moves when the client sleeps, recording each sleep.
+/// A clock that only moves when the client sleeps, recording each sleep. With
+/// `oversleep` above 1 it wakes late, like an app suspended mid-wait.
 final class TestClock: @unchecked Sendable {
     let start = Date()
+    private let oversleep: Double
+
+    init(oversleep: Double = 1) {
+        self.oversleep = oversleep
+    }
+
     private let lock = NSLock()
     private var elapsed: TimeInterval = 0
     private var recorded: [TimeInterval] = []
@@ -455,7 +619,7 @@ final class TestClock: @unchecked Sendable {
 
     func sleep(_ duration: TimeInterval) {
         lock.withLock {
-            elapsed += duration
+            elapsed += duration * oversleep
             recorded.append(duration)
         }
     }
