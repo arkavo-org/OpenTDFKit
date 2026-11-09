@@ -439,13 +439,17 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
 
     // MARK: - Properties
 
-    private let endpoints: KasEndpoints
+    let endpoints: KasEndpoints
     /// KAS identity url for the request-body KeyAccessObject when the NanoTDF
     /// header locator is unavailable (fallback only).
     private let kasIdentityURL: String
-    private let oauthToken: String
+    let oauthToken: String
     let transport: any KASRewrapTransport
     let signingKey: P256.Signing.PrivateKey
+    /// Waits between polls of a pending Rewrap; injectable for tests.
+    let sleeper: @Sendable (TimeInterval) async throws -> Void
+    /// The clock for Rewrap deadlines; injectable for tests.
+    let now: @Sendable () -> Date
 
     // MARK: - Initialization
 
@@ -468,15 +472,34 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     ///   - configuration: Resolved config, validated as in `init(configuration:oauthToken:urlSession:signingKey:)`.
     ///   - oauthToken: Bearer token (opaque: a JWT or base64url-encoded CWT).
     ///   - transport: Sends each request; it must not follow redirects.
-    public init(configuration: OpenTDFConfiguration, oauthToken: String,
-                transport: any KASRewrapTransport,
-                signingKey: P256.Signing.PrivateKey? = nil) throws
+    public convenience init(configuration: OpenTDFConfiguration, oauthToken: String,
+                            transport: any KASRewrapTransport,
+                            signingKey: P256.Signing.PrivateKey? = nil) throws
+    {
+        try self.init(
+            configuration: configuration,
+            oauthToken: oauthToken,
+            transport: transport,
+            signingKey: signingKey,
+            sleeper: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
+            now: { Date() },
+        )
+    }
+
+    /// The designated initializer, with the poll sleeper and clock injectable.
+    init(configuration: OpenTDFConfiguration, oauthToken: String,
+         transport: any KASRewrapTransport,
+         signingKey: P256.Signing.PrivateKey?,
+         sleeper: @escaping @Sendable (TimeInterval) async throws -> Void,
+         now: @escaping @Sendable () -> Date) throws
     {
         endpoints = try KasEndpoints.from(configuration)
         kasIdentityURL = configuration.kas?.uri ?? ""
         self.oauthToken = oauthToken
         self.transport = transport
         self.signingKey = signingKey ?? P256.Signing.PrivateKey()
+        self.sleeper = sleeper
+        self.now = now
     }
 
     // MARK: - Public Methods
@@ -1031,7 +1054,7 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
 
     /// Map a non-2xx rewrap response to a KASRewrapError, enriching the message
     /// from a Connect error envelope when present.
-    private func mapRewrapHTTPError(status: Int, data: Data) -> KASRewrapError {
+    func mapRewrapHTTPError(status: Int, data: Data) -> KASRewrapError {
         let body = String(data: data, encoding: .utf8) ?? ""
         let detail = parseConnectError(body).map { "\($0.code): \($0.message)" }
             ?? (body.isEmpty ? "HTTP \(status)" : body)
@@ -1070,7 +1093,7 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         return path == "/kas" ? "" : path
     }
 
-    private func effectivePort(for url: URL) -> Int {
+    func effectivePort(for url: URL) -> Int {
         if let explicitPort = url.port {
             return explicitPort
         }
