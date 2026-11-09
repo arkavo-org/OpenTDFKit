@@ -80,6 +80,19 @@ final class TDFKASResponseTests: XCTestCase {
         }
     }
 
+    func testPermitWithoutSessionKeyRefused() {
+        XCTAssertThrowsError(try TDFKAS.rewrapResponseBody(sessionPublicKey: nil, responses: [
+            TDFKAS.PolicyResponse(policyId: "policy", results: [
+                TDFKAS.KeyAccessResult(keyAccessObjectId: "kao-0", status: .permit, kasWrappedKey: Data([1]),
+                                       error: nil, metadata: [:]),
+            ]),
+        ])) { error in
+            guard case .invalidResult = error as? TDFKASError else {
+                return XCTFail("expected invalidResult, got \(error)")
+            }
+        }
+    }
+
     private struct Wire: Decodable {
         struct Response: Decodable {
             struct Result: Decodable {

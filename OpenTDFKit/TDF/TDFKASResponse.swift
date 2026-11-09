@@ -55,7 +55,7 @@ public extension TDFKAS {
     /// - Parameter sessionPublicKey: `TDFKAS.rewrap`'s session key; `nil` when
     ///   nothing was permitted.
     /// - Throws: `TDFKASError.invalidResult` for a permit without a wrapped key
-    ///   or a fail with one.
+    ///   or without a session key, or a fail with a wrapped key.
     static func rewrapResponseBody(
         sessionPublicKey: P256.KeyAgreement.PublicKey?,
         responses: [PolicyResponse],
@@ -69,6 +69,8 @@ public extension TDFKAS {
                         switch (result.status, result.kasWrappedKey) {
                         case (.permit, nil):
                             throw TDFKASError.invalidResult("permit without kasWrappedKey")
+                        case (.permit, .some) where sessionPublicKey == nil:
+                            throw TDFKASError.invalidResult("permit without sessionPublicKey")
                         case (.fail, .some):
                             throw TDFKASError.invalidResult("fail with kasWrappedKey")
                         default:

@@ -122,6 +122,66 @@ final class TDFKASRequestTests: XCTestCase {
         XCTAssertNil(request.issuedAt)
     }
 
+    // MARK: - Strict JOSE / JSON (RFC 7515 §4.1.11, §10.12; RFC 7519 §4)
+
+    func testDuplicateHeaderMemberRefused() throws {
+        let (body, _) = try signedRaw(header: #"{"alg":"ES256","alg":"none"}"#, claims: claimsJSON())
+        assertMalformed(body)
+    }
+
+    func testDuplicateClaimRefused() throws {
+        let claims = try claimsJSON().replacingOccurrences(of: #""exp":"#, with: #""exp":1,"exp":"#)
+        let (body, _) = try signedRaw(header: #"{"alg":"ES256"}"#, claims: claims)
+        assertMalformed(body)
+    }
+
+    func testDuplicateRequestBodyMemberRefused() throws {
+        let pem = clientKey.publicKey.pemRepresentation
+        let duplicated = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: requestBody()), encoding: .utf8))
+            .replacingOccurrences(of: "{", with: "{\"clientPublicKey\":\(Self.jsonString(pem)),", options: [], range: nil)
+        let (body, _) = try signedRaw(header: #"{"alg":"ES256"}"#, claims: claimsJSON(requestBody: duplicated))
+        assertMalformed(body)
+    }
+
+    func testDuplicateEnvelopeMemberRefused() throws {
+        let (_, token) = try signedRequest(requestBody: requestBody(), exp: now + 60, iat: now)
+        let body = Data("{\"signed_request_token\":\(Self.jsonString(token)),\"signed_request_token\":\"x.y.z\"}".utf8)
+        assertMalformed(body)
+    }
+
+    func testCritHeaderRefused() throws {
+        let (body, _) = try signedRaw(header: #"{"alg":"ES256","crit":["x"],"x":true}"#, claims: claimsJSON())
+        assertMalformed(body)
+    }
+
+    func testNonCanonicalBase64URLRefused() throws {
+        let (_, token) = try signedRequest(requestBody: requestBody(), exp: now + 60, iat: now)
+        let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+        let last = try XCTUnwrap(token.last)
+        let index = try XCTUnwrap(alphabet.firstIndex(of: last))
+        let slack = String(token.dropLast()) + String(alphabet[index ^ 0x01])
+        XCTAssertEqual(Self.base64URLDecode(String(slack.split(separator: ".")[2])),
+                       Self.base64URLDecode(String(token.split(separator: ".")[2])),
+                       "the slack bits do not change the decoded signature")
+        for variant in [token + "=", slack] {
+            try assertMalformed(Self.wrap(variant))
+        }
+    }
+
+    func testNullIatRefused() throws {
+        let claims = try claimsJSON().replacingOccurrences(of: #""exp":"#, with: #""iat":null,"exp":"#)
+        let (body, _) = try signedRaw(header: #"{"alg":"ES256"}"#, claims: claims)
+        assertMalformed(body)
+    }
+
+    func testExtensionBytesAreSortedWithoutEscapedSlashes() throws {
+        var bodyObject = try requestBody()
+        bodyObject["arkavo"] = ["b": "x/y", "a": 1]
+        let (body, _) = try signedRequest(requestBody: bodyObject, exp: now + 60, iat: now)
+        let request = try TDFKAS.verifyRewrapRequest(body: body, signingPublicKey: signingKey.publicKey)
+        XCTAssertEqual(request.extensions["arkavo"].map { String(decoding: $0, as: UTF8.self) }, #"{"a":1,"b":"x/y"}"#)
+    }
+
     // MARK: - Helpers
 
     static let policyBase64 = Data(#"{"uuid":"u","body":{"dataAttributes":[],"dissem":[]}}"#.utf8).base64EncodedString()
@@ -166,6 +226,25 @@ final class TDFKASRequestTests: XCTestCase {
         let signature = try signingKey.signature(for: Data(signingInput.utf8)).rawRepresentation
         let token = signingInput + "." + Self.base64URL(signature)
         return try (Self.wrap(token), token)
+    }
+
+    /// Claims JSON written by hand: `requestBody` (as a JSON string) and `exp`.
+    func claimsJSON(requestBody: String? = nil) throws -> String {
+        let bodyText = try requestBody
+            ?? XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: self.requestBody()), encoding: .utf8))
+        return "{\"requestBody\":\(Self.jsonString(bodyText)),\"exp\":\(now + 60)}"
+    }
+
+    /// A token over a hand-written header and claims, signed with `signingKey`.
+    func signedRaw(header: String, claims: String) throws -> (body: Data, token: String) {
+        let signingInput = Self.base64URL(Data(header.utf8)) + "." + Self.base64URL(Data(claims.utf8))
+        let signature = try signingKey.signature(for: Data(signingInput.utf8)).rawRepresentation
+        let token = signingInput + "." + Self.base64URL(signature)
+        return try (Self.wrap(token), token)
+    }
+
+    static func jsonString(_ text: String) -> String {
+        String(decoding: try! JSONEncoder().encode(text), as: UTF8.self)
     }
 
     static func wrap(_ token: String) throws -> Data {

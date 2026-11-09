@@ -26,8 +26,10 @@ public extension TDFKAS {
         /// The key the KAS rewraps each permitted share to.
         public let clientPublicKey: P256.KeyAgreement.PublicKey
         public let policies: [Policy]
-        /// Top-level `requestBody` members other than the standard ones, each as
-        /// that member's JSON bytes, by name. They are covered by the signature.
+        /// Top-level `requestBody` members other than the standard ones, by name,
+        /// each re-serialized as JSON with sorted keys and unescaped slashes:
+        /// equal to the member as JSON, not byte-identical to how it was sent.
+        /// They are covered by the signature.
         public let extensions: [String: Data]
 
         public struct Policy: Sendable {
@@ -49,10 +51,11 @@ public extension TDFKAS {
     /// and parses its `requestBody`.
     ///
     /// Checks, in order: the body is at most 64 KiB; it holds a string
-    /// `signed_request_token` of three base64url parts; the header's `alg` is
-    /// `ES256`; the raw 64-byte signature verifies over `header.payload` as
-    /// received; the claims hold a string `requestBody`, a numeric `exp` and an
-    /// optional numeric `iat`; and `requestBody` holds a PEM P-256
+    /// `signed_request_token` of three canonical (unpadded) base64url parts; the
+    /// header's `alg` is `ES256` and it has no `crit`; the raw 64-byte signature
+    /// verifies over `header.payload` as received; the claims hold a string
+    /// `requestBody`, a numeric `exp` and, if present, a numeric `iat`; no JSON
+    /// object anywhere repeats a member name; and `requestBody` holds a PEM P-256
     /// `clientPublicKey` and a non-empty `requests` array, each with
     /// `policy.id`, a base64 `policy.body` and non-empty key access objects.
     /// The token's `exp` is returned, not enforced.
@@ -66,34 +69,48 @@ public extension TDFKAS {
             throw TDFKASError.requestTooLarge
         }
         guard let envelope = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              !StrictJSON.hasDuplicateMembers(body),
               let token = envelope["signed_request_token"] as? String
         else {
             throw TDFKASError.malformedRewrapRequest("signed_request_token")
         }
         let parts = token.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 3,
-              let headerData = Data(base64URLEncoded: parts[0]),
-              let header = try? JSONDecoder().decode(TokenHeader.self, from: headerData)
+              let headerData = canonicalBase64URL(parts[0]),
+              let header = try? JSONSerialization.jsonObject(with: headerData) as? [String: Any],
+              !StrictJSON.hasDuplicateMembers(headerData)
         else {
-            throw TDFKASError.malformedRewrapRequest("signed_request_token")
+            throw TDFKASError.malformedRewrapRequest("header")
         }
-        guard header.alg == "ES256" else {
-            throw TDFKASError.unsupportedRequestAlgorithm(header.alg)
+        guard header["crit"] == nil else {
+            throw TDFKASError.malformedRewrapRequest("crit")
         }
-        guard let signatureData = Data(base64URLEncoded: parts[2]), signatureData.count == 64,
+        guard let alg = header["alg"] as? String else {
+            throw TDFKASError.malformedRewrapRequest("alg")
+        }
+        guard alg == "ES256" else {
+            throw TDFKASError.unsupportedRequestAlgorithm(alg)
+        }
+        guard let signatureData = canonicalBase64URL(parts[2]) else {
+            throw TDFKASError.malformedRewrapRequest("signature")
+        }
+        guard signatureData.count == 64,
               let signature = try? P256.Signing.ECDSASignature(rawRepresentation: signatureData),
               signingPublicKey.isValidSignature(signature, for: Data("\(parts[0]).\(parts[1])".utf8))
         else {
             throw TDFKASError.requestSignatureInvalid
         }
-        guard let claimsData = Data(base64URLEncoded: parts[1]),
+        guard let claimsData = canonicalBase64URL(parts[1]),
+              !StrictJSON.hasDuplicateMembers(claimsData),
               let claims = try? JSONDecoder().decode(TokenClaims.self, from: claimsData)
         else {
             throw TDFKASError.malformedRewrapRequest("claims")
         }
 
         let requestBodyData = Data(claims.requestBody.utf8)
-        guard let requestBody = try? JSONSerialization.jsonObject(with: requestBodyData) as? [String: Any] else {
+        guard let requestBody = try? JSONSerialization.jsonObject(with: requestBodyData) as? [String: Any],
+              !StrictJSON.hasDuplicateMembers(requestBodyData)
+        else {
             throw TDFKASError.malformedRewrapRequest("requestBody")
         }
         guard let clientPEM = requestBody["clientPublicKey"] as? String,
@@ -124,7 +141,12 @@ public extension TDFKAS {
 
         var extensions: [String: Data] = [:]
         for (name, value) in requestBody where !standardRequestBodyMembers.contains(name) {
-            extensions[name] = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])
+            guard let json = try? JSONSerialization.data(
+                withJSONObject: value, options: [.fragmentsAllowed, .sortedKeys, .withoutEscapingSlashes],
+            ) else {
+                throw TDFKASError.malformedRewrapRequest("extension")
+            }
+            extensions[name] = json
         }
 
         return RewrapRequest(
@@ -141,14 +163,33 @@ public extension TDFKAS {
 
 // MARK: - Wire types
 
-private struct TokenHeader: Decodable {
-    let alg: String
+/// A JWS part decoded only if it is canonical base64url: no padding and no
+/// stray bits, so one token has exactly one spelling and one digest.
+private func canonicalBase64URL(_ part: Substring) -> Data? {
+    guard let data = Data(base64URLEncoded: part), data.base64URLEncodedString() == part else {
+        return nil
+    }
+    return data
 }
 
 private struct TokenClaims: Decodable {
     let requestBody: String
     let exp: Double
     let iat: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case requestBody
+        case exp
+        case iat
+    }
+
+    /// `iat` may be absent, but if present it must be a number (not `null`).
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        requestBody = try container.decode(String.self, forKey: .requestBody)
+        exp = try container.decode(Double.self, forKey: .exp)
+        iat = container.contains(.iat) ? try container.decode(Double.self, forKey: .iat) : nil
+    }
 }
 
 private struct StandardBody: Decodable {
