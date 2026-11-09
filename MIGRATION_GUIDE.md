@@ -10,12 +10,15 @@ This guide covers breaking changes across all OpenTDFKit versions.
 - `TDFKasInfo` gains `keyType` (`.rsa` by default, `.ecP256`). With `.ecP256`, `TDFEncryptor` writes an `ec-wrapped` key access object in the go SDK / opentdf-platform scheme, which needs a `kid` and AES-256; otherwise it throws `TDFEncryptError` before writing anything.
 - `TDFCrypto.wrapSymmetricKeyWithECForKAS(publicKeyPEM:symmetricKey:)` returns `KASECWrappedKey`. The existing `wrapSymmetricKeyWithEC` / `unwrapSymmetricKeyWithEC` are the TDF-JSON / TDF-CBOR draft scheme (empty salt, compressed SEC1 ephemeral key), now documented as such; their behaviour is unchanged.
 - `KASRewrapClient.unwrapKey` wipes the opened key bytes before returning.
+- Owner KAS, KAS side: `TDFKAS.verifyRewrapRequest(body:signingPublicKey:)`, `TDFKAS.rewrapResponseBody(sessionPublicKey:responses:)`, and the shared digests `TDFKAS.requestTokenDigest`, `TDFKAS.keyAccessObjectDigest` and `TDFKAS.publicKeyFingerprint`.
+- Owner KAS, client side: `KASRewrapClient.prepareRewrap`, `submitRewrap`, `pollRewrap` and `rewrap`, for a KAS that answers `202` and is polled; they sign with the init `signingKey`, take the token's `exp` and one extension member from the caller, and return denials as results. The existing `rewrapTDF` and friends are unchanged.
+- **Matching is path-aware.** A key access object now matches the configured KAS only if its normalized path does too (`/kas` is the same as no path). A KAS mounted under another prefix (for example `https://host/api/kas`) needs that prefix in the configured `kas.uri`.
 - `OpenTDFKitCLI` supports `ecwrap`: with `XT_WITH_ECWRAP=true`, `tdf` encrypt fetches the KAS's EC P-256 key and its `kid` and writes an `ec-wrapped` key access object.
 - Every `TDFEncryptor` entry point now loads the KAS public key before reading the input, so an unreadable or mismatched key (RSA as well as EC) throws its `TDFCryptoError` before any encryption work instead of after. The error is the same.
 
 ### Migration Steps
 
-No migration is required. Existing `TDFKasInfo` callers default to `.rsa` and write the same output as before.
+No migration is required for most callers. Existing `TDFKasInfo` callers default to `.rsa` and write the same output as before. If you match on `KASRewrapError` exhaustively, add `.invalidRewrapOptions`, `.pendingWithoutLocation` and `.unsafeLocation`. If your KAS is mounted under a prefix other than `/kas`, put that prefix in the configured KAS URL.
 
 ## v5.1.0 - Bulk rewrap and payload cap
 
