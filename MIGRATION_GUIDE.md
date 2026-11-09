@@ -10,6 +10,7 @@ This guide covers breaking changes across all OpenTDFKit versions.
 - `TDFKasInfo` gains `keyType` (`.rsa` by default, `.ecP256`). With `.ecP256`, `TDFEncryptor` writes an `ec-wrapped` key access object in the go SDK / opentdf-platform scheme, which needs a `kid` and AES-256; otherwise it throws `TDFEncryptError` before writing anything.
 - `TDFCrypto.wrapSymmetricKeyWithECForKAS(publicKeyPEM:symmetricKey:)` returns `KASECWrappedKey`. The existing `wrapSymmetricKeyWithEC` / `unwrapSymmetricKeyWithEC` are the TDF-JSON / TDF-CBOR draft scheme (empty salt, compressed SEC1 ephemeral key), now documented as such; their behaviour is unchanged.
 - `KASRewrapClient.unwrapKey` wipes the opened key bytes before returning.
+- `OpenTDFKitCLI` supports `ecwrap`: with `XT_WITH_ECWRAP=true`, `tdf` encrypt fetches the KAS's EC P-256 key and its `kid` and writes an `ec-wrapped` key access object.
 - Every `TDFEncryptor` entry point now loads the KAS public key before reading the input, so an unreadable or mismatched key (RSA as well as EC) throws its `TDFCryptoError` before any encryption work instead of after. The error is the same.
 
 ### Migration Steps

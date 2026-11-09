@@ -151,13 +151,14 @@ struct OpenTDFKitCLI {
           or TDF_OAUTH_TOKEN_PATH); PLATFORMURL selects the well-known root.
 
         Features (for supports command):
-          nano, nano_ecdsa, nano_collection, tdf, json, cbor, hexless, etc.
+          nano, nano_ecdsa, nano_collection, tdf, json, cbor, hexless, ecwrap, etc.
 
         Environment Variables:
           CLIENTID           OAuth client ID
           CLIENTSECRET       OAuth client secret
           KASURL             KAS endpoint URL
           PLATFORMURL        Platform endpoint URL
+          XT_WITH_ECWRAP     true: tdf encrypt wraps to the KAS EC P-256 key (ec-wrapped)
 
         Examples:
           OpenTDFKitCLI encrypt input.txt output.ntdf nano
@@ -549,13 +550,19 @@ struct OpenTDFKitCLI {
 
     // MARK: - Standard TDF Helpers
 
-    /// Build Standard TDF encryption config.
+    /// Build the TDF encryption config.
     ///
-    /// KAS RSA public key resolution:
-    /// 1. `TDF_KAS_PUBLIC_KEY` / `TDF_KAS_PUBLIC_KEY_PATH` (offline override)
+    /// `XT_WITH_ECWRAP=true` (the xtest `tdf-ecwrap` container) wraps the DEK to
+    /// the KAS's EC P-256 key as an `ec-wrapped` key access object; otherwise to
+    /// its RSA key as `wrapped`.
+    ///
+    /// KAS public key resolution:
+    /// 1. `TDF_KAS_PUBLIC_KEY` / `TDF_KAS_PUBLIC_KEY_PATH` (offline override; its
+    ///    kind must match the mode, and EC needs `TDF_KAS_KID`)
     /// 2. Live fetch via client-credentials + Connect/REST PublicKey (Stage-1 / xtest)
     private static func buildTDFConfiguration(for inputURL: URL) async throws -> TDFEncryptionConfiguration {
         let env = ProcessInfo.processInfo.environment
+        let ecWrap = env["XT_WITH_ECWRAP"] == "true"
 
         guard let kasURLString = env["TDF_KAS_URL"] ?? env["KASURL"], let kasURL = URL(string: kasURLString) else {
             throw CLIError.missingEnvironmentVariable("TDF_KAS_URL or KASURL")
@@ -580,16 +587,26 @@ struct OpenTDFKitCLI {
                 clientID: clientID,
                 clientSecret: clientSecret,
             )
-            let fetched = try await Commands.fetchKASRSAPublicKey(
-                kasURL: kasURL,
-                platformURL: platformURL,
-                token: token,
-            )
-            publicKeyPEM = fetched.pem
-            if kid == nil {
-                kid = fetched.kid
+            if ecWrap {
+                let fetched = try await Commands.fetchKASPublicKey(kasURL: kasURL, token: token)
+                publicKeyPEM = try P256.KeyAgreement.PublicKey(compressedRepresentation: fetched.compressedKey)
+                    .pemRepresentation
+                if kid == nil {
+                    kid = fetched.kid
+                }
+                print("Fetched KAS EC P-256 public key (kid=\(kid ?? "none"))")
+            } else {
+                let fetched = try await Commands.fetchKASRSAPublicKey(
+                    kasURL: kasURL,
+                    platformURL: platformURL,
+                    token: token,
+                )
+                publicKeyPEM = fetched.pem
+                if kid == nil {
+                    kid = fetched.kid
+                }
+                print("Fetched KAS RSA public key (kid=\(kid ?? "none"))")
             }
-            print("Fetched KAS RSA public key (kid=\(kid ?? "none"))")
         }
 
         let policyData = try loadPolicyData()
@@ -600,6 +617,7 @@ struct OpenTDFKitCLI {
             publicKeyPEM: publicKeyPEM,
             kid: kid,
             schemaVersion: env["TDF_KAS_SCHEMA_VERSION"],
+            keyType: ecWrap ? .ecP256 : .rsa,
         )
 
         let policy = try TDFPolicy(json: policyData)
@@ -758,10 +776,15 @@ struct OpenTDFKitCLI {
             return 0
         case "connectrpc":
             return 0
-        case "tdf-ecwrap", "assertions", "assertion_verification",
+        case "ecwrap", "tdf-ecwrap":
+            // XT_WITH_ECWRAP=true: encrypt writes an ec-wrapped key access object
+            // (go SDK scheme) to the KAS's P-256 key; decrypt always rewraps with
+            // an EC P-256 session key.
+            return 0
+        case "assertions", "assertion_verification",
              "attribute_traversal", "audit_logging", "autoconfigure",
              "better-messages-2024", "bulk_rewrap", "dpop", "dpop_nonce_challenge",
-             "ecwrap", "hexaflexible", "kasallowlist", "key_management",
+             "hexaflexible", "kasallowlist", "key_management",
              "mechanism-rsa-4096", "mechanism-ec-curves-384-521",
              "mechanism-xwing", "mechanism-secpmlkem", "mechanism-mlkem",
              "nano_attribute_bug", "nano_policymode_plaintext", "ns_grants",

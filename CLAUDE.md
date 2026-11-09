@@ -125,6 +125,7 @@ swift build -c release --product OpenTDFKitCLI
 .build/release/OpenTDFKitCLI supports nano          # exit 0 (supported)
 .build/release/OpenTDFKitCLI supports nano_ecdsa    # exit 0 (supported)
 .build/release/OpenTDFKitCLI supports tdf           # exit 0 (supported)
+.build/release/OpenTDFKitCLI supports ecwrap        # exit 0 (supported)
 ```
 
 ### Environment Configuration
@@ -141,6 +142,7 @@ export PLATFORMURL=http://localhost:8080
 
 # Optional xtest parameters
 export XT_WITH_ECDSA_BINDING=true
+export XT_WITH_ECWRAP=true          # tdf: wrap to the KAS EC P-256 key (ec-wrapped)
 export XT_WITH_PLAINTEXT_POLICY=true
 export XT_WITH_ATTRIBUTES="attr1,attr2"
 export XT_WITH_MIME_TYPE="application/pdf"
