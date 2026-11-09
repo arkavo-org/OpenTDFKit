@@ -445,7 +445,7 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     private let kasIdentityURL: String
     private let oauthToken: String
     let transport: any KASRewrapTransport
-    private let signingKey: P256.Signing.PrivateKey
+    let signingKey: P256.Signing.PrivateKey
 
     // MARK: - Initialization
 
@@ -989,7 +989,10 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
 
     /// The HTTP body of a Rewrap call: `{"signed_request_token": <ES256 JWT over requestBody>}`.
     func signedRewrapBody(requestBody: Data, signingKey: P256.Signing.PrivateKey) throws -> Data {
-        let signedToken = try createSignedJWT(requestBody: requestBody, signingKey: signingKey)
+        let now = Int(Date().timeIntervalSince1970)
+        let signedToken = try createSignedJWT(
+            requestBody: requestBody, signingKey: signingKey, issuedAt: now, expiresAt: now + 60,
+        )
         return try JSONEncoder().encode(SignedRewrapRequest(signed_request_token: signedToken))
     }
 
@@ -1243,20 +1246,26 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     /// - Parameters:
     ///   - requestBody: The request body data to include in claims
     ///   - signingKey: P256 private key for signing
+    ///   - issuedAt: The `iat` claim, Unix seconds
+    ///   - expiresAt: The `exp` claim, Unix seconds
     /// - Returns: Signed JWT string in format header.payload.signature
-    private func createSignedJWT(requestBody: Data, signingKey: P256.Signing.PrivateKey) throws -> String {
+    func createSignedJWT(
+        requestBody: Data,
+        signingKey: P256.Signing.PrivateKey,
+        issuedAt: Int,
+        expiresAt: Int,
+    ) throws -> String {
         // Create header with ES256 algorithm
         let header = ["alg": "ES256", "typ": "JWT"]
         let headerJSON = try JSONSerialization.data(withJSONObject: header)
         let headerBase64 = headerJSON.base64URLEncodedString()
 
         // Create claims with the request body and required timestamps
-        let now = Int(Date().timeIntervalSince1970)
         let requestBodyString = String(data: requestBody, encoding: .utf8) ?? ""
         let claims: [String: Any] = [
             "requestBody": requestBodyString,
-            "iat": now,
-            "exp": now + 60,
+            "iat": issuedAt,
+            "exp": expiresAt,
         ]
         let claimsJSON = try JSONSerialization.data(withJSONObject: claims)
         let claimsBase64 = claimsJSON.base64URLEncodedString()
@@ -1295,6 +1304,14 @@ public enum KASRewrapError: Error, CustomStringConvertible {
     case multipleWrappedKeys(Int)
     /// Local unwrap of the session-wrapped key failed (wrong salt/key, corrupt bytes).
     case keyUnwrapFailed(String)
+    /// `prepareRewrap` options are unusable (a past `expiresAt`, an extension
+    /// that is not JSON or that reuses a standard `requestBody` member name).
+    case invalidRewrapOptions(String)
+    /// A KAS answered `202` without a `Location` to poll.
+    case pendingWithoutLocation
+    /// A `202`'s `Location` is not on the KAS's origin; the bearer token is not
+    /// sent there.
+    case unsafeLocation(String)
 
     public var description: String {
         switch self {
@@ -1330,6 +1347,12 @@ public enum KASRewrapError: Error, CustomStringConvertible {
             "Expected exactly one wrapped key from KAS, got \(count); split-key manifests need rewrapTDF and reconstruction"
         case let .keyUnwrapFailed(reason):
             "Failed to unwrap KAS session-wrapped key: \(reason)"
+        case let .invalidRewrapOptions(reason):
+            "Invalid rewrap options: \(reason)"
+        case .pendingWithoutLocation:
+            "KAS answered 202 without a Location to poll"
+        case let .unsafeLocation(location):
+            "Refusing to poll \(location.prefix(200)): not the KAS's origin"
         }
     }
 }
