@@ -264,6 +264,11 @@ final class TDFSegmentedPayloadTests: XCTestCase {
 
     /// RSA-2048 SPKI public key PEM for tests that need a KAS wrapping key.
     static func makeRSAPublicKeyPEM() throws -> String {
+        try makeRSAKeyPair().publicKeyPEM
+    }
+
+    /// An RSA-2048 key pair: the SPKI public key PEM and the private `SecKey`.
+    static func makeRSAKeyPair() throws -> (publicKeyPEM: String, privateKey: SecKey) {
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
             kSecAttrKeySizeInBits as String: 2048,
@@ -280,7 +285,7 @@ final class TDFSegmentedPayloadTests: XCTestCase {
         let bitString = derElement(tag: 0x03, content: Data([0x00]) + pkcs1)
         let spki = derElement(tag: 0x30, content: Data(algorithmIdentifier) + bitString)
         let base64 = spki.base64EncodedString(options: [.lineLength64Characters, .endLineWithLineFeed])
-        return "-----BEGIN PUBLIC KEY-----\n\(base64)\n-----END PUBLIC KEY-----\n"
+        return ("-----BEGIN PUBLIC KEY-----\n\(base64)\n-----END PUBLIC KEY-----\n", privateKey)
     }
 
     private static func derElement(tag: UInt8, content: Data) -> Data {

@@ -338,6 +338,11 @@ public enum TDFCrypto {
 
     /// Wrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM).
     /// This generates an ephemeral key pair and uses ECDH with the recipient's public key.
+    ///
+    /// This is the TDF-JSON / TDF-CBOR draft scheme: an **empty** HKDF salt and a
+    /// base64 compressed SEC1 ephemeral key. It is not the go SDK / opentdf-platform
+    /// `ec-wrapped` scheme, which a platform KAS and `TDFKAS.rewrap` expect; use
+    /// `wrapSymmetricKeyWithECForKAS` for that.
     /// - Parameters:
     ///   - publicKeyPEM: The recipient's EC public key in PEM format
     ///   - symmetricKey: The symmetric key to wrap
@@ -358,7 +363,8 @@ public enum TDFCrypto {
         }
     }
 
-    /// Unwrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM).
+    /// Unwrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM), in the
+    /// TDF-JSON / TDF-CBOR draft scheme (empty HKDF salt); see `wrapSymmetricKeyWithEC`.
     /// - Parameters:
     ///   - privateKeyPEM: The recipient's PEM-encoded EC private key
     ///   - wrappedKey: The wrapped key data (base64-encoded nonce + ciphertext + tag)
@@ -377,7 +383,8 @@ public enum TDFCrypto {
         )
     }
 
-    /// Unwrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM).
+    /// Unwrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM), in the
+    /// TDF-JSON / TDF-CBOR draft scheme (empty HKDF salt); see `wrapSymmetricKeyWithEC`.
     /// - Parameters:
     ///   - privateKey: The recipient's private key for ECDH
     ///   - wrappedKey: The wrapped key data (base64-encoded nonce + ciphertext + tag)
@@ -435,6 +442,50 @@ public enum TDFCrypto {
         }
 
         return SymmetricKey(data: decryptedKey)
+    }
+
+    // MARK: - EC Key Wrapping for a KAS (`ec-wrapped`)
+
+    /// Wraps a key share to a KAS P-256 public key in the go SDK / opentdf-platform
+    /// `ec-wrapped` scheme (go SDK `generateWrapKeyWithEC`): a fresh ephemeral
+    /// P-256 key, ECDH, HKDF-SHA256 with salt `SHA256("TDF")`, empty info and a
+    /// 32-byte output, AES-256-GCM. A platform KAS with EC enabled, and `TDFKAS.rewrap`,
+    /// can rewrap the result.
+    ///
+    /// This is not the scheme of `wrapSymmetricKeyWithEC`, which the TDF-JSON and
+    /// TDF-CBOR containers use (empty salt, compressed SEC1 ephemeral key).
+    /// - Parameters:
+    ///   - publicKeyPEM: The KAS's P-256 public key, PEM SubjectPublicKeyInfo.
+    ///   - symmetricKey: The key share to wrap (the DEK for a single-split TDF).
+    /// - Returns: The base64 wrapped key and the PEM ephemeral public key.
+    public static func wrapSymmetricKeyWithECForKAS(
+        publicKeyPEM: String,
+        symmetricKey: SymmetricKey,
+    ) throws -> KASECWrappedKey {
+        let kasPublicKey = try loadECPublicKeyP256(fromPEM: publicKeyPEM)
+        let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
+        let wrapKey = try deriveKASWrapKey(ephemeralPrivateKey, kasPublicKey)
+        // Seal straight from the key's own storage, so no copy of the share is left behind.
+        let sealed = try symmetricKey.withUnsafeBytes { try AES.GCM.seal($0, using: wrapKey) }
+        return KASECWrappedKey(
+            wrappedKey: sealed.combined!.base64EncodedString(),
+            ephemeralPublicKeyPEM: ephemeralPrivateKey.publicKey.pemRepresentation,
+        )
+    }
+
+    /// ECDH, then HKDF-SHA256 with salt `SHA256("TDF")`, empty info, 32 bytes:
+    /// the go SDK's `tdfSalt()` scheme, used for the `ec-wrapped` key access
+    /// object wrap and for the rewrap session alike (`TDFKAS`).
+    static func deriveKASWrapKey(
+        _ privateKey: P256.KeyAgreement.PrivateKey,
+        _ publicKey: P256.KeyAgreement.PublicKey,
+    ) throws -> SymmetricKey {
+        try privateKey.sharedSecretFromKeyAgreement(with: publicKey).hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: KASRewrapClient.standardTDFSessionSalt,
+            sharedInfo: Data(),
+            outputByteCount: 32,
+        )
     }
 
     // MARK: - P-256 EC Wrapping
@@ -596,12 +647,23 @@ public enum TDFCrypto {
     }
 }
 
-/// Result of EC key wrapping containing wrapped key and ephemeral public key
+/// Result of `TDFCrypto.wrapSymmetricKeyWithEC` (the TDF-JSON / TDF-CBOR draft
+/// scheme): the wrapped key and the ephemeral public key
 public struct ECWrappedKeyResult: Sendable {
-    /// The wrapped symmetric key (nonce + ciphertext + tag)
+    /// The wrapped symmetric key, base64 (nonce + ciphertext + tag)
     public let wrappedKey: String
-    /// The ephemeral public key in PEM format
+    /// The ephemeral public key, base64 compressed SEC1 (not PEM)
     public let ephemeralPublicKey: String
+}
+
+/// A key share wrapped to a KAS by `TDFCrypto.wrapSymmetricKeyWithECForKAS`, in the
+/// go SDK / opentdf-platform `ec-wrapped` scheme.
+public struct KASECWrappedKey: Sendable {
+    /// Base64 of nonce (12) ‖ ciphertext ‖ tag (16); the key access object's `wrappedKey`.
+    public let wrappedKey: String
+    /// The ephemeral P-256 public key, PEM SubjectPublicKeyInfo; the key access
+    /// object's `ephemeralPublicKey`.
+    public let ephemeralPublicKeyPEM: String
 }
 
 /// Supported EC curves for TDF3 EC key wrapping

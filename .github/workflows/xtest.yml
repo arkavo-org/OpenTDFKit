@@ -2,7 +2,8 @@
 #
 # Pulls arkavo-org/opentdf-tests (pinned until the Swift format fix lands).
 # Runs native macOS platform deps (Postgres + Keycloak + platform) and pytest
-# for swift × go Base TDF only.
+# for swift × go Base TDF, RSA-wrapped (`tdf`) and EC-wrapped (`tdf-ecwrap`, a
+# platform KAS rewrapping OpenTDFKit's `ec-wrapped` key access objects).
 #
 # Two legs run side by side (matrix `go-source`):
 #   upstream    — go CLI from opentdf/platform (pinned to PR #4063's head until
@@ -371,7 +372,7 @@ jobs:
           set -e
           ./sdk/swift/dist/main/cli.sh supports tdf
           ./sdk/swift/dist/main/cli.sh supports hexless
-          ! ./sdk/swift/dist/main/cli.sh supports ecwrap || exit 1
+          ./sdk/swift/dist/main/cli.sh supports ecwrap
 
       - name: Platform version
         working-directory: ${{ steps.run-platform.outputs.platform-working-dir }}
@@ -385,7 +386,7 @@ jobs:
       - run: uv sync
         working-directory: otdftests/xtest
 
-      - name: Run community xtest (swift × go, Base TDF)
+      - name: Run community xtest (swift × go, Base TDF and ec-wrapped)
         working-directory: otdftests/xtest
         env:
           PLATFORM_DIR: "../../${{ steps.run-platform.outputs.platform-working-dir }}"
@@ -423,7 +424,7 @@ jobs:
             --junitxml=test-results/opentdfkit-xtest.junit.xml \
             --sdks-encrypt "swift@main go@${GO_CH}" \
             --sdks-decrypt "swift@main go@${GO_CH}" \
-            --containers tdf \
+            --containers "tdf tdf-ecwrap" \
             --focus swift \
             -m stage1 \
             -ra -v \

@@ -439,13 +439,17 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
 
     // MARK: - Properties
 
-    private let endpoints: KasEndpoints
+    let endpoints: KasEndpoints
     /// KAS identity url for the request-body KeyAccessObject when the NanoTDF
     /// header locator is unavailable (fallback only).
     private let kasIdentityURL: String
-    private let oauthToken: String
+    let oauthToken: String
     let transport: any KASRewrapTransport
-    private let signingKey: P256.Signing.PrivateKey
+    let signingKey: P256.Signing.PrivateKey
+    /// Waits between polls of a pending Rewrap; injectable for tests.
+    let sleeper: @Sendable (TimeInterval) async throws -> Void
+    /// The clock for Rewrap deadlines; injectable for tests.
+    let now: @Sendable () -> Date
 
     // MARK: - Initialization
 
@@ -468,15 +472,34 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     ///   - configuration: Resolved config, validated as in `init(configuration:oauthToken:urlSession:signingKey:)`.
     ///   - oauthToken: Bearer token (opaque: a JWT or base64url-encoded CWT).
     ///   - transport: Sends each request; it must not follow redirects.
-    public init(configuration: OpenTDFConfiguration, oauthToken: String,
-                transport: any KASRewrapTransport,
-                signingKey: P256.Signing.PrivateKey? = nil) throws
+    public convenience init(configuration: OpenTDFConfiguration, oauthToken: String,
+                            transport: any KASRewrapTransport,
+                            signingKey: P256.Signing.PrivateKey? = nil) throws
+    {
+        try self.init(
+            configuration: configuration,
+            oauthToken: oauthToken,
+            transport: transport,
+            signingKey: signingKey,
+            sleeper: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
+            now: { Date() },
+        )
+    }
+
+    /// The designated initializer, with the poll sleeper and clock injectable.
+    init(configuration: OpenTDFConfiguration, oauthToken: String,
+         transport: any KASRewrapTransport,
+         signingKey: P256.Signing.PrivateKey?,
+         sleeper: @escaping @Sendable (TimeInterval) async throws -> Void,
+         now: @escaping @Sendable () -> Date) throws
     {
         endpoints = try KasEndpoints.from(configuration)
         kasIdentityURL = configuration.kas?.uri ?? ""
         self.oauthToken = oauthToken
         self.transport = transport
         self.signingKey = signingKey ?? P256.Signing.PrivateKey()
+        self.sleeper = sleeper
+        self.now = now
     }
 
     // MARK: - Public Methods
@@ -733,8 +756,9 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     }
 
     /// The manifest's key access objects held by this client's KAS (matched by
-    /// scheme, host and effective port), in rewrap request order: the request
-    /// and result id `kao-<i>` refers to element `i`.
+    /// scheme, host, effective port and normalized path, with `/kas` the same
+    /// as no path), in rewrap request order: the request and result id
+    /// `kao-<i>` refers to element `i`.
     /// - Parameter manifest: The parsed TDF manifest containing key access entries.
     /// - Returns: The key access objects a `rewrapTDF` call sends.
     public func keyAccessObjects(in manifest: TDFManifest) -> [TDFKeyAccessObject] {
@@ -989,7 +1013,10 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
 
     /// The HTTP body of a Rewrap call: `{"signed_request_token": <ES256 JWT over requestBody>}`.
     func signedRewrapBody(requestBody: Data, signingKey: P256.Signing.PrivateKey) throws -> Data {
-        let signedToken = try createSignedJWT(requestBody: requestBody, signingKey: signingKey)
+        let now = Int(Date().timeIntervalSince1970)
+        let signedToken = try createSignedJWT(
+            requestBody: requestBody, signingKey: signingKey, issuedAt: now, expiresAt: now + 60,
+        )
         return try JSONEncoder().encode(SignedRewrapRequest(signed_request_token: signedToken))
     }
 
@@ -1028,7 +1055,7 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
 
     /// Map a non-2xx rewrap response to a KASRewrapError, enriching the message
     /// from a Connect error envelope when present.
-    private func mapRewrapHTTPError(status: Int, data: Data) -> KASRewrapError {
+    func mapRewrapHTTPError(status: Int, data: Data) -> KASRewrapError {
         let body = String(data: data, encoding: .utf8) ?? ""
         let detail = parseConnectError(body).map { "\($0.code): \($0.message)" }
             ?? (body.isEmpty ? "HTTP \(status)" : body)
@@ -1039,6 +1066,9 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         }
     }
 
+    /// Whether a key access object's URL names this client's KAS: scheme and host
+    /// (case-insensitive), effective port, and normalized path. A platform KAS and
+    /// owner KASs share one host, so the path decides.
     private func matchesKasURL(_ otherURLString: String) -> Bool {
         guard let otherURL = URL(string: otherURLString), let kasURL = URL(string: kasIdentityURL),
               let baseScheme = kasURL.scheme?.lowercased(),
@@ -1050,9 +1080,50 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
             return false
         }
         return effectivePort(for: kasURL) == effectivePort(for: otherURL)
+            && Self.normalizedKasPath(kasURL) == Self.normalizedKasPath(otherURL)
     }
 
-    private func effectivePort(for url: URL) -> Int {
+    /// A KAS URL's path for matching: percent-encoded unreserved characters
+    /// decoded and other escapes upper-cased (RFC 3986 §6.2.2), trailing `/`
+    /// trimmed (case kept), and `/kas` the same as no path, because a platform
+    /// KAS is served at `<platform>/kas` for REST and at the root for Connect,
+    /// and discovery reports it without one.
+    static func normalizedKasPath(_ url: URL) -> String {
+        var path = normalizedPercentEncoding(url.path(percentEncoded: true))
+        while path.hasSuffix("/") {
+            path.removeLast()
+        }
+        return path == "/kas" ? "" : path
+    }
+
+    /// Decodes `%XX` escapes of unreserved characters (`A–Z a–z 0–9 - . _ ~`)
+    /// and upper-cases the hex of the rest, which stay encoded (an encoded `/`
+    /// is not a path separator).
+    static func normalizedPercentEncoding(_ path: String) -> String {
+        var output = ""
+        var bytes = Array(path.utf8)[...]
+        while let byte = bytes.first {
+            bytes = bytes.dropFirst()
+            guard byte == UInt8(ascii: "%"), bytes.count >= 2,
+                  let value = UInt8(String(decoding: bytes.prefix(2), as: UTF8.self), radix: 16)
+            else {
+                output.unicodeScalars.append(Unicode.Scalar(byte))
+                continue
+            }
+            bytes = bytes.dropFirst(2)
+            let scalar = Unicode.Scalar(value)
+            if CharacterSet(charactersIn: "-._~").contains(scalar) || (scalar.isASCII && scalar.properties.isAlphabetic)
+                || ("0" ... "9").contains(scalar)
+            {
+                output.unicodeScalars.append(scalar)
+            } else {
+                output += String(format: "%%%02X", value)
+            }
+        }
+        return output
+    }
+
+    func effectivePort(for url: URL) -> Int {
         if let explicitPort = url.port {
             return explicitPort
         }
@@ -1082,9 +1153,23 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         clientPrivateKey: Data,
         salt: Data? = nil,
     ) throws -> SymmetricKey {
+        try unwrapKey(
+            wrappedKey: wrappedKey,
+            sessionPublicKey: P256.KeyAgreement.PublicKey(compressedRepresentation: sessionPublicKey),
+            clientPrivateKey: P256.KeyAgreement.PrivateKey(rawRepresentation: clientPrivateKey),
+            salt: salt,
+        )
+    }
+
+    /// `unwrapKey` with the keys as CryptoKit values, so no caller has to make a
+    /// raw copy of the private key to call it.
+    static func unwrapKey(
+        wrappedKey: Data,
+        sessionPublicKey publicKey: P256.KeyAgreement.PublicKey,
+        clientPrivateKey privateKey: P256.KeyAgreement.PrivateKey,
+        salt: Data?,
+    ) throws -> SymmetricKey {
         // Perform ECDH with session public key
-        let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: clientPrivateKey)
-        let publicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: sessionPublicKey)
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
 
         // Derive symmetric key using HKDF
@@ -1106,7 +1191,10 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
 
         // Use the SealedBox combined initializer which expects nonce+ciphertext+tag
         let sealedBox = try AES.GCM.SealedBox(combined: wrappedKey)
-        let decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKey)
+        var decryptedKey = try AES.GCM.open(sealedBox, using: symmetricKey)
+        defer {
+            decryptedKey.secureZero()
+        }
         return SymmetricKey(data: decryptedKey)
     }
 
@@ -1211,20 +1299,26 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     /// - Parameters:
     ///   - requestBody: The request body data to include in claims
     ///   - signingKey: P256 private key for signing
+    ///   - issuedAt: The `iat` claim, Unix seconds
+    ///   - expiresAt: The `exp` claim, Unix seconds
     /// - Returns: Signed JWT string in format header.payload.signature
-    private func createSignedJWT(requestBody: Data, signingKey: P256.Signing.PrivateKey) throws -> String {
+    func createSignedJWT(
+        requestBody: Data,
+        signingKey: P256.Signing.PrivateKey,
+        issuedAt: Int,
+        expiresAt: Int,
+    ) throws -> String {
         // Create header with ES256 algorithm
         let header = ["alg": "ES256", "typ": "JWT"]
         let headerJSON = try JSONSerialization.data(withJSONObject: header)
         let headerBase64 = headerJSON.base64URLEncodedString()
 
         // Create claims with the request body and required timestamps
-        let now = Int(Date().timeIntervalSince1970)
         let requestBodyString = String(data: requestBody, encoding: .utf8) ?? ""
         let claims: [String: Any] = [
             "requestBody": requestBodyString,
-            "iat": now,
-            "exp": now + 60,
+            "iat": issuedAt,
+            "exp": expiresAt,
         ]
         let claimsJSON = try JSONSerialization.data(withJSONObject: claims)
         let claimsBase64 = claimsJSON.base64URLEncodedString()
@@ -1263,6 +1357,14 @@ public enum KASRewrapError: Error, CustomStringConvertible {
     case multipleWrappedKeys(Int)
     /// Local unwrap of the session-wrapped key failed (wrong salt/key, corrupt bytes).
     case keyUnwrapFailed(String)
+    /// `prepareRewrap` options are unusable (a past `expiresAt`, an extension
+    /// that is not JSON or that reuses a standard `requestBody` member name).
+    case invalidRewrapOptions(String)
+    /// A KAS answered `202` without a `Location` to poll.
+    case pendingWithoutLocation
+    /// A `202`'s `Location` is not on the KAS's origin; the bearer token is not
+    /// sent there.
+    case unsafeLocation(String)
 
     public var description: String {
         switch self {
@@ -1298,6 +1400,12 @@ public enum KASRewrapError: Error, CustomStringConvertible {
             "Expected exactly one wrapped key from KAS, got \(count); split-key manifests need rewrapTDF and reconstruction"
         case let .keyUnwrapFailed(reason):
             "Failed to unwrap KAS session-wrapped key: \(reason)"
+        case let .invalidRewrapOptions(reason):
+            "Invalid rewrap options: \(reason)"
+        case .pendingWithoutLocation:
+            "KAS answered 202 without a Location to poll"
+        case let .unsafeLocation(location):
+            "Refusing to poll \(location.prefix(200)): not the KAS's origin"
         }
     }
 }
@@ -1306,6 +1414,19 @@ public enum KASRewrapError: Error, CustomStringConvertible {
 
 /// Extension for base64URL encoding
 extension Data {
+    /// Decodes base64url, unpadded or padded; `nil` for anything else, including
+    /// the standard alphabet's `+` and `/`.
+    init?(base64URLEncoded text: some StringProtocol) {
+        guard !text.contains("+"), !text.contains("/") else {
+            return nil
+        }
+        var base64 = String(text).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        if base64.count % 4 != 0 {
+            base64 += String(repeating: "=", count: 4 - base64.count % 4)
+        }
+        self.init(base64Encoded: base64)
+    }
+
     func base64URLEncodedString() -> String {
         base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")

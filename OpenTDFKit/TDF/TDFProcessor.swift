@@ -2,16 +2,34 @@ import CryptoKit
 import Foundation
 
 public struct TDFKasInfo: Sendable {
+    /// The kind of key the KAS holds, which decides how the DEK is wrapped.
+    public enum KeyType: Sendable, Equatable {
+        /// RSA (2048 bits or more): a `wrapped` key access object, RSA-OAEP.
+        case rsa
+        /// EC P-256: an `ec-wrapped` key access object in the go SDK /
+        /// opentdf-platform scheme. Needs a `kid` and AES-256.
+        case ecP256
+    }
+
     public let url: URL
+    /// The KAS public key, PEM SubjectPublicKeyInfo, of the kind `keyType` names.
     public let publicKeyPEM: String
     public let kid: String?
     public let schemaVersion: String?
+    public let keyType: KeyType
 
-    public init(url: URL, publicKeyPEM: String, kid: String? = nil, schemaVersion: String? = nil) {
+    public init(
+        url: URL,
+        publicKeyPEM: String,
+        kid: String? = nil,
+        schemaVersion: String? = nil,
+        keyType: KeyType = .rsa,
+    ) {
         self.url = url
         self.publicKeyPEM = publicKeyPEM
         self.kid = kid
         self.schemaVersion = schemaVersion
+        self.keyType = keyType
     }
 }
 
@@ -97,6 +115,7 @@ public struct TDFEncryptor {
         configuration: TDFEncryptionConfiguration,
         chunkSize: Int = StreamingTDFCrypto.defaultChunkSize,
     ) throws -> TDFEncryptionResult {
+        try validate(configuration)
         let symmetricKey = try TDFCrypto.generateSymmetricKey(size: configuration.keySize)
         let payloadData: Data
         let streamingResult: StreamingTDFCrypto.StreamingEncryptionResult
@@ -112,11 +131,7 @@ public struct TDFEncryptor {
             )
         }
 
-        let policyBinding = TDFCrypto.policyBinding(policy: configuration.policy.json, symmetricKey: symmetricKey)
-        let wrappedKey = try TDFCrypto.wrapSymmetricKeyWithRSA(
-            publicKeyPEM: configuration.kas.publicKeyPEM,
-            symmetricKey: symmetricKey,
-        )
+        let kasObject = try makeKeyAccessObject(kas: configuration.kas, policy: configuration.policy, symmetricKey: symmetricKey)
 
         let method = TDFMethodDescriptor(
             algorithm: configuration.keySize.algorithm,
@@ -145,19 +160,6 @@ public struct TDFEncryptor {
             segmentSizeDefault: Int64(chunkSize),
             encryptedSegmentSizeDefault: Int64(chunkSize + 28),
             segments: segments,
-        )
-
-        let kasObject = TDFKeyAccessObject(
-            type: .wrapped,
-            url: configuration.kas.url.absoluteString,
-            protocolValue: .kas,
-            wrappedKey: wrappedKey,
-            policyBinding: policyBinding,
-            encryptedMetadata: nil,
-            kid: configuration.kas.kid,
-            sid: nil,
-            schemaVersion: configuration.kas.schemaVersion ?? "1.0",
-            ephemeralPublicKey: nil,
         )
 
         let encryptionInformation = TDFEncryptionInformation(
@@ -205,6 +207,7 @@ public struct TDFEncryptor {
         configuration: TDFEncryptionConfiguration,
         segmentSizes: [Int],
     ) throws -> TDFEncryptionResult {
+        try validate(configuration)
         guard !segmentSizes.isEmpty else {
             throw StreamingCryptoError.invalidSegmentSize
         }
@@ -224,11 +227,7 @@ public struct TDFEncryptor {
             )
         }
 
-        let policyBinding = TDFCrypto.policyBinding(policy: configuration.policy.json, symmetricKey: symmetricKey)
-        let wrappedKey = try TDFCrypto.wrapSymmetricKeyWithRSA(
-            publicKeyPEM: configuration.kas.publicKeyPEM,
-            symmetricKey: symmetricKey,
-        )
+        let kasObject = try makeKeyAccessObject(kas: configuration.kas, policy: configuration.policy, symmetricKey: symmetricKey)
 
         let method = TDFMethodDescriptor(
             algorithm: configuration.keySize.algorithm,
@@ -257,19 +256,6 @@ public struct TDFEncryptor {
             segmentSizeDefault: Int64(defaultSegmentSize),
             encryptedSegmentSizeDefault: Int64(defaultSegmentSize + 28),
             segments: segments,
-        )
-
-        let kasObject = TDFKeyAccessObject(
-            type: .wrapped,
-            url: configuration.kas.url.absoluteString,
-            protocolValue: .kas,
-            wrappedKey: wrappedKey,
-            policyBinding: policyBinding,
-            encryptedMetadata: nil,
-            kid: configuration.kas.kid,
-            sid: nil,
-            schemaVersion: configuration.kas.schemaVersion ?? "1.0",
-            ephemeralPublicKey: nil,
         )
 
         let encryptionInformation = TDFEncryptionInformation(
@@ -312,6 +298,7 @@ public struct TDFEncryptor {
     }
 
     public func encrypt(plaintext: Data, configuration: TDFEncryptionConfiguration) throws -> TDFEncryptionResult {
+        try validate(configuration)
         let symmetricKey = try TDFCrypto.generateSymmetricKey(size: configuration.keySize)
         let (iv, ciphertext, tag) = try TDFCrypto.encryptPayload(plaintext: plaintext, symmetricKey: symmetricKey)
 
@@ -349,6 +336,7 @@ public struct TDFEncryptor {
         configuration: TDFEncryptionConfiguration,
         segmentSize: Int,
     ) throws -> TDFEncryptionResult {
+        try validate(configuration)
         guard segmentSize > 0 else {
             throw StreamingCryptoError.invalidSegmentSize
         }
@@ -398,6 +386,65 @@ public struct TDFEncryptor {
         )
     }
 
+    /// Refuses a configuration no KAS could rewrap, before the input is read or
+    /// anything is written: the KAS public key must load as its declared
+    /// `keyType` (a `TDFCryptoError` otherwise), and an `.ecP256` KAS needs a
+    /// `kid` (the platform finds EC keys by `kid` alone) and AES-256 (the go SDK
+    /// only reconstructs a 32-byte key, and `TDFKAS.rewrap` only accepts
+    /// 32-byte shares).
+    private func validate(_ configuration: TDFEncryptionConfiguration) throws {
+        let kas = configuration.kas
+        switch kas.keyType {
+        case .rsa:
+            _ = try TDFCrypto.loadRSAPublicKey(fromPEM: kas.publicKeyPEM)
+        case .ecP256:
+            _ = try TDFCrypto.loadECPublicKeyP256(fromPEM: kas.publicKeyPEM)
+            guard let kid = kas.kid, !kid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw TDFEncryptError.ecKasRequiresKeyID
+            }
+            guard configuration.keySize == .bits256 else {
+                throw TDFEncryptError.ecKasRequiresAES256
+            }
+        }
+    }
+
+    /// Wraps the DEK to the KAS and binds the policy (spec form) into one key
+    /// access object: `wrapped` (RSA-OAEP) or `ec-wrapped` (the go SDK scheme,
+    /// PEM ephemeral key) by `kas.keyType`.
+    private func makeKeyAccessObject(
+        kas: TDFKasInfo,
+        policy: TDFPolicy,
+        symmetricKey: SymmetricKey,
+    ) throws -> TDFKeyAccessObject {
+        let policyBinding = TDFCrypto.policyBinding(policy: policy.json, symmetricKey: symmetricKey)
+        let type: TDFKeyAccessObject.AccessType
+        let wrappedKey: String
+        let ephemeralPublicKey: String?
+        switch kas.keyType {
+        case .rsa:
+            type = .wrapped
+            wrappedKey = try TDFCrypto.wrapSymmetricKeyWithRSA(publicKeyPEM: kas.publicKeyPEM, symmetricKey: symmetricKey)
+            ephemeralPublicKey = nil
+        case .ecP256:
+            let wrapped = try TDFCrypto.wrapSymmetricKeyWithECForKAS(publicKeyPEM: kas.publicKeyPEM, symmetricKey: symmetricKey)
+            type = .ecWrapped
+            wrappedKey = wrapped.wrappedKey
+            ephemeralPublicKey = wrapped.ephemeralPublicKeyPEM
+        }
+        return TDFKeyAccessObject(
+            type: type,
+            url: kas.url.absoluteString,
+            protocolValue: .kas,
+            wrappedKey: wrappedKey,
+            policyBinding: policyBinding,
+            encryptedMetadata: nil,
+            kid: kas.kid,
+            sid: nil,
+            schemaVersion: kas.schemaVersion ?? "1.0",
+            ephemeralPublicKey: ephemeralPublicKey,
+        )
+    }
+
     /// Wrap the DEK, bind the policy and assemble the manifest around an encrypted payload.
     private func makeResult(
         payloadData: Data,
@@ -409,8 +456,7 @@ public struct TDFEncryptor {
         iv: Data,
         tag: Data,
     ) throws -> TDFEncryptionResult {
-        let policyBinding = TDFCrypto.policyBinding(policy: configuration.policy.json, symmetricKey: symmetricKey)
-        let wrappedKey = try TDFCrypto.wrapSymmetricKeyWithRSA(publicKeyPEM: configuration.kas.publicKeyPEM, symmetricKey: symmetricKey)
+        let kasObject = try makeKeyAccessObject(kas: configuration.kas, policy: configuration.policy, symmetricKey: symmetricKey)
 
         let rootSignature = TDFCrypto.rootSignatureBase64(
             rawSegmentSignatures: rawSegmentSignatures,
@@ -431,19 +477,6 @@ public struct TDFEncryptor {
             segmentSizeDefault: segmentSizeDefault,
             encryptedSegmentSizeDefault: segmentSizeDefault + 28,
             segments: segments,
-        )
-
-        let kasObject = TDFKeyAccessObject(
-            type: .wrapped,
-            url: configuration.kas.url.absoluteString,
-            protocolValue: .kas,
-            wrappedKey: wrappedKey,
-            policyBinding: policyBinding,
-            encryptedMetadata: nil,
-            kid: configuration.kas.kid,
-            sid: nil,
-            schemaVersion: configuration.kas.schemaVersion ?? "1.0",
-            ephemeralPublicKey: nil,
         )
 
         let encryptionInformation = TDFEncryptionInformation(
@@ -718,9 +751,9 @@ public struct TDFDecryptor {
     private func segmentSignature(_ encryptedSegment: Data, algorithm: String, symmetricKey: SymmetricKey) throws -> Data {
         switch algorithm.uppercased() {
         case "GMAC":
-            return Data(encryptedSegment.suffix(16))
+            Data(encryptedSegment.suffix(16))
         case "HS256":
-            return Data(HMAC<SHA256>.authenticationCode(for: encryptedSegment, using: symmetricKey))
+            Data(HMAC<SHA256>.authenticationCode(for: encryptedSegment, using: symmetricKey))
         default:
             throw TDFDecryptError.unsupportedIntegrityAlgorithm(algorithm)
         }
@@ -734,6 +767,23 @@ public struct TDFDecryptor {
             difference |= a ^ b
         }
         return difference == 0
+    }
+}
+
+/// A configuration `TDFEncryptor` refuses before encrypting.
+public enum TDFEncryptError: Error, CustomStringConvertible, Equatable {
+    /// An `.ecP256` KAS has no `kid`; no platform KAS could find its key.
+    case ecKasRequiresKeyID
+    /// An `.ecP256` KAS with a key size other than AES-256.
+    case ecKasRequiresAES256
+
+    public var description: String {
+        switch self {
+        case .ecKasRequiresKeyID:
+            "An EC P-256 KAS needs a key ID (kid); a KAS finds EC keys by kid"
+        case .ecKasRequiresAES256:
+            "An EC P-256 KAS needs AES-256; other OpenTDF SDKs only read a 32-byte key"
+        }
     }
 }
 
