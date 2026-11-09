@@ -223,6 +223,8 @@ public enum TDFKASError: Error, CustomStringConvertible, Equatable {
     case unsupportedRequestAlgorithm(String)
     /// The signed request token does not verify under the given key.
     case requestSignatureInvalid
+    /// A Rewrap response result is inconsistent; the value names the problem.
+    case invalidResult(String)
 
     public var description: String {
         switch self {
@@ -248,6 +250,8 @@ public enum TDFKASError: Error, CustomStringConvertible, Equatable {
             "Signed request token algorithm '\(alg.prefix(16))' is not supported; expected ES256"
         case .requestSignatureInvalid:
             "Signed request token signature is invalid"
+        case let .invalidResult(problem):
+            "Invalid Rewrap result: \(problem)"
         }
     }
 }
