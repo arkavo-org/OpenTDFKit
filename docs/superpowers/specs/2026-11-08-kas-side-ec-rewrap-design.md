@@ -22,7 +22,7 @@ EC session unwrap exists (`KASRewrapClient.unwrapKey`) but defaults to the NanoT
 1. **KAS-side rewrap.** A public, pure function (no network, no storage, no globals) that takes the KAS P-256 private
    key as a value, an `ec-wrapped` key access object (KAO) and the manifest's policy string. It unwraps the DEK, verifies
    the policy binding, and seals the DEK to a receiver's P-256 public key. It returns `(wrappedKey, sessionPublicKey)`.
-2. **Client unwrap, exposed.** A public, pure function that takes `(wrappedKey, sessionPublicKey, receiverPrivateKey)`
+2. **Client unwrap, exposed.** *(Superseded 2026-11-08 by the revised #66: the receiver now calls the owner KAS over HTTP with `KASRewrapClient`; see `2026-11-09-owner-kas-rewrap-design.md`. `TDFKAS.unwrap` stays, for use after the receiver verifies the owner's decision.)* A public, pure function that takes `(wrappedKey, sessionPublicKey, receiverPrivateKey)`
    and returns the DEK, with the TDF salt fixed so a caller cannot pick the NanoTDF one by accident.
 3. **Encrypt with an `ec-wrapped` KAO.** The ZIP encryptor (`TDFEncryptor`) can wrap to a caller-supplied P-256 KAS
    public key, with a caller-supplied KAO URL, `kid` and policy, in the go SDK's format.
