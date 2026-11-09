@@ -1338,6 +1338,19 @@ public enum KASRewrapError: Error, CustomStringConvertible {
 
 /// Extension for base64URL encoding
 extension Data {
+    /// Decodes base64url, unpadded or padded; `nil` for anything else, including
+    /// the standard alphabet's `+` and `/`.
+    init?(base64URLEncoded text: some StringProtocol) {
+        guard !text.contains("+"), !text.contains("/") else {
+            return nil
+        }
+        var base64 = String(text).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        if base64.count % 4 != 0 {
+            base64 += String(repeating: "=", count: 4 - base64.count % 4)
+        }
+        self.init(base64Encoded: base64)
+    }
+
     func base64URLEncodedString() -> String {
         base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")

@@ -132,7 +132,7 @@ public enum TDFKAS {
     /// Parses a PEM P-256 public key the way the platform KAS does (go's
     /// `pem.Decode`): any line length and line ending, spaces and tabs inside
     /// the body, and text after the END line are accepted.
-    private static func parseEphemeralPublicKey(_ text: String) throws -> P256.KeyAgreement.PublicKey {
+    static func parseEphemeralPublicKey(_ text: String) throws -> P256.KeyAgreement.PublicKey {
         let begin = "-----BEGIN PUBLIC KEY-----"
         let end = "-----END PUBLIC KEY-----"
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -214,6 +214,15 @@ public enum TDFKASError: Error, CustomStringConvertible, Equatable {
     case keyUnwrapFailed
     /// The policy binding is absent, malformed, not `HS256`, or does not match.
     case policyBindingRefused
+    /// A received Rewrap body is over 64 KiB.
+    case requestTooLarge
+    /// A received Rewrap is not in the expected shape; the value names the part
+    /// (never its content).
+    case malformedRewrapRequest(String)
+    /// The signed request token's `alg` is not `ES256`.
+    case unsupportedRequestAlgorithm(String)
+    /// The signed request token does not verify under the given key.
+    case requestSignatureInvalid
 
     public var description: String {
         switch self {
@@ -231,6 +240,14 @@ public enum TDFKASError: Error, CustomStringConvertible, Equatable {
             "Key unwrap failed"
         case .policyBindingRefused:
             "Policy binding refused"
+        case .requestTooLarge:
+            "Rewrap request is larger than 64 KiB"
+        case let .malformedRewrapRequest(part):
+            "Rewrap request is malformed: \(part)"
+        case let .unsupportedRequestAlgorithm(alg):
+            "Signed request token algorithm '\(alg.prefix(16))' is not supported; expected ES256"
+        case .requestSignatureInvalid:
+            "Signed request token signature is invalid"
         }
     }
 }
