@@ -281,28 +281,62 @@ public struct TDFCBORDecryptor: Sendable {
         // Intentionally empty - stateless decryptor
     }
 
-    /// Decrypt a TDF-CBOR container with a symmetric key
+    /// Decrypt a TDF-CBOR container with a symmetric key, verifying payload encryption flag,
+    /// algorithm/key size, segment & root integrity, and policy binding.
     public func decrypt(container: TDFCBORContainer, symmetricKey: SymmetricKey) throws -> Data {
-        try TDFCrypto.decryptCombinedPayload(container.payloadData, symmetricKey: symmetricKey)
+        guard container.envelope.payload.isEncrypted else {
+            throw TDFCBORError.decryptionFailed("Payload is marked as unencrypted")
+        }
+        return try TDFDecryptor().decryptEncryptionInfo(
+            container.encryptionInformation,
+            payload: container.payloadData,
+            symmetricKey: symmetricKey,
+        )
     }
 
-    /// Decrypt a TDF-CBOR container with a private key (unwraps the symmetric key first)
+    /// Decrypt a TDF-CBOR container with an EC private key (unwraps the symmetric key first).
+    /// Explicitly rejects split-key containers and non-EC-wrapped key access objects.
     public func decrypt(container: TDFCBORContainer, privateKeyPEM: String) throws -> Data {
         let keyAccess = container.encryptionInformation.keyAccess
         guard !keyAccess.isEmpty else {
             throw TDFCBORError.decryptionFailed("No key access objects found")
         }
 
-        guard let ephemeralPublicKey = keyAccess[0].ephemeralPublicKey else {
-            throw TDFCBORError.decryptionFailed("EC-wrapped key missing ephemeral public key")
+        let distinctSplits = Set(keyAccess.map { $0.sid ?? "" })
+        guard distinctSplits.count == 1 else {
+            throw TDFCBORError.decryptionFailed("Split-key TDF-CBOR containers with multiple split IDs are not supported by single-key decrypt")
         }
 
-        let symmetricKey = try TDFCrypto.unwrapSymmetricKeyWithEC(
-            privateKeyPEM: privateKeyPEM,
-            wrappedKey: keyAccess[0].wrappedKey,
-            ephemeralPublicKey: ephemeralPublicKey,
-        )
+        let ecObjects = keyAccess.filter { $0.type == .ecWrapped }
+        guard !ecObjects.isEmpty else {
+            throw TDFCBORError.decryptionFailed("No ec-wrapped key access object found")
+        }
 
-        return try decrypt(container: container, symmetricKey: symmetricKey)
+        var lastError: Error?
+        for kao in ecObjects {
+            guard let ephemeralPublicKey = kao.ephemeralPublicKey else {
+                lastError = TDFCBORError.decryptionFailed("EC-wrapped key missing ephemeral public key")
+                continue
+            }
+            do {
+                let symmetricKey = try TDFCrypto.unwrapSymmetricKeyWithEC(
+                    privateKeyPEM: privateKeyPEM,
+                    wrappedKey: kao.wrappedKey,
+                    ephemeralPublicKey: ephemeralPublicKey,
+                )
+                guard TDFCrypto.verifyPolicyBinding(
+                    kao.policyBinding,
+                    policyBase64: container.encryptionInformation.policy,
+                    symmetricKey: symmetricKey,
+                ) else {
+                    lastError = TDFDecryptError.policyBindingFailed
+                    continue
+                }
+                return try decrypt(container: container, symmetricKey: symmetricKey)
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? TDFCBORError.decryptionFailed("Failed to unwrap EC key access object")
     }
 }

@@ -9,11 +9,14 @@ public class BinaryParser {
     }
 
     func read(length: Int) -> Data? {
-        guard length >= 0, cursor >= 0, cursor + length <= data.count else { return nil }
-        let range = cursor ..< (cursor + length)
+        guard length >= 0, cursor >= 0, cursor <= data.count, length <= data.count - cursor else {
+            return nil
+        }
+        let start = data.startIndex + cursor
+        let end = start + length
         cursor += length
         // Use zero-copy slicing instead of subdata to avoid allocations
-        return data[range]
+        return data[start ..< end]
     }
 
     @inline(__always)
@@ -31,8 +34,13 @@ public class BinaryParser {
         let protocolValue = protocolByte & 0x0F
         let identifierType = (protocolByte >> 4) & 0x0F
 
-        // Get the protocol enum
-        guard let protocolEnumValue = ProtocolEnum(rawValue: protocolValue) else {
+        // Get the protocol enum (0x0F maps to sharedResourceDirectory, which has rawValue 0xFF)
+        let protocolEnumValue: ProtocolEnum
+        if protocolValue == 0x0F {
+            protocolEnumValue = .sharedResourceDirectory
+        } else if let parsedProtocol = ProtocolEnum(rawValue: protocolValue) {
+            protocolEnumValue = parsedProtocol
+        } else {
             return nil
         }
 
@@ -44,9 +52,16 @@ public class BinaryParser {
             return nil
         }
 
-        // Read identifier if present
-        let identifierSizes: [UInt8: Int] = [0: 0, 1: 2, 2: 8, 3: 32]
-        let identifierSize = identifierSizes[identifierType] ?? 0
+        // Read identifier if present (only identifier types 0...3 are valid per spec 3.4.1.1)
+        let identifierSize: Int
+        switch identifierType {
+        case 0: identifierSize = 0
+        case 1: identifierSize = 2
+        case 2: identifierSize = 8
+        case 3: identifierSize = 32
+        default:
+            return nil
+        }
 
         var identifier: Data? = nil
         if identifierSize > 0 {
@@ -104,8 +119,16 @@ public class BinaryParser {
         guard let plaintextCiphertext = read(length: Int(contentLength)) else {
             throw ParsingError.invalidPolicy
         }
-        // Policy Key Access
-        let keyAccess = policyType == .embeddedEncryptedWithPolicyKeyAccess ? readPolicyKeyAccess(bindingMode: bindingMode) : nil
+        // Policy Key Access (required when policyType is .embeddedEncryptedWithPolicyKeyAccess)
+        let keyAccess: PolicyKeyAccess?
+        if policyType == .embeddedEncryptedWithPolicyKeyAccess {
+            guard let parsedKeyAccess = readPolicyKeyAccess(bindingMode: bindingMode) else {
+                throw ParsingError.invalidPolicy
+            }
+            keyAccess = parsedKeyAccess
+        } else {
+            keyAccess = nil
+        }
 
         return EmbeddedPolicyBody(body: plaintextCiphertext, keyAccess: keyAccess)
     }

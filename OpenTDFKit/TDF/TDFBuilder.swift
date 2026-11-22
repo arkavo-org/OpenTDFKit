@@ -26,14 +26,14 @@ public struct TDFLoader {
     public func load(from data: Data) throws -> TDFContainer {
         let reader = try TDFArchiveReader(data: data)
         let manifest = try reader.manifest()
-        let payload = try reader.payloadData(maxSize: maxPayloadSize)
+        let payload = try reader.payloadData(maxSize: maxPayloadSize ?? TDFArchiveReader.defaultPayloadMaxSize)
         return TDFContainer(manifest: manifest, payload: payload)
     }
 
     public func load(from url: URL) throws -> TDFContainer {
         let reader = try TDFArchiveReader(url: url)
         let manifest = try reader.manifest()
-        let payload = try reader.payloadData(maxSize: maxPayloadSize)
+        let payload = try reader.payloadData(maxSize: maxPayloadSize ?? TDFArchiveReader.defaultPayloadMaxSize)
         return TDFContainer(manifest: manifest, payload: payload)
     }
 }

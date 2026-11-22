@@ -162,6 +162,15 @@ public extension TDFJSONEnvelope {
         guard envelope.tdf == "json" else {
             throw TDFJSONError.invalidTdfIdentifier(envelope.tdf)
         }
+        guard envelope.payload.type == "inline" else {
+            throw TDFJSONError.payloadDecodeError("Expected payload type 'inline', got '\(envelope.payload.type)'")
+        }
+        guard envelope.payload.protocol == "base64" else {
+            throw TDFJSONError.payloadDecodeError("Expected payload protocol 'base64', got '\(envelope.payload.protocol)'")
+        }
+        guard envelope.payload.isEncrypted else {
+            throw TDFJSONError.payloadDecodeError("Payload must have isEncrypted == true")
+        }
 
         return envelope
     }
@@ -210,10 +219,13 @@ public extension TDFJSONEnvelope {
         )
     }
 
-    /// Decode the base64 payload value to raw bytes
+    /// Decode the base64 payload value to raw bytes, verifying declared length if present
     func decodePayloadValue() throws -> Data {
         guard let data = Data(base64Encoded: payload.value) else {
             throw TDFJSONError.payloadDecodeError("Invalid base64 encoding")
+        }
+        if let expectedLength = payload.length, UInt64(data.count) != expectedLength {
+            throw TDFJSONError.payloadDecodeError("Decoded payload length \(data.count) does not match declared length \(expectedLength)")
         }
         return data
     }

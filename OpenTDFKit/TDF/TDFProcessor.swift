@@ -116,6 +116,9 @@ public struct TDFEncryptor {
         chunkSize: Int = StreamingTDFCrypto.defaultChunkSize,
     ) throws -> TDFEncryptionResult {
         try validate(configuration)
+        guard chunkSize > 0, Int64(chunkSize) <= Int64.max - 28 else {
+            throw StreamingCryptoError.invalidChunkSize
+        }
         let symmetricKey = try TDFCrypto.generateSymmetricKey(size: configuration.keySize)
         let payloadData: Data
         let streamingResult: StreamingTDFCrypto.StreamingEncryptionResult
@@ -158,7 +161,7 @@ public struct TDFEncryptor {
             rootSignature: TDFRootSignature(alg: "HS256", sig: rootSignature),
             segmentHashAlg: "GMAC",
             segmentSizeDefault: Int64(chunkSize),
-            encryptedSegmentSizeDefault: Int64(chunkSize + 28),
+            encryptedSegmentSizeDefault: Int64(chunkSize) + 28,
             segments: segments,
         )
 
@@ -250,11 +253,14 @@ public struct TDFEncryptor {
         )
 
         let defaultSegmentSize = segmentSizes.first ?? StreamingTDFCrypto.defaultChunkSize
+        guard defaultSegmentSize > 0, Int64(defaultSegmentSize) <= Int64.max - 28 else {
+            throw StreamingCryptoError.invalidSegmentSize
+        }
         let integrity = TDFIntegrityInformation(
             rootSignature: TDFRootSignature(alg: "HS256", sig: rootSignature),
             segmentHashAlg: "GMAC",
             segmentSizeDefault: Int64(defaultSegmentSize),
-            encryptedSegmentSizeDefault: Int64(defaultSegmentSize + 28),
+            encryptedSegmentSizeDefault: Int64(defaultSegmentSize) + 28,
             segments: segments,
         )
 
@@ -337,15 +343,22 @@ public struct TDFEncryptor {
         segmentSize: Int,
     ) throws -> TDFEncryptionResult {
         try validate(configuration)
-        guard segmentSize > 0 else {
+        guard segmentSize > 0, Int64(segmentSize) <= Int64.max - 28 else {
             throw StreamingCryptoError.invalidSegmentSize
         }
 
         let symmetricKey = try TDFCrypto.generateSymmetricKey(size: configuration.keySize)
-        let segmentCount = max(1, (plaintext.count + segmentSize - 1) / segmentSize)
+        // Overflow-safe ceiling division for any segmentSize > 0
+        let segmentCount = plaintext.isEmpty ? 1 : ((plaintext.count - 1) / segmentSize) + 1
 
         var payloadData = Data()
-        payloadData.reserveCapacity(plaintext.count + segmentCount * 28)
+        let (overhead, mulOverflow) = segmentCount.multipliedReportingOverflow(by: 28)
+        if !mulOverflow {
+            let (totalCap, addOverflow) = plaintext.count.addingReportingOverflow(overhead)
+            if !addOverflow {
+                payloadData.reserveCapacity(totalCap)
+            }
+        }
         var segments: [TDFSegment] = []
         segments.reserveCapacity(segmentCount)
         var tags: [Data] = []
@@ -354,7 +367,8 @@ public struct TDFEncryptor {
 
         var offset = plaintext.startIndex
         repeat {
-            let end = min(offset + segmentSize, plaintext.endIndex)
+            let remaining = plaintext.endIndex - offset
+            let end = offset + min(remaining, segmentSize)
             let nonce = AES.GCM.Nonce()
             let sealed = try AES.GCM.seal(plaintext[offset ..< end], using: symmetricKey, nonce: nonce)
             let segmentStart = payloadData.count
@@ -471,11 +485,12 @@ public struct TDFEncryptor {
             isStreamable: true,
         )
 
+        let encryptedDefault: Int64? = segmentSizeDefault <= Int64.max - 28 ? segmentSizeDefault + 28 : nil
         let integrity = TDFIntegrityInformation(
             rootSignature: TDFRootSignature(alg: "HS256", sig: rootSignature),
             segmentHashAlg: "GMAC",
             segmentSizeDefault: segmentSizeDefault,
-            encryptedSegmentSizeDefault: segmentSizeDefault + 28,
+            encryptedSegmentSizeDefault: encryptedDefault,
             segments: segments,
         )
 
@@ -548,7 +563,7 @@ public struct TDFDecryptor {
         let container = try loader.load(from: inputURL)
 
         let symmetricKey = try unwrapDEK(
-            keyAccess: container.manifest.encryptionInformation.keyAccess,
+            encryptionInformation: container.manifest.encryptionInformation,
             privateKeyPEM: privateKeyPEM,
         )
         try decrypt(container: container, symmetricKey: symmetricKey).write(to: outputURL)
@@ -566,7 +581,7 @@ public struct TDFDecryptor {
 
     public func decrypt(container: TDFContainer, privateKeyPEM: String) throws -> Data {
         let symmetricKey = try unwrapDEK(
-            keyAccess: container.manifest.encryptionInformation.keyAccess,
+            encryptionInformation: container.manifest.encryptionInformation,
             privateKeyPEM: privateKeyPEM,
         )
         return try decrypt(container: container, symmetricKey: symmetricKey)
@@ -575,6 +590,14 @@ public struct TDFDecryptor {
     /// Payload algorithms `decrypt` accepts. AES-128-GCM is only written by
     /// OpenTDFKit (`TDFKeySize.bits128`); other SDKs write AES-256-GCM.
     static let supportedPayloadAlgorithms: Set<String> = ["AES-256-GCM", "AES-128-GCM"]
+
+    static func expectedKeyBitCount(for algorithm: String) throws -> Int {
+        switch algorithm.uppercased() {
+        case "AES-256-GCM": 256
+        case "AES-128-GCM": 128
+        default: throw TDFDecryptError.unsupportedPayloadAlgorithm(algorithm)
+        }
+    }
 
     /// Reconstructs a DEK from key access objects per OpenTDF split semantics
     /// (spec concepts/security.md; Go SDK): objects that share a split ID (`sid`,
@@ -588,6 +611,11 @@ public struct TDFDecryptor {
     ///   `TDFDecryptError.keyShareSizeMismatch` / `.missingKeyAccess`.
     public static func combineKeyShares(_ candidates: [(sid: String?, unwrap: () throws -> Data)]) throws -> Data {
         var shares: [String: Data] = [:]
+        defer {
+            for key in shares.keys {
+                shares[key]?.secureZero()
+            }
+        }
         var failures: [String: Error] = [:]
         var splitOrder: [String] = []
         for candidate in candidates {
@@ -606,13 +634,17 @@ public struct TDFDecryptor {
         var combined: Data?
         for sid in splitOrder {
             guard let share = shares[sid] else {
+                combined?.secureZero()
                 throw failures[sid] ?? TDFDecryptError.missingKeyAccess
             }
-            if let current = combined {
+            if var current = combined {
                 guard current.count == share.count else {
+                    current.secureZero()
                     throw TDFDecryptError.keyShareSizeMismatch
                 }
-                combined = Data(zip(current, share).map { $0 ^ $1 })
+                let next = Data(zip(current, share).map { $0 ^ $1 })
+                current.secureZero()
+                combined = next
             } else {
                 combined = share
             }
@@ -623,40 +655,82 @@ public struct TDFDecryptor {
         return combined
     }
 
-    /// Unwraps every key access object with the RSA private key and combines the
-    /// shares per split ID (see `combineKeyShares`).
-    private func unwrapDEK(keyAccess: [TDFKeyAccessObject], privateKeyPEM: String) throws -> SymmetricKey {
-        let dek = try Self.combineKeyShares(keyAccess.map { kasObject in
+    /// Unwraps every key access object with the RSA private key, verifies each
+    /// KAO's `policyBinding` against its unwrapped share, and combines shares per split ID.
+    private func unwrapDEK(
+        encryptionInformation: TDFEncryptionInformation,
+        privateKeyPEM: String,
+    ) throws -> SymmetricKey {
+        let policyBase64 = encryptionInformation.policy
+        var dek = try Self.combineKeyShares(encryptionInformation.keyAccess.map { kasObject in
             (sid: kasObject.sid, unwrap: {
-                try TDFCrypto.data(from: TDFCrypto.unwrapSymmetricKeyWithRSA(
+                let shareKey = try TDFCrypto.unwrapSymmetricKeyWithRSA(
                     privateKeyPEM: privateKeyPEM,
                     wrappedKey: kasObject.wrappedKey,
-                ))
+                )
+                guard TDFCrypto.verifyPolicyBinding(
+                    kasObject.policyBinding,
+                    policyBase64: policyBase64,
+                    symmetricKey: shareKey,
+                ) else {
+                    throw TDFDecryptError.policyBindingFailed
+                }
+                return TDFCrypto.data(from: shareKey)
             })
         })
+        defer { dek.secureZero() }
         return SymmetricKey(data: dek)
     }
 
     /// Decrypt a Standard TDF payload with its DEK.
     ///
-    /// Every segment is opened with AES-GCM, and the manifest's segment hashes and
-    /// root signature are checked against the payload so dropped, reordered or
-    /// substituted segments are rejected.
-    /// - Throws: `TDFDecryptError.missingIntegrityInformation` when the manifest has
-    ///   no segments, `.malformedPayload` when segment sizes do not tile the payload,
-    ///   `.integrityCheckFailed` when a hash or the root signature does not match,
-    ///   or a CryptoKit error when a segment fails authentication.
+    /// Checks payload algorithm and key size, verifies segment/root integrity and
+    /// policy binding, and opens every AES-GCM segment.
     public func decrypt(container: TDFContainer, symmetricKey: SymmetricKey) throws -> Data {
-        let algorithm = container.manifest.encryptionInformation.method.algorithm
-        guard Self.supportedPayloadAlgorithms.contains(algorithm.uppercased()) else {
-            throw TDFDecryptError.unsupportedPayloadAlgorithm(algorithm)
+        try decryptEncryptionInfo(
+            container.manifest.encryptionInformation,
+            payload: container.payload,
+            symmetricKey: symmetricKey,
+        )
+    }
+
+    /// Shared decryption + integrity + policy-binding verification used by ZIP, JSON, and CBOR decryptors.
+    func decryptEncryptionInfo(
+        _ encryptionInformation: TDFEncryptionInformation,
+        payload: Data,
+        symmetricKey: SymmetricKey,
+    ) throws -> Data {
+        let expectedBits = try Self.expectedKeyBitCount(for: encryptionInformation.method.algorithm)
+        guard symmetricKey.bitCount == expectedBits else {
+            throw TDFDecryptError.keySizeMismatch(expected: expectedBits, actual: symmetricKey.bitCount)
         }
-        guard let integrity = container.manifest.encryptionInformation.integrityInformation,
+        guard let integrity = encryptionInformation.integrityInformation,
               !integrity.segments.isEmpty
         else {
             throw TDFDecryptError.missingIntegrityInformation
         }
-        return try decryptSegments(payload: container.payload, integrity: integrity, symmetricKey: symmetricKey)
+
+        // Decrypt and verify all segments + root signature before verifying policy binding and returning
+        var plaintext = try decryptSegments(payload: payload, integrity: integrity, symmetricKey: symmetricKey)
+
+        // Verify policy binding for single-split manifests (in multi-split manifests each KAO binds its own share)
+        let keyAccess = encryptionInformation.keyAccess
+        let distinctSplits = Set(keyAccess.map { $0.sid ?? "" })
+        if !keyAccess.isEmpty, distinctSplits.count <= 1 {
+            let bindingValid = keyAccess.contains { kao in
+                TDFCrypto.verifyPolicyBinding(
+                    kao.policyBinding,
+                    policyBase64: encryptionInformation.policy,
+                    symmetricKey: symmetricKey,
+                )
+            }
+            guard bindingValid else {
+                plaintext.secureZero()
+                throw TDFDecryptError.policyBindingFailed
+            }
+        }
+
+        return plaintext
     }
 
     /// Open each `IV || ciphertext || tag` segment laid out back to back in `payload`,
@@ -793,6 +867,8 @@ public enum TDFDecryptError: Error, CustomStringConvertible, Equatable {
     case keyShareSizeMismatch
     case missingIntegrityInformation
     case integrityCheckFailed
+    case policyBindingFailed
+    case keySizeMismatch(expected: Int, actual: Int)
     case unsupportedIntegrityAlgorithm(String)
     case unsupportedPayloadAlgorithm(String)
 
@@ -808,6 +884,10 @@ public enum TDFDecryptError: Error, CustomStringConvertible, Equatable {
             "Decryption requires integrity information with segment metadata"
         case .integrityCheckFailed:
             "Integrity check failed: segment hashes or root signature do not match the payload"
+        case .policyBindingFailed:
+            "Policy binding verification failed: manifest policy does not match key access binding"
+        case let .keySizeMismatch(expected, actual):
+            "Symmetric key size \(actual) bits does not match manifest algorithm requirement (\(expected) bits)"
         case let .unsupportedIntegrityAlgorithm(algorithm):
             "Unsupported integrity algorithm: \(algorithm)"
         case let .unsupportedPayloadAlgorithm(algorithm):

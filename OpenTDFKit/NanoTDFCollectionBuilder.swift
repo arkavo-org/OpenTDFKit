@@ -150,20 +150,16 @@ public struct NanoTDFCollectionBuilder: Sendable {
             outputByteCount: 32,
         )
 
-        // Step 4: Build policy with binding
-        var policy = try buildPolicy(from: policyConfig)
-
-        // Calculate policy body for binding
-        let policyBody: Data = switch policyConfig {
-        case let .remote(locator):
-            locator.toData()
-        case let .embeddedPlaintext(data):
-            data
-        case let .embeddedEncrypted(data):
-            data
-        case let .embeddedEncryptedWithKeyAccess(data, _):
-            data
-        }
+        // Step 4: Build policy (encrypting embedded encrypted policies) and compute binding
+        // over the serialized policy body (matching createNanoTDF and Header.verifyPolicyBinding).
+        var (policy, policyBody) = try buildPolicy(
+            from: policyConfig,
+            kas: kas,
+            kasPublicKey: kasPublicKey,
+            symmetricKey: symmetricKey,
+            salt: salt,
+            cryptoHelper: cryptoHelper,
+        )
 
         // Create GMAC policy binding
         let binding = try cryptoHelper.createGMACBinding(
@@ -203,39 +199,90 @@ public struct NanoTDFCollectionBuilder: Sendable {
 
     // MARK: - Private Helpers
 
-    private func buildPolicy(from config: CollectionPolicyConfiguration) throws -> Policy {
+    private func buildPolicy(
+        from config: CollectionPolicyConfiguration,
+        kas: KasMetadata,
+        kasPublicKey: Data,
+        symmetricKey: SymmetricKey,
+        salt: Data,
+        cryptoHelper: CryptoHelper,
+    ) throws -> (policy: Policy, serializedBody: Data) {
         switch config {
         case let .remote(locator):
-            Policy(
+            let policy = Policy(
                 type: .remote,
                 body: nil,
                 remote: locator,
                 binding: nil,
             )
+            return (policy, locator.toData())
 
         case let .embeddedPlaintext(data):
-            Policy(
+            let body = EmbeddedPolicyBody(body: data, keyAccess: nil)
+            let serialized = try body.serializedData()
+            let policy = Policy(
                 type: .embeddedPlaintext,
-                body: EmbeddedPolicyBody(body: data, keyAccess: nil),
+                body: body,
                 remote: nil,
                 binding: nil,
             )
+            return (policy, serialized)
 
         case let .embeddedEncrypted(data):
-            Policy(
+            // Encrypt policy using domain-separated key derived from symmetricKey and append 16-byte GCM tag.
+            let encryptedData = try CryptoHelper.encryptEmbeddedPolicy(
+                plaintext: data,
+                using: symmetricKey,
+            )
+            let body = EmbeddedPolicyBody(body: encryptedData, keyAccess: nil)
+            let serialized = try body.serializedData()
+            let policy = Policy(
                 type: .embeddedEncrypted,
-                body: EmbeddedPolicyBody(body: data, keyAccess: nil),
+                body: body,
                 remote: nil,
                 binding: nil,
             )
+            return (policy, serialized)
 
         case let .embeddedEncryptedWithKeyAccess(data, keyAccess):
-            Policy(
+            guard let policyEphemeralKeyPair = cryptoHelper.generateEphemeralKeyPair(curveType: kas.curve) else {
+                throw NanoTDFCollectionError.keyDerivationFailed("Failed to generate policy ephemeral key pair")
+            }
+            guard let policySharedSecret = try cryptoHelper.deriveSharedSecret(
+                keyPair: policyEphemeralKeyPair,
+                recipientPublicKey: kasPublicKey,
+            ) else {
+                throw NanoTDFCollectionError.keyDerivationFailed("Failed to derive policy shared secret")
+            }
+            let policySymmetricKey = cryptoHelper.deriveSymmetricKey(
+                sharedSecret: policySharedSecret,
+                salt: salt,
+                info: Data(),
+                outputByteCount: 32,
+            )
+            let adjustedIV = cryptoHelper.adjustNonce(Data([0, 0, 0]), to: 12)
+            let (ciphertext, tag) = try cryptoHelper.encryptPayload(
+                plaintext: data,
+                symmetricKey: policySymmetricKey,
+                nonce: adjustedIV,
+            )
+            var authenticatedCiphertext = Data(capacity: ciphertext.count + tag.count)
+            authenticatedCiphertext.append(ciphertext)
+            authenticatedCiphertext.append(tag)
+
+            let updatedKeyAccess = PolicyKeyAccess(
+                resourceLocator: keyAccess.resourceLocator,
+                ephemeralPublicKey: policyEphemeralKeyPair.publicKey,
+            )
+            let body = EmbeddedPolicyBody(body: authenticatedCiphertext, keyAccess: updatedKeyAccess)
+            let serialized = try body.serializedData()
+            let policy = Policy(
                 type: .embeddedEncryptedWithPolicyKeyAccess,
-                body: EmbeddedPolicyBody(body: data, keyAccess: keyAccess),
+                body: body,
                 remote: nil,
                 binding: nil,
             )
+            return (policy, serialized)
         }
     }
 }

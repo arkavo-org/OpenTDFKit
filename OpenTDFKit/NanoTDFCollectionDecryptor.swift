@@ -51,33 +51,61 @@ public actor NanoTDFCollectionDecryptor {
         NanoTDFCollectionDecryptor(symmetricKey: symmetricKey, cipher: cipher)
     }
 
+    /// Creates a decryptor with an already-unwrapped symmetric key after verifying
+    /// the collection header's policy binding.
+    public static func withUnwrappedKey(
+        header: Header,
+        symmetricKey: SymmetricKey,
+    ) throws -> NanoTDFCollectionDecryptor {
+        try header.verifyPolicyBinding(symmetricKey: symmetricKey)
+        let cipher = header.payloadSignatureConfig.payloadCipher ?? .aes256GCM128
+        return NanoTDFCollectionDecryptor(symmetricKey: symmetricKey, cipher: cipher)
+    }
+
     /// Creates a decryptor using a KeyStore containing the KAS private key.
-    /// Use this for server-side (KAS) decryption.
+    /// Verifies the header's policy binding before returning the decryptor.
     ///
     /// - Parameters:
     ///   - header: The NanoTDF header from the collection
     ///   - keyStore: The KeyStore containing the KAS private key
     /// - Returns: A configured decryptor ready for use
-    /// - Throws: `KeyStoreError` if the private key is not found or key derivation fails
+    /// - Throws: `KeyStoreError` or `NanoTDFError.invalidPolicyBinding`
     public static func withKeyStore(
         header: Header,
         keyStore: KeyStore,
     ) async throws -> NanoTDFCollectionDecryptor {
         // Derive symmetric key using KeyStore's ECDH + HKDF
         let symmetricKey = try await keyStore.derivePayloadSymmetricKey(header: header)
+        try header.verifyPolicyBinding(symmetricKey: symmetricKey)
+        let cipher = header.payloadSignatureConfig.payloadCipher ?? .aes256GCM128
+        return NanoTDFCollectionDecryptor(symmetricKey: symmetricKey, cipher: cipher)
+    }
+
+    /// Creates a decryptor using a KeyStore and an explicit KAS public key
+    /// (for v12 headers whose wire format omits the KAS public key).
+    public static func withKeyStore(
+        header: Header,
+        keyStore: KeyStore,
+        kasPublicKey: Data,
+    ) async throws -> NanoTDFCollectionDecryptor {
+        let symmetricKey = try await keyStore.derivePayloadSymmetricKey(
+            kasPublicKey: kasPublicKey,
+            tdfEphemeralPublicKey: header.ephemeralPublicKey,
+        )
+        try header.verifyPolicyBinding(symmetricKey: symmetricKey)
         let cipher = header.payloadSignatureConfig.payloadCipher ?? .aes256GCM128
         return NanoTDFCollectionDecryptor(symmetricKey: symmetricKey, cipher: cipher)
     }
 
     /// Creates a decryptor using raw key data from a KAS private key.
-    /// Use this when you have the KAS private key data directly.
+    /// Verifies the header's policy binding before returning the decryptor.
     ///
     /// - Parameters:
     ///   - header: The NanoTDF header from the collection
     ///   - kasPrivateKeyData: The raw private key data
     ///   - curve: The elliptic curve used
     /// - Returns: A configured decryptor ready for use
-    /// - Throws: `NanoTDFCollectionError` if key derivation fails
+    /// - Throws: `NanoTDFCollectionError` or `NanoTDFError.invalidPolicyBinding`
     public static func withPrivateKey(
         header: Header,
         kasPrivateKeyData: Data,
@@ -108,6 +136,8 @@ public actor NanoTDFCollectionDecryptor {
             info: Data(),
             outputByteCount: 32,
         )
+
+        try header.verifyPolicyBinding(symmetricKey: symmetricKey)
 
         let cipher = header.payloadSignatureConfig.payloadCipher ?? .aes256GCM128
         return NanoTDFCollectionDecryptor(symmetricKey: symmetricKey, cipher: cipher)

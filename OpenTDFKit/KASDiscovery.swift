@@ -92,17 +92,20 @@ public struct OpenTDFConfiguration: Codable, Sendable {
         )
     }
 
-    /// True when well-known has no kas block, an empty kas uri, or advertises
-    /// neither Connect nor REST endpoint pairs. False when endpoint URLs are
-    /// present (even if they would fail later SSRF/scheme validation).
+    /// True when well-known has no kas block or advertises no endpoint URLs at
+    /// all. False whenever any endpoint URL is present (even if `kas.uri` is
+    /// empty or an endpoint would fail later SSRF/scheme validation), so hostile
+    /// or misconfigured kas blocks are never silently overridden.
     var needsKasEndpointSynthesis: Bool {
         guard let kas else { return true }
-        if kas.uri.isEmpty {
-            return true
+        let hasAnyEndpoint = kas.connectRewrapURL != nil
+            || kas.connectPublicKeyURL != nil
+            || kas.rewrapURL != nil
+            || kas.publicKeyURL != nil
+        if hasAnyEndpoint {
+            return false
         }
-        let hasConnect = kas.connectRewrapURL != nil && kas.connectPublicKeyURL != nil
-        let hasRest = kas.rewrapURL != nil && kas.publicKeyURL != nil
-        return !hasConnect && !hasRest
+        return true
     }
 }
 
@@ -212,25 +215,97 @@ private enum IPLiteral {
     case v6([UInt8]) // 16 bytes, network order
 }
 
-private func classifyIP(_ host: String) -> IPLiteral? {
+private func stripIPv6Brackets(_ host: String) -> String {
+    if host.hasPrefix("["), host.hasSuffix("]"), host.count >= 2 {
+        return String(host.dropFirst().dropLast())
+    }
+    return host
+}
+
+private func isNonCanonicalIPv4Literal(_ host: String) -> Bool {
+    let trimmed = host.hasSuffix(".") ? String(host.dropLast()) : host
+    guard !trimmed.isEmpty else { return false }
+    // IPv6 literals contain colons and are validated by classifyIP.
+    if trimmed.contains(":") {
+        return false
+    }
+
+    // Check dot-separated numeric forms explicitly before inet_pton because
+    // some parsers accept leading zeros (octal ambiguity) or normalize forms.
+    let parts = trimmed.split(separator: ".", omittingEmptySubsequences: false)
+    if (1 ... 4).contains(parts.count), parts.allSatisfy({ part in
+        guard !part.isEmpty else { return false }
+        if part.hasPrefix("0x") || part.hasPrefix("0X") {
+            let digits = part.dropFirst(2)
+            return !digits.isEmpty && digits.allSatisfy(\.isHexDigit)
+        }
+        return part.allSatisfy { $0.isASCII && $0.isNumber }
+    }) {
+        // Canonical IPv4 requires exactly 4 decimal octets in 0...255 with no leading zeros.
+        let isCanonicalV4 = parts.count == 4 && parts.allSatisfy { part in
+            if part.count > 1, part.hasPrefix("0") {
+                return false
+            }
+            return UInt8(part) != nil
+        }
+        return !isCanonicalV4
+    }
+
+    // If BSD inet_aton accepts a host that strict inet_pton rejected, it is a
+    // non-canonical numeric IPv4 form.
     var v4 = in_addr()
-    if host.withCString({ inet_pton(AF_INET, $0, &v4) }) == 1 {
+    if trimmed.withCString({ inet_pton(AF_INET, $0, &v4) }) == 1 {
+        return false
+    }
+    var legacy = in_addr()
+    if trimmed.withCString({ inet_aton($0, &legacy) }) != 0 {
+        return true
+    }
+    return false
+}
+
+/// Extracts the unnormalized host portion from a URL string's authority so
+/// non-canonical numeric forms (like octal IPv4) are caught even if Foundation
+/// normalizes `url.host`.
+private func rawAuthorityHost(from urlString: String) -> String? {
+    guard let schemeEnd = urlString.range(of: "://") else { return nil }
+    let afterScheme = urlString[schemeEnd.upperBound...]
+    let authorityEnd = afterScheme.firstIndex { $0 == "/" || $0 == "?" || $0 == "#" } ?? afterScheme.endIndex
+    var authority = afterScheme[..<authorityEnd]
+    if let atIndex = authority.lastIndex(of: "@") {
+        authority = authority[authority.index(after: atIndex)...]
+    }
+    if authority.hasPrefix("[") {
+        guard let closeBracket = authority.firstIndex(of: "]") else { return nil }
+        return String(authority[authority.index(after: authority.startIndex) ..< closeBracket])
+    }
+    if let colon = authority.firstIndex(of: ":") {
+        return String(authority[..<colon])
+    }
+    return String(authority)
+}
+
+private func classifyIP(_ host: String) -> IPLiteral? {
+    let normalized = stripIPv6Brackets(host)
+    var v4 = in_addr()
+    if normalized.withCString({ inet_pton(AF_INET, $0, &v4) }) == 1 {
         return .v4(withUnsafeBytes(of: v4.s_addr) { Array($0) })
     }
     var v6 = in6_addr()
-    if host.withCString({ inet_pton(AF_INET6, $0, &v6) }) == 1 {
+    if normalized.withCString({ inet_pton(AF_INET6, $0, &v6) }) == 1 {
         return .v6(withUnsafeBytes(of: v6) { Array($0) })
     }
     return nil
 }
 
 private func isLoopbackHost(_ host: String) -> Bool {
-    // Normalize a trailing FQDN dot ("localhost." resolves to loopback too).
-    let host = host.hasSuffix(".") ? String(host.dropLast()) : host
-    if host == "localhost" {
+    // Normalize case and trailing FQDN dot ("LOCALHOST." resolves to loopback too).
+    let stripped = stripIPv6Brackets(host).lowercased()
+    let normalized = stripped.hasSuffix(".") ? String(stripped.dropLast()) : stripped
+    if normalized == "localhost" {
         return true
     }
-    switch classifyIP(host) {
+    switch classifyIP(normalized) {
     case let .v4(o): return o[0] == 127 // 127.0.0.0/8
     case let .v6(b): return b.dropLast() == ArraySlice(repeating: 0, count: 15) && b[15] == 1 // ::1
     case .none: return false
@@ -238,24 +313,32 @@ private func isLoopbackHost(_ host: String) -> Bool {
 }
 
 private func isBlockedV4(_ o: [UInt8]) -> Bool {
-    // 10.0.0.0/8
+    // 0.0.0.0/8 ("this network" / unspecified)
+    if o[0] == 0 {
+        return true
+    }
+    // 10.0.0.0/8 (RFC 1918)
     if o[0] == 10 {
         return true
     }
-    // 172.16.0.0/12
-    if o[0] == 172, (o[1] & 0xF0) == 16 {
+    // 100.64.0.0/10 (RFC 6598 CGNAT / shared address space)
+    if o[0] == 100, (o[1] & 0xC0) == 64 {
         return true
     }
-    // 192.168.0.0/16
-    if o[0] == 192, o[1] == 168 {
-        return true
-    }
-    // 169.254.0.0/16
+    // 169.254.0.0/16 (link-local / cloud metadata)
     if o[0] == 169, o[1] == 254 {
         return true
     }
-    // 0.0.0.0
-    if o == [0, 0, 0, 0] {
+    // 172.16.0.0/12 (RFC 1918)
+    if o[0] == 172, (o[1] & 0xF0) == 16 {
+        return true
+    }
+    // 192.168.0.0/16 (RFC 1918)
+    if o[0] == 192, o[1] == 168 {
+        return true
+    }
+    // 224.0.0.0/4 (multicast) and 240.0.0.0/4 (reserved / broadcast 255.255.255.255)
+    if (o[0] & 0xE0) == 224 {
         return true
     }
     return false
@@ -266,31 +349,67 @@ private func isBlockedIP(_ ip: IPLiteral) -> Bool {
     case let .v4(o):
         return isBlockedV4(o)
     case let .v6(b):
-        // Fold IPv4-mapped ::ffff:a.b.c.d back to IPv4.
-        if b[0 ..< 10].allSatisfy({ $0 == 0 }), b[10] == 0xFF, b[11] == 0xFF {
-            return isBlockedV4(Array(b[12 ..< 16]))
-        }
-        // :: unspecified
+        // ::/128 unspecified
         if b.allSatisfy({ $0 == 0 }) {
             return true
         }
+        // ::ffff:0:0/96 (IPv4-mapped IPv6, including ::ffff:127.0.0.1 and ::ffff:169.254.169.254)
+        if b[0 ..< 10].allSatisfy({ $0 == 0 }), b[10] == 0xFF, b[11] == 0xFF {
+            return true
+        }
+        // ::ffff:0:0:0/96 (IPv4-translated)
+        if b[0 ..< 8].allSatisfy({ $0 == 0 }), b[8] == 0xFF, b[9] == 0xFF, b[10] == 0, b[11] == 0 {
+            return true
+        }
+        // 64:ff9b::/96 (NAT64 well-known prefix, RFC 6052) and 64:ff9b:1::/48 (RFC 8215)
+        if b[0] == 0x00, b[1] == 0x64, b[2] == 0xFF, b[3] == 0x9B {
+            if b[4 ..< 12].allSatisfy({ $0 == 0 }) {
+                return true
+            }
+            if b[4] == 0x00, b[5] == 0x01 {
+                return true
+            }
+        }
+        // ff00::/8 multicast
+        if b[0] == 0xFF {
+            return true
+        }
         let first = (UInt16(b[0]) << 8) | UInt16(b[1])
-        return (first & 0xFE00) == 0xFC00 || (first & 0xFFC0) == 0xFE80 // fc00::/7, fe80::/10
+        // fc00::/7 ULA, fe80::/10 link-local, fec0::/10 deprecated site-local
+        return (first & 0xFE00) == 0xFC00
+            || (first & 0xFFC0) == 0xFE80
+            || (first & 0xFFC0) == 0xFEC0
     }
 }
 
 /// Validate a KAS URL for scheme / HTTPS / SSRF constraints.
 ///
 /// - `http` is allowed only for loopback hosts (`localhost`, `127.0.0.0/8`, `::1`).
-/// - Private, link-local, and unspecified IPs are rejected (IPv4, IPv6 ULA/link-local,
-///   and IPv4-mapped IPv6 literals folded back to IPv4).
+/// - Rejects URL userinfo, IPv6 zone IDs (`%`), non-canonical IPv4 literals
+///   (integer, hex, octal, shorthand), and private, CGNAT, link-local,
+///   multicast, reserved, NAT64, IPv4-mapped IPv6, and unspecified addresses.
 public func validateKasURL(_ urlString: String) throws {
     guard let url = URL(string: urlString), let scheme = url.scheme?.lowercased() else {
         throw KASDiscoveryError.invalidURL("Failed to parse URL: \(urlString)")
     }
-    let host = url.host ?? ""
-    guard !host.isEmpty else {
+    guard url.user == nil, url.password == nil else {
+        throw KASDiscoveryError.invalidURL("KAS URL must not contain userinfo")
+    }
+    let rawHost = url.host ?? ""
+    guard !rawHost.isEmpty else {
         throw KASDiscoveryError.invalidURL("KAS URL must have a non-empty host")
+    }
+    guard !rawHost.contains("%") else {
+        throw KASDiscoveryError.invalidURL("KAS URL host must not contain IPv6 zone identifiers")
+    }
+    let host = stripIPv6Brackets(rawHost)
+    if isNonCanonicalIPv4Literal(host) {
+        throw KASDiscoveryError.invalidURL("KAS URL must not use non-canonical IPv4 notation")
+    }
+    if let unnormalizedHost = rawAuthorityHost(from: urlString),
+       unnormalizedHost.contains("%") || isNonCanonicalIPv4Literal(unnormalizedHost)
+    {
+        throw KASDiscoveryError.invalidURL("KAS URL must not use non-canonical IPv4 notation or zone identifiers")
     }
 
     switch scheme {
@@ -305,7 +424,7 @@ public func validateKasURL(_ urlString: String) throws {
     }
 
     if let ip = classifyIP(host), isBlockedIP(ip) {
-        throw KASDiscoveryError.invalidURL("KAS URL must not target private or link-local IP addresses")
+        throw KASDiscoveryError.invalidURL("KAS URL must not target private, reserved, or link-local IP addresses")
     }
 }
 
@@ -360,6 +479,144 @@ public struct KasEndpoints: Sendable, Equatable {
     }
 }
 
+// MARK: - Bounded, No-Redirect HTTP Helper
+
+enum BoundedHTTPError: Error, Sendable {
+    case nonHTTPResponse
+    case responseTooLarge(Int)
+}
+
+/// Executes a URLRequest on `session` while refusing HTTP redirects and enforcing
+/// a strict upper bound on buffered response bytes to prevent OOM DoS.
+enum BoundedHTTPClient {
+    static let defaultWellKnownMaxBytes = 1 * 1024 * 1024 // 1 MiB
+    static let defaultKASMaxBytes = 16 * 1024 * 1024 // 16 MiB
+
+    static func send(
+        _ request: URLRequest,
+        on session: URLSession,
+        maxBytes: Int,
+    ) async throws -> (Data, HTTPURLResponse) {
+        let delegate = Delegate(maxBytes: maxBytes)
+        let task = session.dataTask(with: request)
+        task.delegate = delegate
+
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                delegate.start(task: task, continuation: continuation)
+            }
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private final class Delegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+        private let maxBytes: Int
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<(Data, HTTPURLResponse), Error>?
+        private var httpResponse: HTTPURLResponse?
+        private var buffer = Data()
+        private var overflowed = false
+        private var finished = false
+
+        init(maxBytes: Int) {
+            self.maxBytes = maxBytes
+        }
+
+        func start(
+            task: URLSessionDataTask,
+            continuation: CheckedContinuation<(Data, HTTPURLResponse), Error>,
+        ) {
+            lock.withLock {
+                self.continuation = continuation
+            }
+            task.resume()
+        }
+
+        private func finish(with result: Result<(Data, HTTPURLResponse), Error>) {
+            let cont: CheckedContinuation<(Data, HTTPURLResponse), Error>? = lock.withLock {
+                guard !finished else { return nil }
+                finished = true
+                let c = continuation
+                continuation = nil
+                return c
+            }
+            cont?.resume(with: result)
+        }
+
+        func urlSession(
+            _: URLSession,
+            task _: URLSessionTask,
+            willPerformHTTPRedirection _: HTTPURLResponse,
+            newRequest _: URLRequest,
+            completionHandler: @escaping (URLRequest?) -> Void,
+        ) {
+            completionHandler(nil)
+        }
+
+        func urlSession(
+            _: URLSession,
+            dataTask _: URLSessionDataTask,
+            didReceive response: URLResponse,
+            completionHandler: @escaping (URLSession.ResponseDisposition) -> Void,
+        ) {
+            guard let http = response as? HTTPURLResponse else {
+                completionHandler(.cancel)
+                finish(with: .failure(BoundedHTTPError.nonHTTPResponse))
+                return
+            }
+            if http.expectedContentLength > 0, http.expectedContentLength > Int64(maxBytes) {
+                lock.withLock { overflowed = true }
+                completionHandler(.cancel)
+                finish(with: .failure(BoundedHTTPError.responseTooLarge(maxBytes)))
+                return
+            }
+            lock.withLock {
+                httpResponse = http
+            }
+            completionHandler(.allow)
+        }
+
+        func urlSession(_: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+            let exceeded: Bool = lock.withLock {
+                if overflowed || finished {
+                    return true
+                }
+                if buffer.count > maxBytes - data.count {
+                    overflowed = true
+                    buffer.removeAll(keepingCapacity: false)
+                    return true
+                }
+                buffer.append(data)
+                return false
+            }
+            if exceeded {
+                dataTask.cancel()
+                finish(with: .failure(BoundedHTTPError.responseTooLarge(maxBytes)))
+            }
+        }
+
+        func urlSession(_: URLSession, task _: URLSessionTask, didCompleteWithError error: Error?) {
+            let (isOverflow, response, data) = lock.withLock {
+                (overflowed, httpResponse, buffer)
+            }
+            if isOverflow {
+                finish(with: .failure(BoundedHTTPError.responseTooLarge(maxBytes)))
+                return
+            }
+            if let error {
+                finish(with: .failure(error))
+                return
+            }
+            guard let response else {
+                finish(with: .failure(BoundedHTTPError.nonHTTPResponse))
+                return
+            }
+            finish(with: .success((data, response)))
+        }
+    }
+}
+
 // MARK: - Well-known discovery
 
 /// Fetch the platform's /.well-known/opentdf-configuration document.
@@ -370,6 +627,7 @@ public func fetchWellKnown(platformURL: String,
 {
     let base = trimmingTrailingSlashes(platformURL)
     let urlString = "\(base)/.well-known/opentdf-configuration"
+    try validateKasURL(urlString)
     guard let url = URL(string: urlString) else {
         throw KASDiscoveryError.invalidURL("Failed to parse URL: \(urlString)")
     }
@@ -379,13 +637,24 @@ public func fetchWellKnown(platformURL: String,
     request.timeoutInterval = 30
     request.addValue("application/json", forHTTPHeaderField: "Accept")
 
-    let (data, response) = try await urlSession.data(for: request)
-    guard let http = response as? HTTPURLResponse else {
-        throw KASDiscoveryError.invalidResponse("Non-HTTP response from \(urlString)")
+    let data: Data
+    let http: HTTPURLResponse
+    do {
+        (data, http) = try await BoundedHTTPClient.send(
+            request,
+            on: urlSession,
+            maxBytes: BoundedHTTPClient.defaultWellKnownMaxBytes,
+        )
+    } catch BoundedHTTPError.nonHTTPResponse {
+        throw KASDiscoveryError.invalidResponse("Non-HTTP response from \(url.host ?? "platform")")
+    } catch let BoundedHTTPError.responseTooLarge(limit) {
+        throw KASDiscoveryError.invalidResponse("Well-known response exceeded \(limit)-byte limit")
     }
+
     guard (200 ..< 300).contains(http.statusCode) else {
-        let body = String(data: data, encoding: .utf8) ?? ""
-        throw KASDiscoveryError.httpError(http.statusCode, "GET \(urlString): \(body)")
+        let connectCode = String(data: data, encoding: .utf8).flatMap(parseConnectError)?.code
+        let detail = connectCode.map { "HTTP \(http.statusCode) (\($0))" } ?? "HTTP \(http.statusCode)"
+        throw KASDiscoveryError.httpError(http.statusCode, detail)
     }
 
     do {

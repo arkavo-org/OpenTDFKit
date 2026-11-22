@@ -63,7 +63,10 @@ public enum TDFFormatDetector {
         return nil
     }
 
-    /// Detect the TDF format from a file URL
+    /// Maximum file size (10 MiB) read into memory for speculative TDF-JSON detection.
+    public static let maxJSONDetectionSize = 10 * 1024 * 1024
+
+    /// Detect the TDF format from a file URL without mapping large files into RAM.
     ///
     /// - Parameter url: File URL to analyze
     /// - Returns: Detected format kind, or nil if unknown
@@ -90,11 +93,43 @@ public enum TDFFormatDetector {
             }
         }
 
-        // Fall back to content detection
-        guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else {
+        // Fall back to bounded header inspection first (reads at most 4 bytes)
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
             return nil
         }
-        return detect(from: data)
+        defer { try? handle.close() }
+        guard let header = try? handle.read(upToCount: 4), !header.isEmpty else {
+            return nil
+        }
+
+        let headerBytes = [UInt8](header)
+        if headerBytes.count >= 4 {
+            if Array(headerBytes.prefix(cborMagic.count)) == cborMagic,
+               headerBytes[cborMagic.count] & 0xE0 == 0xA0
+            {
+                return .cbor
+            }
+            if headerBytes == zipMagic {
+                return .archive
+            }
+        }
+        if headerBytes.count >= 2, Array(headerBytes.prefix(2)) == nanoMagic {
+            return .nano
+        }
+
+        // Speculative JSON detection: bound file size before reading & parsing
+        if headerBytes.first == jsonStart {
+            guard let size = try? handle.seekToEnd(),
+                  size <= UInt64(maxJSONDetectionSize),
+                  (try? handle.seek(toOffset: 0)) != nil,
+                  let data = try? handle.readToEnd()
+            else {
+                return nil
+            }
+            return isTDFJSON(data) ? .json : nil
+        }
+
+        return nil
     }
 
     /// Check if data appears to be TDF-JSON
@@ -139,10 +174,11 @@ public extension TDFFormatDetector {
     static func detectWithDetails(from data: Data) -> TDFFormatDetectionResult? {
         guard !data.isEmpty else { return nil }
 
-        // Check CBOR magic bytes first
+        // Check CBOR magic bytes first (3-byte self-describe tag + CBOR map major type)
         if data.count >= 4 {
             let header = [UInt8](data.prefix(4))
-            if header == cborMagic {
+            let prefix = [UInt8](header.prefix(cborMagic.count))
+            if prefix == cborMagic, header[cborMagic.count] & 0xE0 == 0xA0 {
                 return TDFFormatDetectionResult(
                     format: .cbor,
                     confidence: .definitive,

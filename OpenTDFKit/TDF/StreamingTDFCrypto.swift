@@ -413,15 +413,31 @@ public enum StreamingTDFCrypto {
         segments: [EncryptedSegment],
         symmetricKey: SymmetricKey,
         chunkSize: Int = defaultChunkSize,
+        rootSignature: String? = nil,
     ) throws {
         guard chunkSize > 0 else { throw StreamingCryptoError.invalidChunkSize }
+        guard !segments.isEmpty else { throw StreamingCryptoError.malformedSegment(0) }
         let startOffset = try inputHandle.offset()
         let endOffset = try inputHandle.seekToEnd()
         guard endOffset >= startOffset else { throw StreamingCryptoError.segmentReadFailed }
         var currentOffset = startOffset
 
+        // Buffer decrypted plaintext into a temporary file so no unverified plaintext
+        // is written to `outputHandle` if a later segment, hash, or root signature fails.
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(".opentdf-stream-decrypt-\(UUID().uuidString).tmp")
+        FileManager.default.createFile(atPath: tempURL.path, contents: nil)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        let tempHandle = try FileHandle(forUpdating: tempURL)
+        defer { try? tempHandle.close() }
+
+        var rawTags: [Data] = []
+        rawTags.reserveCapacity(segments.count)
+
         for segment in segments {
-            guard segment.encryptedSize >= 28 else {
+            guard segment.encryptedSize >= 28,
+                  let segmentSizeInt = Int(exactly: segment.encryptedSize)
+            else {
                 throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
             }
             let segmentSize = UInt64(segment.encryptedSize)
@@ -435,7 +451,7 @@ public enum StreamingTDFCrypto {
                 throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
             }
 
-            let ciphertextSize = Int(segment.encryptedSize) - 28
+            let ciphertextSize = segmentSizeInt - 28
             var ciphertextAccumulator = Data()
             ciphertextAccumulator.reserveCapacity(ciphertextSize)
             var totalRead = 0
@@ -455,16 +471,46 @@ public enum StreamingTDFCrypto {
                 throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
             }
 
+            // Verify segment GMAC hash in constant time
+            guard let expectedHash = Data(base64Encoded: segment.hash),
+                  CryptoHelper.constantTimeEquals(expectedHash, tagData)
+            else {
+                throw StreamingCryptoError.integrityCheckFailed
+            }
+
             let nonce = try AES.GCM.Nonce(data: ivData)
             let sealed = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertextAccumulator, tag: tagData)
             let plaintext = try AES.GCM.open(sealed, using: symmetricKey)
 
-            try outputHandle.write(contentsOf: plaintext)
+            try tempHandle.write(contentsOf: plaintext)
+            rawTags.append(tagData)
             currentOffset += segmentSize
         }
 
         guard currentOffset == endOffset else {
             throw StreamingCryptoError.malformedSegment(segments.last?.segmentIndex ?? 0)
+        }
+
+        if let rootSignature {
+            let computedRoot = Data(HMAC<SHA256>.authenticationCode(
+                for: Data(rawTags.joined()),
+                using: symmetricKey,
+            ))
+            guard let expectedRoot = Data(base64Encoded: rootSignature),
+                  CryptoHelper.constantTimeEquals(expectedRoot, computedRoot)
+            else {
+                throw StreamingCryptoError.integrityCheckFailed
+            }
+        }
+
+        // All segments and integrity checks passed; stream verified plaintext to outputHandle.
+        try tempHandle.seek(toOffset: 0)
+        while true {
+            let chunk = try tempHandle.read(upToCount: chunkSize) ?? Data()
+            if chunk.isEmpty {
+                break
+            }
+            try outputHandle.write(contentsOf: chunk)
         }
     }
 
@@ -472,17 +518,22 @@ public enum StreamingTDFCrypto {
         encryptedPayload: Data,
         segments: [EncryptedSegment],
         symmetricKey: SymmetricKey,
+        rootSignature: String? = nil,
     ) throws -> Data {
+        guard !segments.isEmpty else {
+            throw StreamingCryptoError.malformedSegment(0)
+        }
         var plaintext = Data()
         plaintext.reserveCapacity(encryptedPayload.count)
+        var rawTags: [Data] = []
+        rawTags.reserveCapacity(segments.count)
         var offset = 0
 
         for segment in segments {
-            guard segment.encryptedSize >= 28 else {
-                throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
-            }
-            let segmentSize = Int(segment.encryptedSize)
-            guard offset <= encryptedPayload.count, segmentSize <= encryptedPayload.count - offset else {
+            guard segment.encryptedSize >= 28,
+                  let segmentSize = Int(exactly: segment.encryptedSize),
+                  offset <= encryptedPayload.count, segmentSize <= encryptedPayload.count - offset
+            else {
                 throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
             }
 
@@ -490,18 +541,40 @@ public enum StreamingTDFCrypto {
             let ivData = encryptedPayload[start ..< start + 12]
             let ciphertextSize = segmentSize - 28
             let ciphertextData = encryptedPayload[start + 12 ..< start + 12 + ciphertextSize]
-            let tagData = encryptedPayload[start + 12 + ciphertextSize ..< start + segmentSize]
+            let tagData = Data(encryptedPayload[start + 12 + ciphertextSize ..< start + segmentSize])
+
+            guard let expectedHash = Data(base64Encoded: segment.hash),
+                  CryptoHelper.constantTimeEquals(expectedHash, tagData)
+            else {
+                plaintext.secureZero()
+                throw StreamingCryptoError.integrityCheckFailed
+            }
 
             let nonce = try AES.GCM.Nonce(data: ivData)
             let sealed = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertextData, tag: tagData)
             let segmentPlaintext = try AES.GCM.open(sealed, using: symmetricKey)
 
             plaintext.append(segmentPlaintext)
+            rawTags.append(tagData)
             offset += segmentSize
         }
 
         guard offset == encryptedPayload.count else {
+            plaintext.secureZero()
             throw StreamingCryptoError.malformedSegment(segments.last?.segmentIndex ?? 0)
+        }
+
+        if let rootSignature {
+            let computedRoot = Data(HMAC<SHA256>.authenticationCode(
+                for: Data(rawTags.joined()),
+                using: symmetricKey,
+            ))
+            guard let expectedRoot = Data(base64Encoded: rootSignature),
+                  CryptoHelper.constantTimeEquals(expectedRoot, computedRoot)
+            else {
+                plaintext.secureZero()
+                throw StreamingCryptoError.integrityCheckFailed
+            }
         }
         return plaintext
     }
@@ -536,6 +609,7 @@ public enum StreamingCryptoError: Error, CustomStringConvertible {
     case invalidSegmentSize
     case invalidChunkSize
     case segmentReadFailed
+    case integrityCheckFailed
 
     public var description: String {
         switch self {
@@ -547,6 +621,8 @@ public enum StreamingCryptoError: Error, CustomStringConvertible {
             "Chunk size must be positive"
         case .segmentReadFailed:
             "Failed to read segment data"
+        case .integrityCheckFailed:
+            "Segment or root integrity verification failed"
         }
     }
 }

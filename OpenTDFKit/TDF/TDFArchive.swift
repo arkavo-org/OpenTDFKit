@@ -38,6 +38,11 @@ private final class ManifestCache {
 
 public struct TDFArchiveReader {
     public static let defaultManifestMaxSize = 10 * 1024 * 1024
+    /// Default upper bound for in-memory or streamed payload extraction (512 MiB)
+    /// to prevent unbounded zip-bomb decompression.
+    public static let defaultPayloadMaxSize = 512 * 1024 * 1024
+    /// Maximum initial buffer pre-allocation from untrusted ZIP headers (1 MiB).
+    private static let maxInitialBufferCapacity = 1 * 1024 * 1024
 
     private let archive: ZIPFoundation.Archive
     private let cache = ManifestCache()
@@ -93,13 +98,17 @@ public struct TDFArchiveReader {
         let entry = try manifestEntry()
         try validateEntryPath(entry.path)
 
+        guard maxSize >= 0 else {
+            throw TDFArchiveError.manifestTooLarge
+        }
         var total = 0
         var result = Data()
         let _ = try archive.extract(entry) { chunk in
-            total += chunk.count
-            if total > maxSize {
+            let (newTotal, overflow) = total.addingReportingOverflow(chunk.count)
+            if overflow || newTotal > maxSize {
                 throw TDFArchiveError.manifestTooLarge
             }
+            total = newTotal
             result.append(chunk)
         }
         return result
@@ -134,35 +143,68 @@ public struct TDFArchiveReader {
     }
 
     public func payloadSize() throws -> Int64 {
-        try Int64(payloadEntry().uncompressedSize)
+        let size = try payloadEntry().uncompressedSize
+        guard let exact = Int64(exactly: size) else {
+            throw TDFArchiveError.payloadTooLarge
+        }
+        return exact
     }
 
     /// Reads the whole payload into memory.
-    /// - Parameter maxSize: Largest payload accepted, in bytes; `nil` for no cap.
+    /// - Parameter maxSize: Largest payload accepted, in bytes; defaults to
+    ///   `TDFArchiveReader.defaultPayloadMaxSize` (pass `nil` to opt out of the cap).
     ///   Checked against the ZIP header and again while extracting, since the
-    ///   header's size is not trusted.
+    ///   header's size is not trusted; initial buffer reservation is capped so
+    ///   spoofed ZIP headers cannot trigger OOM.
     /// - Throws: `TDFArchiveError.payloadTooLarge` when the payload exceeds `maxSize`.
-    public func payloadData(maxSize: Int? = nil) throws -> Data {
+    public func payloadData(maxSize: Int? = TDFArchiveReader.defaultPayloadMaxSize) throws -> Data {
         let entry = try payloadEntry()
-        let declaredSize = Int(clamping: entry.uncompressedSize)
-        if let maxSize, declaredSize > maxSize {
-            throw TDFArchiveError.payloadTooLarge
-        }
-        var total = 0
-        var result = Data(capacity: declaredSize)
-        let _ = try archive.extract(entry) { chunk in
-            total += chunk.count
-            if let maxSize, total > maxSize {
+        if let maxSize {
+            guard maxSize >= 0, entry.uncompressedSize <= UInt64(maxSize) else {
                 throw TDFArchiveError.payloadTooLarge
             }
+        }
+        let cappedHint = min(
+            entry.uncompressedSize,
+            UInt64(maxSize ?? Self.maxInitialBufferCapacity),
+            UInt64(Self.maxInitialBufferCapacity),
+        )
+        var total = 0
+        var result = Data(capacity: Int(cappedHint))
+        let _ = try archive.extract(entry) { chunk in
+            let (newTotal, overflow) = total.addingReportingOverflow(chunk.count)
+            if overflow {
+                throw TDFArchiveError.payloadTooLarge
+            }
+            if let maxSize, newTotal > maxSize {
+                throw TDFArchiveError.payloadTooLarge
+            }
+            total = newTotal
             result.append(chunk)
         }
         return result
     }
 
-    public func writePayload(to handle: FileHandle) throws {
+    public func writePayload(
+        to handle: FileHandle,
+        maxSize: Int? = TDFArchiveReader.defaultPayloadMaxSize,
+    ) throws {
         let entry = try payloadEntry()
+        if let maxSize {
+            guard maxSize >= 0, entry.uncompressedSize <= UInt64(maxSize) else {
+                throw TDFArchiveError.payloadTooLarge
+            }
+        }
+        var total = 0
         _ = try archive.extract(entry) { chunk in
+            let (newTotal, overflow) = total.addingReportingOverflow(chunk.count)
+            if overflow {
+                throw TDFArchiveError.payloadTooLarge
+            }
+            if let maxSize, newTotal > maxSize {
+                throw TDFArchiveError.payloadTooLarge
+            }
+            total = newTotal
             try handle.write(contentsOf: chunk)
         }
     }

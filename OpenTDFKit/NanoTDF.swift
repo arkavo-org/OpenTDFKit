@@ -23,15 +23,25 @@ public struct NanoTDF: Sendable {
     public var signature: Signature?
 
     /// Decrypts the NanoTDF payload using a KeyStore and returns the plaintext.
-    /// This is a convenience method that combines key derivation and payload decryption.
+    /// This is a convenience method that combines key derivation, policy binding verification, and payload decryption.
     /// - Parameter keyStore: The KeyStore containing the private key corresponding to the KAS public key in the header.
     /// - Returns: The decrypted plaintext data.
-    /// - Throws: KeyStoreError, CryptoHelper errors, or other cryptographic errors.
+    /// - Throws: KeyStoreError, NanoTDFError, CryptoHelper errors, or other cryptographic errors.
     public func getPlaintext(using keyStore: KeyStore) async throws -> Data {
         // 1. Derive the symmetric key from the header information
         let symmetricKey = try await keyStore.derivePayloadSymmetricKey(header: header)
 
-        // 2. Use the symmetric key to decrypt the payload
+        // 2. Verify policy binding and decrypt the payload
+        return try await getPayloadPlaintext(symmetricKey: symmetricKey)
+    }
+
+    /// Decrypts the NanoTDF payload using a KeyStore with an explicit KAS public key
+    /// (useful for v12 headers whose wire format omits the KAS public key when the KeyStore holds multiple keys).
+    public func getPlaintext(using keyStore: KeyStore, kasPublicKey: Data) async throws -> Data {
+        let symmetricKey = try await keyStore.derivePayloadSymmetricKey(
+            kasPublicKey: kasPublicKey,
+            tdfEphemeralPublicKey: header.ephemeralPublicKey,
+        )
         return try await getPayloadPlaintext(symmetricKey: symmetricKey)
     }
 
@@ -63,16 +73,19 @@ public struct NanoTDF: Sendable {
     /// This optimization eliminates actor creation and cross-actor await hops in hot paths.
     static let sharedCryptoHelper = CryptoHelper()
 
-    /// Decrypts the payload ciphertext using the provided symmetric key.
+    /// Decrypts the payload ciphertext using the provided symmetric key after verifying policy binding.
     /// Handles nonce padding/adjusting internally.
     /// - Parameter symmetricKey: The `SymmetricKey` derived during the TDF creation or key access process.
     /// - Returns: The original plaintext `Data`.
-    /// - Throws: Errors from `CryptoHelper` or `CryptoKit` if decryption fails (e.g., incorrect key, corrupted data).
+    /// - Throws: `NanoTDFError.invalidPolicyBinding` if policy binding verification fails,
+    ///           or errors from `CryptoHelper` / `CryptoKit` if decryption fails.
     public func getPayloadPlaintext(symmetricKey: SymmetricKey) async throws -> Data {
+        // Verify policy binding before releasing plaintext
+        try header.verifyPolicyBinding(symmetricKey: symmetricKey)
+
         // Pad the 3-byte NanoTDF IV to the 12 bytes required by AES-GCM
         let paddedIV = NanoTDF.sharedCryptoHelper.adjustNonce(payload.iv, to: 12)
-        // Use cipher-aware decryption that routes to CryptoSwift for non-128-bit tags
-        // (CryptoKit only supports 16-byte tags; NanoTDF default is 8-byte/64-bit)
+        // Use cipher-aware decryption for all supported GCM tag sizes
         let cipher = header.payloadSignatureConfig.payloadCipher ?? .aes256GCM64
         return try CryptoHelper.decryptNanoTDF(
             cipher: cipher,
@@ -84,13 +97,19 @@ public struct NanoTDF: Sendable {
     }
 }
 
-public enum NanoTDFError: Error, CustomStringConvertible {
+public enum NanoTDFError: Error, CustomStringConvertible, Equatable {
     case payloadTooLarge(Int)
+    case policyTooLarge(Int)
+    case invalidPolicyBinding
 
     public var description: String {
         switch self {
         case let .payloadTooLarge(length):
             "NanoTDF payload length \(length) exceeds the 24-bit limit of 16,777,215 bytes"
+        case let .policyTooLarge(length):
+            "NanoTDF embedded policy length \(length) exceeds the 16-bit limit of 65,535 bytes"
+        case .invalidPolicyBinding:
+            "NanoTDF policy binding verification failed"
         }
     }
 }
@@ -162,7 +181,7 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
             // Handle error: Embedded policy type must have a body
             throw PolicyError.missingEmbeddedBody
         }
-        policyBody = body.toData()
+        policyBody = try body.serializedData()
     case .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
         guard let body = policy.body else {
             throw PolicyError.missingEmbeddedBody
@@ -172,12 +191,6 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
             guard let keyAccess = body.keyAccess else {
                 throw PolicyError.missingPolicyKeyAccess
             }
-
-            // CRITICAL FIX: For embedded encrypted policies with key access:
-            // 1. Generate a new ephemeral key pair specifically for policy encryption
-            // 2. Use the KAS public key (not the ephemeral key from keyAccess)
-            // 3. Create a new PolicyKeyAccess with our newly generated ephemeral public key
-            // 4. Encrypt policy with the shared secret derived from our ephemeral private key and KAS public key
 
             // Use the KAS public key for policy encryption (same KAS as for payload)
             // The keyAccess.ephemeralPublicKey field should NOT be used as the KAS key
@@ -216,51 +229,49 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
             let policyIV = Data([0, 0, 0])
             let adjustedIV = NanoTDF.sharedCryptoHelper.adjustNonce(policyIV, to: 12)
 
-            // Encrypt the policy data
-            let (encryptedPolicyData, _) = try NanoTDF.sharedCryptoHelper.encryptPayload(
+            // Encrypt the policy data and retain the 16-byte GCM authentication tag (ciphertext || tag)
+            let (encryptedPolicyData, policyTag) = try NanoTDF.sharedCryptoHelper.encryptPayload(
                 plaintext: body.body,
                 symmetricKey: policySymmetricKey,
                 nonce: adjustedIV,
             )
+            var authenticatedPolicyCiphertext = Data(capacity: encryptedPolicyData.count + policyTag.count)
+            authenticatedPolicyCiphertext.append(encryptedPolicyData)
+            authenticatedPolicyCiphertext.append(policyTag)
 
-            // Create new encrypted policy body with the encrypted data and updated key access
+            // Create new encrypted policy body with the authenticated ciphertext and updated key access
             let encryptedBody = EmbeddedPolicyBody(
-                body: encryptedPolicyData,
+                body: authenticatedPolicyCiphertext,
                 keyAccess: updatedPolicyKeyAccess,
             )
 
             // Update policy with encrypted body
             policy.body = encryptedBody
-            policyBody = encryptedBody.toData()
+            policyBody = try encryptedBody.serializedData()
 
         } else if policy.type == .embeddedEncrypted {
-            // For embedded encrypted policy without PolicyKeyAccess
-            // The policy should be encrypted with the main TDF symmetric key
-
-            // NanoTDF spec requires IV of 0x000000 for policy encryption
-            let policyIV = Data([0, 0, 0])
-            let adjustedIV = NanoTDF.sharedCryptoHelper.adjustNonce(policyIV, to: 12)
-
-            // Encrypt the policy data using the main TDF symmetric key
-            let (encryptedPolicyData, _) = try NanoTDF.sharedCryptoHelper.encryptPayload(
+            // For embedded encrypted policy without PolicyKeyAccess:
+            // Derive a domain-separated policy encryption key from tdfSymmetricKey so that
+            // encrypting with IV 0x000000 never reuses the (tdfSymmetricKey, [0; 12]) pair
+            // used by createGMACBinding, and append the 16-byte GCM authentication tag.
+            let authenticatedPolicyCiphertext = try CryptoHelper.encryptEmbeddedPolicy(
                 plaintext: body.body,
-                symmetricKey: tdfSymmetricKey, // Use the main TDF symmetric key
-                nonce: adjustedIV,
+                using: tdfSymmetricKey,
             )
 
-            // Create new encrypted policy body with the encrypted data
+            // Create new encrypted policy body with the authenticated ciphertext
             let encryptedBody = EmbeddedPolicyBody(
-                body: encryptedPolicyData,
+                body: authenticatedPolicyCiphertext,
                 keyAccess: nil, // No key access for .embeddedEncrypted
             )
 
             // Update policy with encrypted body
             policy.body = encryptedBody
-            policyBody = encryptedBody.toData()
+            policyBody = try encryptedBody.serializedData()
 
         } else {
             // For plaintext policies, just use the body as is
-            policyBody = body.toData()
+            policyBody = try body.serializedData()
         }
     }
 
@@ -272,8 +283,9 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
     // Update the input policy struct with the calculated binding
     policy.binding = gmacTag
 
-    // Step 4: Generate a 3-byte nonce/IV for the payload encryption
-    let nonce = try NanoTDF.sharedCryptoHelper.generateNonce(length: 3)
+    // Step 4: Generate a non-zero 3-byte nonce/IV for the payload encryption
+    // (0x000000 is reserved for GMAC binding / policy encryption and must never be reused)
+    let nonce = try NanoTDF.sharedCryptoHelper.generateNonZeroNonce(length: 3)
     // Adjust the 3-byte nonce to 12 bytes for AES-GCM compatibility
     let nonce12 = NanoTDF.sharedCryptoHelper.adjustNonce(nonce, to: 12)
 
@@ -327,8 +339,11 @@ public func createNanoTDF(kas: KasMetadata, policy: inout Policy, plaintext: Dat
 ///   - config: The `SignatureAndPayloadConfig` indicating the desired signature settings (especially the curve).
 /// - Throws: `SignatureError.invalidSigning` if signature generation fails, or errors from `CryptoKit`.
 public func addSignatureToNanoTDF(nanoTDF: inout NanoTDF, privateKey: P256.Signing.PrivateKey, config: SignatureAndPayloadConfig) async throws {
+    if let requestedCurve = config.signatureCurve, requestedCurve != .secp256r1 {
+        throw CryptoHelperError.unsupportedCurve
+    }
     nanoTDF.header.payloadSignatureConfig.signed = true
-    nanoTDF.header.payloadSignatureConfig.signatureCurve = config.signatureCurve
+    nanoTDF.header.payloadSignatureConfig.signatureCurve = .secp256r1
 
     let message = nanoTDF.header.toData() + nanoTDF.payload.toData()
     let signatureData = try NanoTDF.sharedCryptoHelper.generateECDSASignature(
@@ -462,6 +477,69 @@ public struct Header: Sendable {
         data.append(ephemeralPublicKey)
         return data
     }
+
+    /// Verifies the header's policy binding (GMAC or ECDSA) against the serialized policy body.
+    /// - Parameter symmetricKey: The derived NanoTDF payload symmetric key (used for GMAC binding).
+    /// - Throws: `NanoTDFError.invalidPolicyBinding` if the binding is missing, malformed, or invalid.
+    public func verifyPolicyBinding(symmetricKey: SymmetricKey) throws {
+        guard let binding = policy.binding, !binding.isEmpty else {
+            throw NanoTDFError.invalidPolicyBinding
+        }
+
+        let policyBody: Data
+        switch policy.type {
+        case .remote:
+            guard let remote = policy.remote else {
+                throw NanoTDFError.invalidPolicyBinding
+            }
+            policyBody = remote.toData()
+        case .embeddedPlaintext, .embeddedEncrypted, .embeddedEncryptedWithPolicyKeyAccess:
+            guard let body = policy.body else {
+                throw NanoTDFError.invalidPolicyBinding
+            }
+            policyBody = try body.serializedData()
+        }
+
+        if policyBindingConfig.ecdsaBinding {
+            let valid: Bool
+            do {
+                switch policyBindingConfig.curve {
+                case .secp256r1:
+                    let pub = try P256.Signing.PublicKey(compressedRepresentation: ephemeralPublicKey)
+                    let sig = try P256.Signing.ECDSASignature(rawRepresentation: binding)
+                    valid = pub.isValidSignature(sig, for: policyBody)
+                case .secp384r1:
+                    let pub = try P384.Signing.PublicKey(compressedRepresentation: ephemeralPublicKey)
+                    let sig = try P384.Signing.ECDSASignature(rawRepresentation: binding)
+                    valid = pub.isValidSignature(sig, for: policyBody)
+                case .secp521r1:
+                    let pub = try P521.Signing.PublicKey(compressedRepresentation: ephemeralPublicKey)
+                    let sig = try P521.Signing.ECDSASignature(rawRepresentation: binding)
+                    valid = pub.isValidSignature(sig, for: policyBody)
+                }
+            } catch {
+                throw NanoTDFError.invalidPolicyBinding
+            }
+            guard valid else {
+                throw NanoTDFError.invalidPolicyBinding
+            }
+        } else {
+            let nonce = try CryptoKit.AES.GCM.Nonce(data: Data(count: CryptoConstants.aesGcmNonceSize))
+            let fullTag = try CryptoKit.AES.GCM.seal(
+                Data(),
+                using: symmetricKey,
+                nonce: nonce,
+                authenticating: policyBody,
+            ).tag
+            guard binding.count == 8 || binding.count == fullTag.count else {
+                throw NanoTDFError.invalidPolicyBinding
+            }
+            let expected = Data(fullTag.prefix(binding.count))
+            guard CryptoHelper.constantTimeEquals(binding, expected) else {
+                throw NanoTDFError.invalidPolicyBinding
+            }
+        }
+    }
 }
 
 /// Represents the encrypted payload section of a NanoTDF object.
@@ -483,15 +561,24 @@ public struct Payload: Sendable {
         self.mac = mac
     }
 
+    /// Serializes the Payload into its binary `Data` representation, validating that `length`
+    /// fits within the 24-bit wire format limit (`0xFFFFFF`).
+    public func serializedData() throws -> Data {
+        try NanoTDF.validatePayloadLength(Int(length))
+        return toData()
+    }
+
     /// Serializes the Payload into its binary `Data` representation according to the NanoTDF specification.
-    /// Note: Length is serialized as 3 bytes (UInt24).
+    /// Note: Length is serialized as 3 bytes (UInt24), clamped to `0xFFFFFF` if oversized; use
+    /// `serializedData()` to throw on overflow.
     /// - Returns: A `Data` object representing the serialized payload.
     public func toData() -> Data {
+        let clampedLength = min(length, 0xFFFFFF)
         var data = Data()
         // Serialize length as UInt24 (3 bytes)
-        data.append(UInt8((length >> 16) & 0xFF))
-        data.append(UInt8((length >> 8) & 0xFF))
-        data.append(UInt8(length & 0xFF))
+        data.append(UInt8((clampedLength >> 16) & 0xFF))
+        data.append(UInt8((clampedLength >> 8) & 0xFF))
+        data.append(UInt8(clampedLength & 0xFF))
         // Append IV, Ciphertext, and MAC tag
         data.append(iv)
         data.append(ciphertext)
@@ -747,17 +834,27 @@ public struct EmbeddedPolicyBody: Sendable {
         self.keyAccess = keyAccess
     }
 
+    /// Serializes the EmbeddedPolicyBody, throwing `NanoTDFError.policyTooLarge` if `body.count > 65535`.
+    public func serializedData() throws -> Data {
+        guard body.count <= Int(UInt16.max) else {
+            throw NanoTDFError.policyTooLarge(body.count)
+        }
+        return toData()
+    }
+
     /// Serializes the EmbeddedPolicyBody into its binary `Data` representation.
     /// Format: Body Length (2 bytes) || Body Data || Optional Key Access Data.
+    /// Does not trap if `body.count > UInt16.max` (clamps length and bytes consistently);
+    /// prefer `serializedData()` to enforce the 16-bit limit with an error.
     /// - Returns: A `Data` object representing the serialized embedded policy body.
     public func toData() -> Data {
         var data = Data()
-        // Serialize body length as UInt16 (2 bytes, big-endian)
-        let bodyLength = UInt16(body.count)
+        // Serialize body length as UInt16 (2 bytes, big-endian) without trapping on overflow
+        let bodyLength = UInt16(clamping: body.count)
         data.append(UInt8((bodyLength >> 8) & 0xFF)) // High byte
         data.append(UInt8(bodyLength & 0xFF)) // Low byte
-        // Append the policy body data
-        data.append(body)
+        // Append the policy body data (matching declared length)
+        data.append(body.prefix(Int(bodyLength)))
         // Append key access information if present
         if let keyAccess {
             data.append(keyAccess.toData())
