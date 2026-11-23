@@ -29,6 +29,10 @@ public final class PublicKeyStore: Sendable {
         func clear() {
             keys.removeAll()
         }
+
+        func replaceAll(_ newKeys: [Data]) {
+            keys = newKeys
+        }
     }
 
     private let store = InternalStore()
@@ -77,18 +81,18 @@ public final class PublicKeyStore: Sendable {
         let count = UInt32(countBytes[0]) << 24 | UInt32(countBytes[1]) << 16 | UInt32(countBytes[2]) << 8 | UInt32(countBytes[3])
 
         let keySize = curve.publicKeyLength
-        let expectedSize = 5 + (Int(count) * keySize)
-        guard data.count == expectedSize else { throw PublicKeyStoreError.invalidData }
-
-        // Clear existing keys
-        await store.clear()
+        guard let countInt = Int(exactly: count) else { throw PublicKeyStoreError.invalidData }
+        let (keysBytes, multOverflow) = countInt.multipliedReportingOverflow(by: keySize)
+        guard !multOverflow else { throw PublicKeyStoreError.invalidData }
+        let (expectedSize, addOverflow) = keysBytes.addingReportingOverflow(5)
+        guard !addOverflow, data.count == expectedSize else { throw PublicKeyStoreError.invalidData }
 
         var keys = [Data]()
-        keys.reserveCapacity(Int(count))
+        keys.reserveCapacity(countInt)
 
         var offset = 5
-        // Read each public key
-        for _ in 0 ..< count {
+        // Parse all keys locally before atomically replacing the store
+        for _ in 0 ..< countInt {
             let keyStart = data.index(data.startIndex, offsetBy: offset)
             let keyEnd = data.index(keyStart, offsetBy: keySize)
             let publicKey = data[keyStart ..< keyEnd]
@@ -97,7 +101,7 @@ public final class PublicKeyStore: Sendable {
             offset += keySize
         }
 
-        await store.addKeys(keys)
+        await store.replaceAll(keys)
     }
 
     /// Serialize this PublicKeyStore to binary data

@@ -349,9 +349,11 @@ extension KASRewrapClient {
                 if let sessionKEK,
                    let wrappedBase64 = result.kasWrappedKey ?? result.entityWrappedKey,
                    let wrapped = Data(base64Encoded: wrappedBase64),
+                   wrapped.count > 28,
                    let sealed = try? AES.GCM.SealedBox(combined: wrapped),
-                   let dek = try? AES.GCM.open(sealed, using: sessionKEK)
+                   var dek = try? AES.GCM.open(sealed, using: sessionKEK)
                 {
+                    defer { dek.secureZero() }
                     return .permitted(SymmetricKey(data: dek))
                 }
                 unwrapFailed = true

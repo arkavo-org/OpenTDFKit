@@ -57,7 +57,8 @@ public enum TDFCrypto {
     /// - Parameter size: Key size (default: .bits256 for AES-256-GCM)
     /// - Returns: A new symmetric key of the specified size
     public static func generateSymmetricKey(size: TDFKeySize = .bits256) throws -> SymmetricKey {
-        let keyData = try randomBytes(count: size.byteCount)
+        var keyData = try randomBytes(count: size.byteCount)
+        defer { keyData.secureZero() }
         return SymmetricKey(data: keyData)
     }
 
@@ -127,10 +128,16 @@ public enum TDFCrypto {
     /// - Returns: Tuple of (iv, ciphertext)
     public static func encryptPayloadCBC(plaintext: Data, symmetricKey: SymmetricKey) throws -> (iv: Data, cipherText: Data) {
         let ivData = try randomBytes(count: 16) // CBC uses 16-byte IV
-        let keyData = symmetricKey.withUnsafeBytes { Data($0) }
+        var keyBytes = symmetricKey.withUnsafeBytes { Array($0) }
+        defer {
+            keyBytes.withUnsafeMutableBytes { buffer in
+                guard let baseAddress = buffer.baseAddress else { return }
+                memset_s(baseAddress, buffer.count, 0, buffer.count)
+            }
+        }
 
         let aes = try CryptoSwift.AES(
-            key: Array(keyData),
+            key: keyBytes,
             blockMode: CryptoSwift.CBC(iv: Array(ivData)),
             padding: .pkcs7,
         )
@@ -150,10 +157,16 @@ public enum TDFCrypto {
             throw TDFCryptoError.invalidIVSize(expected: 16, actual: iv.count)
         }
 
-        let keyData = symmetricKey.withUnsafeBytes { Data($0) }
+        var keyBytes = symmetricKey.withUnsafeBytes { Array($0) }
+        defer {
+            keyBytes.withUnsafeMutableBytes { buffer in
+                guard let baseAddress = buffer.baseAddress else { return }
+                memset_s(baseAddress, buffer.count, 0, buffer.count)
+            }
+        }
 
         let aes = try CryptoSwift.AES(
-            key: Array(keyData),
+            key: keyBytes,
             blockMode: CryptoSwift.CBC(iv: Array(iv)),
             padding: .pkcs7,
         )
@@ -172,6 +185,35 @@ public enum TDFCrypto {
         let policyBase64 = Data(policy.base64EncodedString().utf8)
         let hmac = HMAC<SHA256>.authenticationCode(for: policyBase64, using: symmetricKey)
         return TDFPolicyBinding(alg: "HS256", hash: Data(hmac).base64EncodedString())
+    }
+
+    /// Verifies a Standard TDF `policyBinding` against `policyBase64` (the manifest's
+    /// base64-encoded policy string) and `symmetricKey` (the DEK or KAO key share).
+    /// Accepts spec-form `Base64(raw HMAC-SHA256)` (32 bytes) and legacy Go SDK
+    /// `Base64(hex(HMAC-SHA256))` (64 ASCII hex bytes), compared in constant time.
+    public static func verifyPolicyBinding(
+        _ binding: TDFPolicyBinding,
+        policyBase64: String,
+        symmetricKey: SymmetricKey,
+    ) -> Bool {
+        guard binding.alg.isEmpty || binding.alg.uppercased() == "HS256",
+              !policyBase64.isEmpty,
+              let decodedHash = Data(base64Encoded: binding.hash)
+        else {
+            return false
+        }
+        let expectedRaw = Data(HMAC<SHA256>.authenticationCode(
+            for: Data(policyBase64.utf8),
+            using: symmetricKey,
+        ))
+        if decodedHash.count == expectedRaw.count {
+            return CryptoHelper.constantTimeEquals(decodedHash, expectedRaw)
+        }
+        if decodedHash.count == expectedRaw.count * 2 {
+            let expectedHex = Data(expectedRaw.hexEncodedString().utf8)
+            return CryptoHelper.constantTimeEquals(decodedHash, expectedHex)
+        }
+        return false
     }
 
     public static func data(from symmetricKey: SymmetricKey) -> Data {
@@ -229,9 +271,10 @@ public enum TDFCrypto {
     /// with current KAS unwrap and surfaces as rewrap failures ("access denied"
     /// / "bad request" after DEK decrypt fails).
     public static func wrapSymmetricKeyWithRSA(publicKeyPEM: String, symmetricKey: SymmetricKey) throws -> String {
-        let keyData = symmetricKey.withUnsafeBytes { rawBuffer -> Data in
+        var keyData = symmetricKey.withUnsafeBytes { rawBuffer -> Data in
             Data(rawBuffer)
         }
+        defer { keyData.secureZero() }
         let publicKey = try loadRSAPublicKey(fromPEM: publicKeyPEM)
         var error: Unmanaged<CFError>?
         guard let encrypted = SecKeyCreateEncryptedData(
@@ -364,83 +407,118 @@ public enum TDFCrypto {
     }
 
     /// Unwrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM), in the
-    /// TDF-JSON / TDF-CBOR draft scheme (empty HKDF salt); see `wrapSymmetricKeyWithEC`.
-    /// - Parameters:
-    ///   - privateKeyPEM: The recipient's PEM-encoded EC private key
-    ///   - wrappedKey: The wrapped key data (base64-encoded nonce + ciphertext + tag)
-    ///   - ephemeralPublicKey: The sender's ephemeral public key (PEM or base64 SEC1 compressed)
-    /// - Returns: The unwrapped symmetric key
+    /// TDF-JSON / TDF-CBOR draft scheme (empty HKDF salt); supports P-256, P-384, and P-521.
     public static func unwrapSymmetricKeyWithEC(
         privateKeyPEM: String,
         wrappedKey: String,
         ephemeralPublicKey ephemeralKeyString: String,
     ) throws -> SymmetricKey {
-        let privateKey = try P256.KeyAgreement.PrivateKey(pemRepresentation: privateKeyPEM)
-        return try unwrapSymmetricKeyWithEC(
-            privateKey: privateKey,
-            wrappedKey: wrappedKey,
-            ephemeralPublicKey: ephemeralKeyString,
-        )
+        if let p256Key = try? P256.KeyAgreement.PrivateKey(pemRepresentation: privateKeyPEM) {
+            return try unwrapSymmetricKeyWithEC(
+                privateKey: p256Key,
+                wrappedKey: wrappedKey,
+                ephemeralPublicKey: ephemeralKeyString,
+            )
+        }
+        if let p384Key = try? P384.KeyAgreement.PrivateKey(pemRepresentation: privateKeyPEM) {
+            return try unwrapSymmetricKeyWithEC(
+                privateKey: p384Key,
+                wrappedKey: wrappedKey,
+                ephemeralPublicKey: ephemeralKeyString,
+            )
+        }
+        if let p521Key = try? P521.KeyAgreement.PrivateKey(pemRepresentation: privateKeyPEM) {
+            return try unwrapSymmetricKeyWithEC(
+                privateKey: p521Key,
+                wrappedKey: wrappedKey,
+                ephemeralPublicKey: ephemeralKeyString,
+            )
+        }
+        throw TDFCryptoError.ecKeyAgreementFailed("Unsupported or invalid EC private key PEM")
     }
 
-    /// Unwrap a symmetric key using EC (ECIES: ECDH + HKDF + AES-GCM), in the
-    /// TDF-JSON / TDF-CBOR draft scheme (empty HKDF salt); see `wrapSymmetricKeyWithEC`.
-    /// - Parameters:
-    ///   - privateKey: The recipient's private key for ECDH
-    ///   - wrappedKey: The wrapped key data (base64-encoded nonce + ciphertext + tag)
-    ///   - ephemeralPublicKey: The sender's ephemeral public key (PEM or base64 SEC1 compressed)
-    ///   - curve: The EC curve used
-    /// - Returns: The unwrapped symmetric key
+    /// Unwrap a symmetric key using P-256 EC (ECIES: ECDH + HKDF + AES-GCM).
     public static func unwrapSymmetricKeyWithEC(
         privateKey: P256.KeyAgreement.PrivateKey,
         wrappedKey: String,
         ephemeralPublicKey ephemeralKeyString: String,
     ) throws -> SymmetricKey {
-        guard let wrappedData = Data(base64Encoded: wrappedKey) else {
-            throw TDFCryptoError.invalidWrappedKey
-        }
-
-        // Parse ephemeral public key - supports both PEM and base64 SEC1 (compressed/uncompressed)
         let ephemeralPublicKey: P256.KeyAgreement.PublicKey
         if ephemeralKeyString.contains("-----BEGIN") {
-            // PEM format (legacy)
             ephemeralPublicKey = try loadECPublicKeyP256(fromPEM: ephemeralKeyString)
         } else {
-            // Base64 SEC1 format (compressed or uncompressed)
             guard let keyData = Data(base64Encoded: ephemeralKeyString) else {
                 throw TDFCryptoError.ecKeyAgreementFailed("Invalid ephemeral key encoding")
             }
-            // Try compressed first (33 bytes), then uncompressed (65 bytes)
             if keyData.count == 33 {
                 ephemeralPublicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: keyData)
             } else {
                 ephemeralPublicKey = try P256.KeyAgreement.PublicKey(x963Representation: keyData)
             }
         }
-
-        // Perform ECDH to get shared secret
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: ephemeralPublicKey)
+        return try unwrapECKey(wrappedKey: wrappedKey, sharedSecret: sharedSecret)
+    }
 
-        // Derive wrapping key using HKDF-SHA256 (empty salt and info for TDF compatibility)
+    /// Unwrap a symmetric key using P-384 EC (ECIES: ECDH + HKDF + AES-GCM).
+    public static func unwrapSymmetricKeyWithEC(
+        privateKey: P384.KeyAgreement.PrivateKey,
+        wrappedKey: String,
+        ephemeralPublicKey ephemeralKeyString: String,
+    ) throws -> SymmetricKey {
+        let ephemeralPublicKey: P384.KeyAgreement.PublicKey
+        if ephemeralKeyString.contains("-----BEGIN") {
+            ephemeralPublicKey = try loadECPublicKeyP384(fromPEM: ephemeralKeyString)
+        } else {
+            guard let keyData = Data(base64Encoded: ephemeralKeyString) else {
+                throw TDFCryptoError.ecKeyAgreementFailed("Invalid ephemeral key encoding")
+            }
+            if keyData.count == 49 {
+                ephemeralPublicKey = try P384.KeyAgreement.PublicKey(compressedRepresentation: keyData)
+            } else {
+                ephemeralPublicKey = try P384.KeyAgreement.PublicKey(x963Representation: keyData)
+            }
+        }
+        let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: ephemeralPublicKey)
+        return try unwrapECKey(wrappedKey: wrappedKey, sharedSecret: sharedSecret)
+    }
+
+    /// Unwrap a symmetric key using P-521 EC (ECIES: ECDH + HKDF + AES-GCM).
+    public static func unwrapSymmetricKeyWithEC(
+        privateKey: P521.KeyAgreement.PrivateKey,
+        wrappedKey: String,
+        ephemeralPublicKey ephemeralKeyString: String,
+    ) throws -> SymmetricKey {
+        let ephemeralPublicKey: P521.KeyAgreement.PublicKey
+        if ephemeralKeyString.contains("-----BEGIN") {
+            ephemeralPublicKey = try loadECPublicKeyP521(fromPEM: ephemeralKeyString)
+        } else {
+            guard let keyData = Data(base64Encoded: ephemeralKeyString) else {
+                throw TDFCryptoError.ecKeyAgreementFailed("Invalid ephemeral key encoding")
+            }
+            if keyData.count == 67 {
+                ephemeralPublicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: keyData)
+            } else {
+                ephemeralPublicKey = try P521.KeyAgreement.PublicKey(x963Representation: keyData)
+            }
+        }
+        let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: ephemeralPublicKey)
+        return try unwrapECKey(wrappedKey: wrappedKey, sharedSecret: sharedSecret)
+    }
+
+    private static func unwrapECKey(wrappedKey: String, sharedSecret: SharedSecret) throws -> SymmetricKey {
+        guard let wrappedData = Data(base64Encoded: wrappedKey), wrappedData.count > 28 else {
+            throw TDFCryptoError.invalidWrappedKey
+        }
         let wrapKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
             salt: Data(),
             sharedInfo: Data(),
             outputByteCount: 32,
         )
-
-        // Unwrap using AES-GCM (format: nonce[12] + ciphertext + tag[16])
-        guard wrappedData.count > 28 else {
-            throw TDFCryptoError.invalidWrappedKey
-        }
-
         let sealedBox = try AES.GCM.SealedBox(combined: wrappedData)
         var decryptedKey = try AES.GCM.open(sealedBox, using: wrapKey)
-
-        defer {
-            decryptedKey.secureZero()
-        }
-
+        defer { decryptedKey.secureZero() }
         return SymmetricKey(data: decryptedKey)
     }
 
@@ -509,12 +587,9 @@ public enum TDFCrypto {
             outputByteCount: 32,
         )
 
-        // Extract key data
-        let keyData = symmetricKey.withUnsafeBytes { Data($0) }
-
-        // Wrap using AES-GCM
+        // Seal directly from symmetricKey storage so no unzeroed copy is left behind
         let nonce = try AES.GCM.Nonce(data: randomBytes(count: 12))
-        let sealed = try AES.GCM.seal(keyData, using: wrapKey, nonce: nonce)
+        let sealed = try symmetricKey.withUnsafeBytes { try AES.GCM.seal($0, using: wrapKey, nonce: nonce) }
 
         // Combined format: nonce + ciphertext + tag
         let wrappedKey = sealed.combined!.base64EncodedString()
@@ -543,10 +618,8 @@ public enum TDFCrypto {
             outputByteCount: 32,
         )
 
-        let keyData = symmetricKey.withUnsafeBytes { Data($0) }
-
         let nonce = try AES.GCM.Nonce(data: randomBytes(count: 12))
-        let sealed = try AES.GCM.seal(keyData, using: wrapKey, nonce: nonce)
+        let sealed = try symmetricKey.withUnsafeBytes { try AES.GCM.seal($0, using: wrapKey, nonce: nonce) }
 
         let wrappedKey = sealed.combined!.base64EncodedString()
         // Compressed SEC1 format (49 bytes for P-384)
@@ -572,10 +645,8 @@ public enum TDFCrypto {
             outputByteCount: 32,
         )
 
-        let keyData = symmetricKey.withUnsafeBytes { Data($0) }
-
         let nonce = try AES.GCM.Nonce(data: randomBytes(count: 12))
-        let sealed = try AES.GCM.seal(keyData, using: wrapKey, nonce: nonce)
+        let sealed = try symmetricKey.withUnsafeBytes { try AES.GCM.seal($0, using: wrapKey, nonce: nonce) }
 
         let wrappedKey = sealed.combined!.base64EncodedString()
         // Compressed SEC1 format (67 bytes for P-521)

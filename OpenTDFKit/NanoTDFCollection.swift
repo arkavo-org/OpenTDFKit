@@ -328,7 +328,7 @@ public actor NanoTDFCollection {
             return CollectionItem(ivCounter: iv, ciphertext: sealed.ciphertext, tag: sealed.tag)
         }
 
-        // For other tag sizes, use CryptoHelper's CryptoSwift path
+        // For truncated tag sizes, use CryptoHelper's constant-time CommonCrypto CTR + CryptoKit GCM path
         let (ciphertext, tag) = try CryptoHelper.encryptNanoTDF(
             cipher: configuration.cipher,
             key: symmetricKey,

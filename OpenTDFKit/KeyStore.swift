@@ -1,7 +1,28 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 // MARK: - Key Types and Storage
+
+/// Reference-counted storage for key pair bytes that zeroes memory on deallocation.
+private final class SecureKeyPairStorage: @unchecked Sendable {
+    var bytes: ContiguousArray<UInt8>
+
+    init(publicKey: Data, privateKey: Data) {
+        var buffer = ContiguousArray<UInt8>()
+        buffer.reserveCapacity(publicKey.count + privateKey.count)
+        publicKey.withUnsafeBytes { buffer.append(contentsOf: $0) }
+        privateKey.withUnsafeBytes { buffer.append(contentsOf: $0) }
+        bytes = buffer
+    }
+
+    deinit {
+        bytes.withUnsafeMutableBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return }
+            memset_s(baseAddress, buffer.count, 0, buffer.count)
+        }
+    }
+}
 
 public struct KeyPairIdentifier: Hashable, Sendable {
     /// Store the public key bytes directly - already fixed size per curve
@@ -17,37 +38,25 @@ public struct KeyPairIdentifier: Hashable, Sendable {
 }
 
 public struct StoredKeyPair: Sendable {
-    // Store all bytes contiguously
-    private let bytes: ContiguousArray<UInt8>
+    // Store all bytes contiguously in zero-on-deinit storage
+    private let storage: SecureKeyPairStorage
     private let publicKeyLength: Int
 
     public var publicKey: Data {
-        bytes.withUnsafeBufferPointer { buffer in
+        storage.bytes.withUnsafeBufferPointer { buffer in
             Data(buffer.prefix(publicKeyLength))
         }
     }
 
     var privateKey: Data {
-        bytes.withUnsafeBufferPointer { buffer in
+        storage.bytes.withUnsafeBufferPointer { buffer in
             let privateKeyStart = buffer.index(buffer.startIndex, offsetBy: publicKeyLength)
             return Data(buffer.suffix(from: privateKeyStart))
         }
     }
 
     init(publicKey: Data, privateKey: Data) {
-        // Single allocation for both keys
-        var bytes = ContiguousArray<UInt8>()
-        bytes.reserveCapacity(publicKey.count + privateKey.count)
-
-        // Copy bytes directly without intermediate buffers
-        publicKey.withUnsafeBytes { pubBytes in
-            bytes.append(contentsOf: pubBytes)
-        }
-        privateKey.withUnsafeBytes { privBytes in
-            bytes.append(contentsOf: privBytes)
-        }
-
-        self.bytes = bytes
+        storage = SecureKeyPairStorage(publicKey: publicKey, privateKey: privateKey)
         publicKeyLength = publicKey.count
     }
 }
@@ -81,21 +90,35 @@ public actor KeyStore {
         totalBytesStored = 0
     }
 
+    private func recalculateTotalBytesStored() {
+        totalBytesStored = keyPairs.count * (curve.publicKeyLength + curve.privateKeyLength)
+    }
+
     public func getPrivateKey(forPublicKey publicKey: Data) -> Data? {
         let identifier = KeyPairIdentifier(publicKey: publicKey)
         return keyPairs[identifier]?.privateKey
     }
 
+    /// Atomically retrieves and removes the private key for `publicKey` in a single
+    /// actor-isolated operation (prevents actor-reentrancy races for one-time keys).
+    public func popPrivateKey(forPublicKey publicKey: Data) -> Data? {
+        let identifier = KeyPairIdentifier(publicKey: publicKey)
+        guard let removed = keyPairs.removeValue(forKey: identifier) else {
+            return nil
+        }
+        recalculateTotalBytesStored()
+        return removed.privateKey
+    }
+
     public func store(keyPair: StoredKeyPair) {
         let identifier = KeyPairIdentifier(publicKey: keyPair.publicKey)
         keyPairs[identifier] = keyPair
-        totalBytesStored += curve.publicKeyLength + curve.privateKeyLength
+        recalculateTotalBytesStored()
     }
 
     /// Batch storage optimized for memory
     public func storeBatch(pairs: [(publicKey: Data, privateKey: Data)]) {
         // Pre-allocate for entire batch
-        let totalNewBytes = pairs.count * (curve.publicKeyLength + curve.privateKeyLength)
         keyPairs.reserveCapacity(keyPairs.count + pairs.count)
 
         // Store all pairs
@@ -105,7 +128,7 @@ public actor KeyStore {
             keyPairs[identifier] = stored
         }
 
-        totalBytesStored += totalNewBytes
+        recalculateTotalBytesStored()
     }
 
     /// Batch generation method
@@ -133,14 +156,13 @@ public actor KeyStore {
         }
 
         // Batch insert all key pairs atomically
-        let totalBytes = tempPairs.count * (curve.publicKeyLength + curve.privateKeyLength)
         keyPairs.reserveCapacity(keyPairs.count + tempPairs.count)
 
         for (identifier, keyPair) in tempPairs {
             keyPairs[identifier] = keyPair
         }
 
-        totalBytesStored += totalBytes
+        recalculateTotalBytesStored()
     }
 
     /// Generates a new key pair using the store's configured curve.
@@ -218,37 +240,81 @@ public actor KeyStore {
         let count = UInt32(countBytes[0]) << 24 | UInt32(countBytes[1]) << 16 | UInt32(countBytes[2]) << 8 | UInt32(countBytes[3])
 
         let pairSize = curve.publicKeyLength + curve.privateKeyLength
-        let expectedSize = 5 + (Int(count) * pairSize)
-        guard data.count == expectedSize else { throw KeyStoreError.invalidKeyData }
+        guard let countInt = Int(exactly: count) else { throw KeyStoreError.invalidKeyData }
+        let (pairsBytes, multOverflow) = countInt.multipliedReportingOverflow(by: pairSize)
+        guard !multOverflow else { throw KeyStoreError.invalidKeyData }
+        let (expectedSize, addOverflow) = pairsBytes.addingReportingOverflow(5)
+        guard !addOverflow, data.count == expectedSize else { throw KeyStoreError.invalidKeyData }
 
-        // Clear existing data
-        keyPairs.removeAll(keepingCapacity: true)
-
+        var parsedPairs: [KeyPairIdentifier: StoredKeyPair] = Dictionary(minimumCapacity: countInt)
         var offset = 5
 
-        // Pre-allocate capacity
-        keyPairs.reserveCapacity(Int(count))
-
-        // Read fixed-size pairs
-        for _ in 0 ..< count {
+        // Read fixed-size pairs into a fresh dictionary before replacing state
+        for _ in 0 ..< countInt {
             let pubKeyStart = data.index(data.startIndex, offsetBy: offset)
             let pubKeyEnd = data.index(pubKeyStart, offsetBy: curve.publicKeyLength)
             let publicKey = data[pubKeyStart ..< pubKeyEnd]
 
             let privKeyStart = pubKeyEnd
             let privKeyEnd = data.index(privKeyStart, offsetBy: curve.privateKeyLength)
-            let privateKey = data[privKeyStart ..< privKeyEnd]
+            var privateKey = Data(data[privKeyStart ..< privKeyEnd])
+            defer { privateKey.secureZero() }
 
             let keyPair = StoredKeyPair(
                 publicKey: Data(publicKey),
-                privateKey: Data(privateKey),
+                privateKey: privateKey,
             )
 
             let identifier = KeyPairIdentifier(publicKey: keyPair.publicKey)
-            keyPairs[identifier] = keyPair
+            parsedPairs[identifier] = keyPair
 
             offset += pairSize
         }
+
+        keyPairs = parsedPairs
+        recalculateTotalBytesStored()
+    }
+
+    /// Resolves the key pair for a parsed v12 NanoTDF header (whose wire format omits `kasPublicKey`).
+    /// Matches by optional `ResourceLocator.identifier` (exact public key, public key prefix, or SHA-256 prefix),
+    /// or falls back to the sole stored key when the store contains exactly one key.
+    private func resolveV12KeyPair(identifier: Data?) -> (publicKey: Data, privateKey: Data)? {
+        if let identifier, !identifier.isEmpty {
+            var matches: [StoredKeyPair] = []
+            for (keyID, pair) in keyPairs {
+                let pub = keyID.publicKey
+                if pub == identifier ||
+                    (identifier.count <= pub.count && pub.prefix(identifier.count) == identifier) ||
+                    Data(SHA256.hash(data: pub)).prefix(identifier.count) == identifier
+                {
+                    matches.append(pair)
+                    if matches.count > 1 {
+                        return nil
+                    }
+                }
+            }
+            if let unique = matches.first {
+                return (unique.publicKey, unique.privateKey)
+            }
+        }
+        if keyPairs.count == 1, let sole = keyPairs.values.first {
+            return (sole.publicKey, sole.privateKey)
+        }
+        return nil
+    }
+
+    /// Resolves the stored key pair for a NanoTDF header, handling both explicit KAS public keys
+    /// and parsed v12 headers (whose wire format omits `kasPublicKey`).
+    func resolveKeyPair(for header: Header, explicitPublicKey: Data? = nil) -> (publicKey: Data, privateKey: Data)? {
+        let lookupKey = explicitPublicKey ?? header.payloadKeyAccess.kasPublicKey
+        if !lookupKey.isEmpty {
+            let identifier = KeyPairIdentifier(publicKey: lookupKey)
+            guard let pair = keyPairs[identifier] else {
+                return nil
+            }
+            return (pair.publicKey, pair.privateKey)
+        }
+        return resolveV12KeyPair(identifier: header.kas.identifier)
     }
 
     /// Derives the symmetric key for NanoTDF payload decryption using ECDH.
@@ -262,7 +328,20 @@ public actor KeyStore {
         let kasPublicKey = header.payloadKeyAccess.kasPublicKey
         let tdfEphemeralPublicKey = header.ephemeralPublicKey
 
-        return try await derivePayloadSymmetricKey(kasPublicKey: kasPublicKey, tdfEphemeralPublicKey: tdfEphemeralPublicKey)
+        if !kasPublicKey.isEmpty {
+            return try await derivePayloadSymmetricKey(kasPublicKey: kasPublicKey, tdfEphemeralPublicKey: tdfEphemeralPublicKey)
+        }
+
+        // v12 NanoTDF headers omit the KAS public key on the wire; resolve via identifier or sole key.
+        guard let resolved = await resolveV12KeyPair(identifier: header.kas.identifier) else {
+            throw KeyStoreError.keyNotFound("Private key for v12 NanoTDF header not found in this KeyStore.")
+        }
+        var kasPrivateKeyData = resolved.privateKey
+        defer { kasPrivateKeyData.secureZero() }
+        return try derivePayloadSymmetricKey(
+            kasPrivateKeyData: kasPrivateKeyData,
+            tdfEphemeralPublicKey: tdfEphemeralPublicKey,
+        )
     }
 
     /// Derives the symmetric key for NanoTDF payload decryption using ECDH.
@@ -282,10 +361,21 @@ public actor KeyStore {
         // 1. Get the KAS's private key from this KeyStore (the only actor-isolated step;
         //    the ECDH and HKDF below run on the caller's executor so concurrent
         //    decrypts are not serialized through the store).
-        guard let kasPrivateKeyData = await getPrivateKey(forPublicKey: kasPublicKey) else {
+        guard var kasPrivateKeyData = await getPrivateKey(forPublicKey: kasPublicKey) else {
             throw KeyStoreError.keyNotFound("Private key for KAS Public Key \(kasPublicKey.hexString) not found in this KeyStore.")
         }
+        defer { kasPrivateKeyData.secureZero() }
 
+        return try derivePayloadSymmetricKey(
+            kasPrivateKeyData: kasPrivateKeyData,
+            tdfEphemeralPublicKey: tdfEphemeralPublicKey,
+        )
+    }
+
+    nonisolated func derivePayloadSymmetricKey(
+        kasPrivateKeyData: Data,
+        tdfEphemeralPublicKey: Data,
+    ) throws -> SymmetricKey {
         // 2. Perform Elliptic Curve Diffie-Hellman (ECDH) Key Agreement
         let sharedSecret: SharedSecret
         do {
@@ -344,7 +434,7 @@ public actor KeyStore {
         }
 
         // Update storage tracking
-        totalBytesStored -= (curve.publicKeyLength + curve.privateKeyLength)
+        recalculateTotalBytesStored()
     }
 
     /// Check if the store contains a key pair matching the given public key

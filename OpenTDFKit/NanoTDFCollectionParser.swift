@@ -229,19 +229,23 @@ public enum NanoTDFCollectionFile {
             throw NanoTDFCollectionError.unexpectedEndOfData
         }
 
-        // Read header length
-        let headerLength = UInt32(data[0]) << 24 |
-            UInt32(data[1]) << 16 |
-            UInt32(data[2]) << 8 |
-            UInt32(data[3])
+        let base = data.startIndex
 
-        let headerEnd = 4 + Int(headerLength)
-        guard data.count >= headerEnd + 4 else {
+        // Read header length (UInt32 big-endian)
+        let headerLength = UInt64(data[base]) << 24 |
+            UInt64(data[base + 1]) << 16 |
+            UInt64(data[base + 2]) << 8 |
+            UInt64(data[base + 3])
+
+        guard headerLength <= UInt64(data.count - 8) else {
             throw NanoTDFCollectionError.unexpectedEndOfData
         }
 
+        let headerStart = base + 4
+        let headerEnd = headerStart + Int(headerLength)
+
         // Extract header
-        let header = data.subdata(in: 4 ..< headerEnd)
+        let header = Data(data[headerStart ..< headerEnd])
 
         // Read item count
         let itemCount = UInt32(data[headerEnd]) << 24 |
@@ -251,7 +255,7 @@ public enum NanoTDFCollectionFile {
 
         // Extract items
         let itemsStart = headerEnd + 4
-        let items = data.subdata(in: itemsStart ..< data.count)
+        let items = Data(data[itemsStart ..< data.endIndex])
 
         return (header, items, itemCount)
     }

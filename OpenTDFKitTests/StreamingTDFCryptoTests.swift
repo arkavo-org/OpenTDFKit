@@ -51,6 +51,8 @@ final class StreamingTDFCryptoTests: XCTestCase {
             hash: tag.base64EncodedString(),
         )
 
+        let rootSig = Data(HMAC<SHA256>.authenticationCode(for: tag, using: key)).base64EncodedString()
+
         for invalidSize in [-1, 27, Int64(encrypted.count + 1)] {
             let segment = StreamingTDFCrypto.EncryptedSegment(
                 segmentIndex: 0,
@@ -62,6 +64,7 @@ final class StreamingTDFCryptoTests: XCTestCase {
                 encryptedPayload: encrypted,
                 segments: [segment],
                 symmetricKey: key,
+                rootSignature: rootSig,
             ))
         }
 
@@ -69,11 +72,19 @@ final class StreamingTDFCryptoTests: XCTestCase {
             encryptedPayload: encrypted + Data([0]),
             segments: [validSegment],
             symmetricKey: key,
+            rootSignature: rootSig,
+        ))
+        XCTAssertThrowsError(try StreamingTDFCrypto.decryptPayloadMultiSegmentFromMemory(
+            encryptedPayload: encrypted,
+            segments: [validSegment],
+            symmetricKey: key,
+            rootSignature: nil,
         ))
         XCTAssertEqual(try StreamingTDFCrypto.decryptPayloadMultiSegmentFromMemory(
             encryptedPayload: encrypted,
             segments: [validSegment],
             symmetricKey: key,
+            rootSignature: rootSig,
         ), Data([1, 2, 3]))
     }
 

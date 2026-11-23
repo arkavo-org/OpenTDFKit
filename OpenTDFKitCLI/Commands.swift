@@ -283,10 +283,7 @@ enum Commands {
             throw DecryptError.missingWrappedKey
         }
 
-        let dek = try TDFDecryptor.combineKeyShares(keyShares.map { share in
-            (sid: share.sid, unwrap: { TDFCrypto.data(from: share.key) })
-        })
-        return try decryptor.decrypt(container: container, symmetricKey: SymmetricKey(data: dek))
+        return try decryptor.decrypt(container: container, keyShares: keyShares)
     }
 
     /// Acquire an OAuth access token via client_credentials.
@@ -1086,11 +1083,11 @@ extension Commands {
         )
         print("✓ Key unwrapped successfully")
 
-        // Create decryptor with the unwrapped key
+        // Create decryptor with the unwrapped key (verifies header policy binding)
         let cipher = header.payloadSignatureConfig.payloadCipher ?? .aes256GCM128
-        let decryptor = NanoTDFCollectionDecryptor.withUnwrappedKey(
+        let decryptor = try NanoTDFCollectionDecryptor.withUnwrappedKey(
+            header: header,
             symmetricKey: payloadKey,
-            cipher: cipher,
         )
 
         // Parse and decrypt all items
