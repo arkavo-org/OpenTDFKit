@@ -494,28 +494,29 @@ public actor KASService {
         policyBody: Data?,
         policyBinding: Data?,
     ) async throws -> (rewrappedKey: Data, keyID: UUID) {
-        // Atomically pop the one-time key so concurrent valid callers cannot reuse it.
-        guard var privateKeyData = await keyStore.popPrivateKey(forPublicKey: kasPublicKey) else {
+        // Peek first so malformed/unauthorized requests neither consume the one-time key
+        // nor open a transient `keyNotFound` window for concurrent legitimate callers.
+        guard var privateKeyData = await keyStore.getPrivateKey(forPublicKey: kasPublicKey) else {
             throw KASServiceError.keyNotFound
         }
         defer { privateKeyData.secureZero() }
 
-        let keyID = Self.deterministicUUID(for: kasPublicKey)
+        let (rewrappedKey, _) = try await rewrapKeyInternal(
+            ephemeralPublicKey: ephemeralPublicKey,
+            encryptedKey: encryptedKey,
+            privateKeyData: privateKeyData,
+            policyBody: policyBody,
+            policyBinding: policyBinding,
+        )
 
-        do {
-            let (rewrappedKey, _) = try await rewrapKeyInternal(
-                ephemeralPublicKey: ephemeralPublicKey,
-                encryptedKey: encryptedKey,
-                privateKeyData: privateKeyData,
-                policyBody: policyBody,
-                policyBinding: policyBinding,
-            )
-            return (rewrappedKey: rewrappedKey, keyID: keyID)
-        } catch {
-            // Restore the key so a malformed or unauthorized request cannot burn a one-time key.
-            await keyStore.store(keyPair: StoredKeyPair(publicKey: kasPublicKey, privateKey: privateKeyData))
-            throw error
+        // Atomically commit one-time consumption; if another valid caller won the race, fail.
+        guard var consumedKey = await keyStore.popPrivateKey(forPublicKey: kasPublicKey) else {
+            throw KASServiceError.keyNotFound
         }
+        consumedKey.secureZero()
+
+        let keyID = Self.deterministicUUID(for: kasPublicKey)
+        return (rewrappedKey: rewrappedKey, keyID: keyID)
     }
 
     /// Derives a deterministic RFC 9562 version 8 (custom SHA-256) UUID from the KAS public key bytes.

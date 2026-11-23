@@ -416,6 +416,8 @@ final class SecurityAuditRegressionTests: XCTestCase {
             "https://[::ffff:8.8.8.8]/kas",
             "https://[::7f00:1]/kas",
             "https://[::169.254.169.254]/kas",
+            "https://[2002:a9fe:a9fe::]/kas",
+            "https://[2001:0000:4136:e378:8000:63bf:3fff:fdd2]/kas",
             "https://[64:ff9b::10.0.0.1]/kas",
             "https://[ff02::1]/kas",
             // Userinfo
@@ -494,25 +496,28 @@ final class SecurityAuditRegressionTests: XCTestCase {
             XCTFail("Unexpected error: \(error)")
         }
 
-        // Pre-cancelled task must never hang BoundedHTTPClient.send
+        // Pre-cancelled task must deterministically throw CancellationError without hanging
         MockURLProtocol.handler = { req in
             let resp = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (resp, Data("ok".utf8))
         }
         let cancelledTask = Task {
-            try await withTaskCancellationHandler {
-                try await BoundedHTTPClient.send(
-                    URLRequest(url: URL(string: "https://kas.example.com/cancelled")!),
-                    on: MockURLProtocol.makeSession(),
-                    maxBytes: 1024,
-                )
-            } onCancel: {}
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await BoundedHTTPClient.send(
+                URLRequest(url: URL(string: "https://kas.example.com/cancelled")!),
+                on: MockURLProtocol.makeSession(),
+                maxBytes: 1024,
+            )
         }
-        cancelledTask.cancel()
         do {
             _ = try await cancelledTask.value
+            XCTFail("Expected cancellation error for pre-cancelled task")
+        } catch is CancellationError {
+            // Expected
+        } catch let urlErr as URLError where urlErr.code == .cancelled {
+            // Also acceptable if URLSession completed cancellation first
         } catch {
-            // Expected cancellation / URLError.cancelled without hanging
+            XCTFail("Unexpected error for pre-cancelled task: \(error)")
         }
     }
 
@@ -696,9 +701,16 @@ final class SecurityAuditRegressionTests: XCTestCase {
         splitKAO2.policyBinding = TDFCrypto.policyBinding(policy: policy.json, symmetricKey: share2Key)
         realSplitManifest.encryptionInformation.keyAccess = [splitKAO1, splitKAO2]
         let realSplitContainer = TDFContainer(manifest: realSplitManifest, payload: result.container.payload)
+        // Legitimate multi-split decryption via decrypt(container:keyShares:) verifies every share's binding
+        // and skips a bad replica share ahead of a valid share for the same split.
+        let badReplicaKey = SymmetricKey(data: Data(repeating: 0x01, count: 32))
         let decryptedMulti = try TDFDecryptor().decrypt(
             container: realSplitContainer,
-            keyShares: [TDFKeyShare(sid: "s1", key: share1Key), TDFKeyShare(sid: "s2", key: share2Key)],
+            keyShares: [
+                TDFKeyShare(sid: "s1", key: badReplicaKey),
+                TDFKeyShare(sid: "s1", key: share1Key),
+                TDFKeyShare(sid: "s2", key: share2Key),
+            ],
         )
         XCTAssertEqual(decryptedMulti, Data("hello".utf8))
 
@@ -831,6 +843,24 @@ final class SecurityAuditRegressionTests: XCTestCase {
         )
         try inHandle.close()
         try encHandle.close()
+
+        // Truncating to 1 segment with nil rootSignature must also be rejected
+        let seg0OnlyURL = FileManager.default.temporaryDirectory.appendingPathComponent("stream-seg0-\(UUID().uuidString)")
+        let encBytesAll = try Data(contentsOf: encURL)
+        let firstSegLen = Int(encResult.segments[0].encryptedSize)
+        try Data(encBytesAll.prefix(firstSegLen)).write(to: seg0OnlyURL)
+        defer { try? FileManager.default.removeItem(at: seg0OnlyURL) }
+        let readSeg0 = try FileHandle(forReadingFrom: seg0OnlyURL)
+        let outSeg0 = try FileHandle(forWritingTo: outURL)
+        XCTAssertThrowsError(try StreamingTDFCrypto.decryptPayloadStreamingMultiSegment(
+            inputHandle: readSeg0,
+            outputHandle: outSeg0,
+            segments: [encResult.segments[0]],
+            symmetricKey: key,
+            rootSignature: nil,
+        ))
+        try readSeg0.close()
+        try outSeg0.close()
 
         // Missing rootSignature on multi-segment payload must be rejected
         let readEncMissingRoot = try FileHandle(forReadingFrom: encURL)
@@ -1076,6 +1106,15 @@ final class SecurityAuditRegressionTests: XCTestCase {
         }
         let clamped = hugePolicy.toData()
         XCTAssertEqual(clamped.count, 2 + Int(UInt16.max))
+
+        let oversizedPayload = Payload(length: 0x0100_0000, iv: Data(count: 3), ciphertext: Data(), mac: Data(count: 16))
+        XCTAssertThrowsError(try oversizedPayload.serializedData()) { error in
+            XCTAssertEqual(error as? NanoTDFError, .payloadTooLarge(0x0100_0000))
+        }
+        let mismatchedPayload = Payload(length: 99, iv: Data(count: 3), ciphertext: Data([1, 2]), mac: Data(count: 16))
+        XCTAssertThrowsError(try mismatchedPayload.serializedData()) { error in
+            XCTAssertEqual(error as? NanoTDFError, .payloadLengthMismatch(declared: 99, actual: 21))
+        }
 
         // #22: Unknown identifierType (e.g., 0x40 | 0x01 = 0x41) rejected
         var badIdData = Data()

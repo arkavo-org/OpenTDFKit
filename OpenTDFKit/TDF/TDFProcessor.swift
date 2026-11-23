@@ -638,8 +638,9 @@ public struct TDFDecryptor {
                     symmetricKey: share.key,
                 )
             }
+            // Skip a bad replica share so another valid replica for the same split can still succeed.
             guard bindingValid else {
-                throw TDFDecryptError.policyBindingFailed
+                continue
             }
             verifiedShares[sid] = TDFCrypto.data(from: share.key)
         }
@@ -761,10 +762,12 @@ public struct TDFDecryptor {
         return SymmetricKey(data: dek)
     }
 
-    /// Decrypt a Standard TDF payload with its DEK.
+    /// Decrypt a single-split Standard TDF payload with its DEK.
     ///
     /// Checks payload algorithm and key size, verifies segment/root integrity and
-    /// policy binding, and opens every AES-GCM segment.
+    /// policy binding, and opens every AES-GCM segment. For multi-split manifests,
+    /// use `decrypt(container:keyShares:)` or `decrypt(container:privateKeyPEM:)`
+    /// so every split's share binding is verified before XOR combination.
     public func decrypt(container: TDFContainer, symmetricKey: SymmetricKey) throws -> Data {
         try decryptEncryptionInfo(
             container.manifest.encryptionInformation,

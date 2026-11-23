@@ -472,8 +472,9 @@ public enum StreamingTDFCrypto {
     ) throws {
         guard chunkSize > 0 else { throw StreamingCryptoError.invalidChunkSize }
         guard !segments.isEmpty else { throw StreamingCryptoError.malformedSegment(0) }
-        // Multi-segment payloads require a rootSignature to prevent segment reordering/dropping.
-        if segments.count > 1, rootSignature == nil {
+        // Require a rootSignature for every payload (including 1-segment) so an attacker
+        // cannot truncate an N-segment payload down to 1 segment and strip the root.
+        guard let rootSignature else {
             throw StreamingCryptoError.integrityCheckFailed
         }
         let startOffset = try inputHandle.offset()
@@ -549,26 +550,28 @@ public enum StreamingTDFCrypto {
             throw StreamingCryptoError.malformedSegment(segments.last?.segmentIndex ?? 0)
         }
 
-        if let rootSignature {
-            let computedRoot = Data(HMAC<SHA256>.authenticationCode(
-                for: Data(segmentSignatures.joined()),
-                using: symmetricKey,
-            ))
-            guard let expectedRoot = Data(base64Encoded: rootSignature),
-                  CryptoHelper.constantTimeEquals(expectedRoot, computedRoot)
-            else {
-                throw StreamingCryptoError.integrityCheckFailed
-            }
+        let computedRoot = Data(HMAC<SHA256>.authenticationCode(
+            for: Data(segmentSignatures.joined()),
+            using: symmetricKey,
+        ))
+        guard let expectedRoot = Data(base64Encoded: rootSignature),
+              CryptoHelper.constantTimeEquals(expectedRoot, computedRoot)
+        else {
+            throw StreamingCryptoError.integrityCheckFailed
         }
 
-        // Pass 2: every segment and the root signature passed; stream verified plaintext directly to outputHandle.
+        // Pass 2: stream verified plaintext directly to outputHandle, re-verifying every
+        // reread segment against its Pass-1 root-authenticated signature before emitting bytes.
         currentOffset = startOffset
-        for segment in segments {
+        for (index, segment) in segments.enumerated() {
             let segmentSizeInt = Int(segment.encryptedSize)
             let segmentSize = UInt64(segment.encryptedSize)
             try inputHandle.seek(toOffset: currentOffset)
 
             let ivData = try inputHandle.read(upToCount: 12) ?? Data()
+            guard ivData.count == 12 else {
+                throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
+            }
             let ciphertextSize = segmentSizeInt - 28
             var ciphertextAccumulator = Data()
             ciphertextAccumulator.reserveCapacity(ciphertextSize)
@@ -583,6 +586,20 @@ public enum StreamingTDFCrypto {
                 totalRead += chunk.count
             }
             let tagData = try inputHandle.read(upToCount: 16) ?? Data()
+            guard tagData.count == 16 else {
+                throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
+            }
+
+            let rereadSig = try computeSegmentSignature(
+                ivData: ivData,
+                ciphertext: ciphertextAccumulator,
+                tagData: tagData,
+                algorithm: segmentHashAlg,
+                symmetricKey: symmetricKey,
+            )
+            guard CryptoHelper.constantTimeEquals(rereadSig, segmentSignatures[index]) else {
+                throw StreamingCryptoError.integrityCheckFailed
+            }
 
             let nonce = try AES.GCM.Nonce(data: ivData)
             let sealed = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertextAccumulator, tag: tagData)
@@ -604,11 +621,17 @@ public enum StreamingTDFCrypto {
         guard !segments.isEmpty else {
             throw StreamingCryptoError.malformedSegment(0)
         }
-        if segments.count > 1, rootSignature == nil {
+        guard let rootSignature else {
             throw StreamingCryptoError.integrityCheckFailed
         }
         var plaintext = Data()
         plaintext.reserveCapacity(encryptedPayload.count)
+        var succeeded = false
+        defer {
+            if !succeeded {
+                plaintext.secureZero()
+            }
+        }
         var segmentSignatures: [Data] = []
         segmentSignatures.reserveCapacity(segments.count)
         var offset = 0
@@ -618,7 +641,6 @@ public enum StreamingTDFCrypto {
                   let segmentSize = Int(exactly: segment.encryptedSize),
                   offset <= encryptedPayload.count, segmentSize <= encryptedPayload.count - offset
             else {
-                plaintext.secureZero()
                 throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
             }
 
@@ -638,7 +660,6 @@ public enum StreamingTDFCrypto {
             guard let expectedHash = Data(base64Encoded: segment.hash),
                   CryptoHelper.constantTimeEquals(expectedHash, computedSig)
             else {
-                plaintext.secureZero()
                 throw StreamingCryptoError.integrityCheckFailed
             }
 
@@ -652,22 +673,19 @@ public enum StreamingTDFCrypto {
         }
 
         guard offset == encryptedPayload.count else {
-            plaintext.secureZero()
             throw StreamingCryptoError.malformedSegment(segments.last?.segmentIndex ?? 0)
         }
 
-        if let rootSignature {
-            let computedRoot = Data(HMAC<SHA256>.authenticationCode(
-                for: Data(segmentSignatures.joined()),
-                using: symmetricKey,
-            ))
-            guard let expectedRoot = Data(base64Encoded: rootSignature),
-                  CryptoHelper.constantTimeEquals(expectedRoot, computedRoot)
-            else {
-                plaintext.secureZero()
-                throw StreamingCryptoError.integrityCheckFailed
-            }
+        let computedRoot = Data(HMAC<SHA256>.authenticationCode(
+            for: Data(segmentSignatures.joined()),
+            using: symmetricKey,
+        ))
+        guard let expectedRoot = Data(base64Encoded: rootSignature),
+              CryptoHelper.constantTimeEquals(expectedRoot, computedRoot)
+        else {
+            throw StreamingCryptoError.integrityCheckFailed
         }
+        succeeded = true
         return plaintext
     }
 }

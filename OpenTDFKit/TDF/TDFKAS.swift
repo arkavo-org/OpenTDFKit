@@ -12,8 +12,8 @@ import Foundation
 /// out as nonce (12) ‖ ciphertext ‖ tag (16).
 ///
 /// A key access object wraps its split's **key share**. For a TDF with a single
-/// split the share is the DEK; with several splits the shares are XORed
-/// (`TDFDecryptor.combineKeyShares`).
+/// split the share is the DEK; with several splits the shares are verified and
+/// XORed (`TDFDecryptor.decrypt(container:keyShares:)`).
 public enum TDFKAS {
     /// Size of every key share this path accepts.
     static let shareByteCount = 32

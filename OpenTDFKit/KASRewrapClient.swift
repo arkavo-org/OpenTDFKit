@@ -761,8 +761,8 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     /// one split ID (`sid`, absent counts as one ID), so any of them yields the
     /// whole DEK and the first returned is used. A split-key manifest throws
     /// `KASRewrapError.invalidTDFRequest` before any request is sent — call
-    /// `rewrapAndUnwrapTDFShares` at each KAS and combine with
-    /// `TDFDecryptor.combineKeyShares`. With no key access object for this KAS,
+    /// `rewrapAndUnwrapTDFShares` at each KAS and pass the shares to
+    /// `TDFDecryptor.decrypt(container:keyShares:)`. With no key access object for this KAS,
     /// `rewrapTDF` throws `KASRewrapError.invalidTDFRequest`. A permit without a
     /// session public key throws `KASRewrapError.missingSessionKey`; a wrapped
     /// key that fails to open (wrong salt, wrong client key, corrupt bytes)
@@ -773,7 +773,7 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
         let splitIDs = Set(manifest.encryptionInformation.keyAccess.map { $0.sid ?? "" })
         guard splitIDs.count <= 1 else {
             throw KASRewrapError.invalidTDFRequest(
-                "Split-key manifest (\(splitIDs.count) splits): use rewrapAndUnwrapTDFShares at each KAS and TDFDecryptor.combineKeyShares",
+                "Split-key manifest (\(splitIDs.count) splits): use rewrapAndUnwrapTDFShares at each KAS and TDFDecryptor.decrypt(container:keyShares:)",
             )
         }
         let shares = try await rewrapAndUnwrapTDFShares(manifest: manifest)
@@ -796,7 +796,7 @@ public final class KASRewrapClient: KASRewrapClientProtocol, Sendable {
     /// Rewraps every key access object this KAS holds and unwraps each returned
     /// key with the session key, tagged with its object's split ID. For a
     /// split-key manifest, collect shares from every KAS and pass them to
-    /// `TDFDecryptor.combineKeyShares`.
+    /// `TDFDecryptor.decrypt(container:keyShares:)`.
     /// - Parameter manifest: The parsed TDF manifest containing key access entries.
     /// - Returns: One share per permitted key access object at this KAS.
     public func rewrapAndUnwrapTDFShares(manifest: TDFManifest) async throws -> [TDFKeyShare] {

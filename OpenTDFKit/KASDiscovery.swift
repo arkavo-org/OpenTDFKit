@@ -380,6 +380,14 @@ private func isBlockedIP(_ ip: IPLiteral) -> Bool {
                 return true
             }
         }
+        // 2002::/16 (6to4, RFC 3056 — embeds IPv4 in bytes 2..<6)
+        if b[0] == 0x20, b[1] == 0x02 {
+            return true
+        }
+        // 2001:0000::/32 (Teredo, RFC 4380 — embeds IPv4)
+        if b[0] == 0x20, b[1] == 0x01, b[2] == 0x00, b[3] == 0x00 {
+            return true
+        }
         // ff00::/8 multicast
         if b[0] == 0xFF {
             return true
@@ -628,7 +636,7 @@ enum BoundedHTTPClient {
                 if case .delivered = state {
                     return true
                 }
-                if buffer.count > maxBytes - data.count {
+                if maxBytes < 0 || data.count > maxBytes || buffer.count > maxBytes - data.count {
                     overflowed = true
                     buffer.removeAll(keepingCapacity: false)
                     return true

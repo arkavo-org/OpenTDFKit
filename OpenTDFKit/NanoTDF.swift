@@ -99,6 +99,7 @@ public struct NanoTDF: Sendable {
 
 public enum NanoTDFError: Error, CustomStringConvertible, Equatable {
     case payloadTooLarge(Int)
+    case payloadLengthMismatch(declared: Int, actual: Int)
     case policyTooLarge(Int)
     case invalidPolicyBinding
 
@@ -106,6 +107,8 @@ public enum NanoTDFError: Error, CustomStringConvertible, Equatable {
         switch self {
         case let .payloadTooLarge(length):
             "NanoTDF payload length \(length) exceeds the 24-bit limit of 16,777,215 bytes"
+        case let .payloadLengthMismatch(declared, actual):
+            "NanoTDF payload declared length \(declared) does not match actual byte count \(actual)"
         case let .policyTooLarge(length):
             "NanoTDF embedded policy length \(length) exceeds the 16-bit limit of 65,535 bytes"
         case .invalidPolicyBinding:
@@ -568,7 +571,7 @@ public struct Payload: Sendable {
         try NanoTDF.validatePayloadLength(Int(length))
         try NanoTDF.validatePayloadLength(actualLength)
         guard Int(length) == actualLength else {
-            throw NanoTDFError.payloadTooLarge(actualLength)
+            throw NanoTDFError.payloadLengthMismatch(declared: Int(length), actual: actualLength)
         }
         return toData()
     }
