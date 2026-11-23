@@ -223,7 +223,8 @@ private func stripIPv6Brackets(_ host: String) -> String {
 }
 
 private func isNonCanonicalIPv4Literal(_ host: String) -> Bool {
-    let trimmed = host.hasSuffix(".") ? String(host.dropLast()) : host
+    let hasTrailingDot = host.hasSuffix(".")
+    let trimmed = hasTrailingDot ? String(host.dropLast()) : host
     guard !trimmed.isEmpty else { return false }
     // IPv6 literals contain colons and are validated by classifyIP.
     if trimmed.contains(":") {
@@ -241,6 +242,10 @@ private func isNonCanonicalIPv4Literal(_ host: String) -> Bool {
         }
         return part.allSatisfy { $0.isASCII && $0.isNumber }
     }) {
+        // Numeric IPv4 literals with a trailing dot (e.g. "169.254.169.254.") are non-canonical.
+        if hasTrailingDot {
+            return true
+        }
         // Canonical IPv4 requires exactly 4 decimal octets in 0...255 with no leading zeros.
         let isCanonicalV4 = parts.count == 4 && parts.allSatisfy { part in
             if part.count > 1, part.hasPrefix("0") {
@@ -255,7 +260,7 @@ private func isNonCanonicalIPv4Literal(_ host: String) -> Bool {
     // non-canonical numeric IPv4 form.
     var v4 = in_addr()
     if trimmed.withCString({ inet_pton(AF_INET, $0, &v4) }) == 1 {
-        return false
+        return hasTrailingDot
     }
     var legacy = in_addr()
     if trimmed.withCString({ inet_aton($0, &legacy) }) != 0 {
@@ -286,7 +291,8 @@ private func rawAuthorityHost(from urlString: String) -> String? {
 }
 
 private func classifyIP(_ host: String) -> IPLiteral? {
-    let normalized = stripIPv6Brackets(host)
+    let stripped = stripIPv6Brackets(host)
+    let normalized = stripped.hasSuffix(".") ? String(stripped.dropLast()) : stripped
     var v4 = in_addr()
     if normalized.withCString({ inet_pton(AF_INET, $0, &v4) }) == 1 {
         return .v4(withUnsafeBytes(of: v4.s_addr) { Array($0) })
@@ -349,9 +355,13 @@ private func isBlockedIP(_ ip: IPLiteral) -> Bool {
     case let .v4(o):
         return isBlockedV4(o)
     case let .v6(b):
-        // ::/128 unspecified
-        if b.allSatisfy({ $0 == 0 }) {
-            return true
+        // ::/96 (unspecified :: and deprecated IPv4-compatible IPv6 ::a.b.c.d),
+        // preserving loopback ::1 (which is permitted for local development).
+        if b[0 ..< 12].allSatisfy({ $0 == 0 }) {
+            let isLoopback = b[12] == 0 && b[13] == 0 && b[14] == 0 && b[15] == 1
+            if !isLoopback {
+                return true
+            }
         }
         // ::ffff:0:0/96 (IPv4-mapped IPv6, including ::ffff:127.0.0.1 and ::ffff:169.254.169.254)
         if b[0 ..< 10].allSatisfy({ $0 == 0 }), b[10] == 0xFF, b[11] == 0xFF {
@@ -490,6 +500,7 @@ enum BoundedHTTPError: Error, Sendable {
 /// a strict upper bound on buffered response bytes to prevent OOM DoS.
 enum BoundedHTTPClient {
     static let defaultWellKnownMaxBytes = 1 * 1024 * 1024 // 1 MiB
+    static let defaultKASRewrapServiceMaxBytes = 1 * 1024 * 1024 // 1 MiB
     static let defaultKASMaxBytes = 16 * 1024 * 1024 // 16 MiB
 
     static func send(
@@ -506,18 +517,24 @@ enum BoundedHTTPClient {
                 delegate.start(task: task, continuation: continuation)
             }
         } onCancel: {
-            task.cancel()
+            delegate.cancel(task: task)
         }
     }
 
     private final class Delegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+        private enum State {
+            case idle
+            case waiting(CheckedContinuation<(Data, HTTPURLResponse), Error>)
+            case completed(Result<(Data, HTTPURLResponse), Error>)
+            case delivered
+        }
+
         private let maxBytes: Int
         private let lock = NSLock()
-        private var continuation: CheckedContinuation<(Data, HTTPURLResponse), Error>?
+        private var state: State = .idle
         private var httpResponse: HTTPURLResponse?
         private var buffer = Data()
         private var overflowed = false
-        private var finished = false
 
         init(maxBytes: Int) {
             self.maxBytes = maxBytes
@@ -527,19 +544,42 @@ enum BoundedHTTPClient {
             task: URLSessionDataTask,
             continuation: CheckedContinuation<(Data, HTTPURLResponse), Error>,
         ) {
-            lock.withLock {
-                self.continuation = continuation
+            let earlyResult: Result<(Data, HTTPURLResponse), Error>? = lock.withLock {
+                switch state {
+                case .idle:
+                    state = .waiting(continuation)
+                    return nil
+                case let .completed(result):
+                    state = .delivered
+                    return result
+                case .waiting, .delivered:
+                    return nil
+                }
+            }
+            if let earlyResult {
+                continuation.resume(with: earlyResult)
+                return
             }
             task.resume()
         }
 
+        func cancel(task: URLSessionDataTask) {
+            task.cancel()
+            finish(with: .failure(CancellationError()))
+        }
+
         private func finish(with result: Result<(Data, HTTPURLResponse), Error>) {
             let cont: CheckedContinuation<(Data, HTTPURLResponse), Error>? = lock.withLock {
-                guard !finished else { return nil }
-                finished = true
-                let c = continuation
-                continuation = nil
-                return c
+                switch state {
+                case .idle:
+                    state = .completed(result)
+                    return nil
+                case let .waiting(c):
+                    state = .delivered
+                    return c
+                case .completed, .delivered:
+                    return nil
+                }
             }
             cont?.resume(with: result)
         }
@@ -579,7 +619,13 @@ enum BoundedHTTPClient {
 
         func urlSession(_: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
             let exceeded: Bool = lock.withLock {
-                if overflowed || finished {
+                if overflowed {
+                    return true
+                }
+                if case .completed = state {
+                    return true
+                }
+                if case .delivered = state {
                     return true
                 }
                 if buffer.count > maxBytes - data.count {

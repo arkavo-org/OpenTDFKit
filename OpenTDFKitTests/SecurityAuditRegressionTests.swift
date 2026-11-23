@@ -141,6 +141,24 @@ final class SecurityAuditRegressionTests: XCTestCase {
         let decryptor = try await NanoTDFCollectionDecryptor.withKeyStore(header: header, keyStore: keyStore)
         let decrypted = try await decryptor.decryptItem(item)
         XCTAssertEqual(decrypted, Data("hello".utf8))
+
+        // Client-side withUnwrappedKey(header:symmetricKey:) verifies policy binding and rejects tampering
+        let clientDecryptor = try NanoTDFCollectionDecryptor.withUnwrappedKey(header: header, symmetricKey: symKey)
+        let clientDecrypted = try await clientDecryptor.decryptItem(item)
+        XCTAssertEqual(clientDecrypted, Data("hello".utf8))
+
+        var tamperedPolicy = header.policy
+        tamperedPolicy.body = EmbeddedPolicyBody(body: Data("tampered-policy".utf8), keyAccess: tamperedPolicy.body?.keyAccess)
+        let tamperedHeader = Header(
+            payloadKeyAccess: header.payloadKeyAccess,
+            policyBindingConfig: header.policyBindingConfig,
+            payloadSignatureConfig: header.payloadSignatureConfig,
+            policy: tamperedPolicy,
+            ephemeralPublicKey: header.ephemeralPublicKey,
+        )
+        XCTAssertThrowsError(try NanoTDFCollectionDecryptor.withUnwrappedKey(header: tamperedHeader, symmetricKey: symKey)) { error in
+            XCTAssertEqual(error as? NanoTDFError, .invalidPolicyBinding)
+        }
     }
 
     // MARK: - #4: Data Slices (startIndex > 0) & Offset Safety
@@ -377,13 +395,16 @@ final class SecurityAuditRegressionTests: XCTestCase {
             // IPv6 zone IDs
             "https://[fe80::1%25en0]/kas",
             "http://[::1%25lo0]/kas",
-            // Non-canonical IPv4 (integer, hex, octal, shorthand)
+            // Non-canonical IPv4 (integer, hex, octal, shorthand, trailing dot)
             "https://2130706433/kas",
             "https://2852039166/kas",
             "https://0x7f000001/kas",
             "https://0177.0.0.1/kas",
             "https://127.1/kas",
             "https://10.1/kas",
+            "https://169.254.169.254./kas",
+            "https://10.0.0.1./kas",
+            "https://127.0.0.1./kas",
             // Missing CIDRs
             "https://0.1.2.3/kas",
             "https://100.64.0.1/kas",
@@ -393,6 +414,8 @@ final class SecurityAuditRegressionTests: XCTestCase {
             "https://255.255.255.255/kas",
             "https://[::ffff:127.0.0.1]/kas",
             "https://[::ffff:8.8.8.8]/kas",
+            "https://[::7f00:1]/kas",
+            "https://[::169.254.169.254]/kas",
             "https://[64:ff9b::10.0.0.1]/kas",
             "https://[ff02::1]/kas",
             // Userinfo
@@ -427,6 +450,37 @@ final class SecurityAuditRegressionTests: XCTestCase {
             XCTFail("Unexpected error: \(error)")
         }
 
+        // Redirects (302) are refused rather than followed
+        MockURLProtocol.handler = { req in
+            let resp = HTTPURLResponse(
+                url: req.url!,
+                statusCode: 302,
+                httpVersion: nil,
+                headerFields: ["Location": "https://169.254.169.254/latest/meta-data/"],
+            )!
+            return (resp, Data())
+        }
+        do {
+            _ = try await fetchWellKnown(platformURL: "https://platform.example.com", urlSession: MockURLProtocol.makeSession())
+            XCTFail("Expected httpError(302) without following redirect")
+        } catch let KASDiscoveryError.httpError(code, _) {
+            XCTAssertEqual(code, 302)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        // Oversized well-known response (> 1 MiB) rejected
+        MockURLProtocol.handler = { req in
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (resp, Data(repeating: 0x20, count: BoundedHTTPClient.defaultWellKnownMaxBytes + 1024))
+        }
+        do {
+            _ = try await fetchWellKnown(platformURL: "https://platform.example.com", urlSession: MockURLProtocol.makeSession())
+            XCTFail("Expected invalidResponse on oversized well-known response")
+        } catch KASDiscoveryError.invalidResponse {} catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
         // Oversized transport response rejected
         MockURLProtocol.handler = { req in
             let resp = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
@@ -438,6 +492,27 @@ final class SecurityAuditRegressionTests: XCTestCase {
             XCTFail("Expected invalidResponse on oversized response")
         } catch KASRewrapError.invalidResponse {} catch {
             XCTFail("Unexpected error: \(error)")
+        }
+
+        // Pre-cancelled task must never hang BoundedHTTPClient.send
+        MockURLProtocol.handler = { req in
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (resp, Data("ok".utf8))
+        }
+        let cancelledTask = Task {
+            try await withTaskCancellationHandler {
+                try await BoundedHTTPClient.send(
+                    URLRequest(url: URL(string: "https://kas.example.com/cancelled")!),
+                    on: MockURLProtocol.makeSession(),
+                    maxBytes: 1024,
+                )
+            } onCancel: {}
+        }
+        cancelledTask.cancel()
+        do {
+            _ = try await cancelledTask.value
+        } catch {
+            // Expected cancellation / URLError.cancelled without hanging
         }
     }
 
@@ -475,6 +550,35 @@ final class SecurityAuditRegressionTests: XCTestCase {
         )
         let sealed = try AES.GCM.seal(Data(repeating: 0x42, count: 16), using: primaryKey)
         let encryptedKey = sealed.combined!
+        let policyBody = Data(#"{"uuid":"p1"}"#.utf8)
+        let validBinding = try CryptoHelper().createGMACBinding(policyBody: policyBody, symmetricKey: primaryKey)
+        let invalidBinding = Data(repeating: 0xFF, count: validBinding.count)
+
+        // Malformed request must NOT burn the one-time key
+        do {
+            _ = try await kasService.processKeyAccessWithKeyIdentifier(
+                ephemeralPublicKey: Data(),
+                encryptedKey: Data(),
+                kasPublicKey: kasPair.publicKey,
+                policyBody: policyBody,
+                policyBinding: validBinding,
+            )
+            XCTFail("Expected malformed request to fail")
+        } catch {}
+
+        // Tampered policy binding must fail with accessDenied and NOT burn the key
+        do {
+            _ = try await kasService.processKeyAccessWithKeyIdentifier(
+                ephemeralPublicKey: clientPriv.publicKey.compressedRepresentation,
+                encryptedKey: encryptedKey,
+                kasPublicKey: kasPair.publicKey,
+                policyBody: policyBody,
+                policyBinding: invalidBinding,
+            )
+            XCTFail("Expected tampered binding to fail")
+        } catch KASServiceError.accessDenied {} catch {
+            XCTFail("Expected accessDenied, got \(error)")
+        }
 
         // Launch 8 concurrent rewraps against the same one-time key; exactly 1 must succeed.
         var successes = 0
@@ -487,6 +591,8 @@ final class SecurityAuditRegressionTests: XCTestCase {
                             ephemeralPublicKey: clientPriv.publicKey.compressedRepresentation,
                             encryptedKey: encryptedKey,
                             kasPublicKey: kasPair.publicKey,
+                            policyBody: policyBody,
+                            policyBinding: validBinding,
                         )
                         return .success(res)
                     } catch {
@@ -509,8 +615,33 @@ final class SecurityAuditRegressionTests: XCTestCase {
             ephemeralPublicKey: clientPriv.publicKey.compressedRepresentation,
             encryptedKey: encryptedKey,
             kasPublicKey: kasPair.publicKey,
+            policyBody: policyBody,
+            policyBinding: validBinding,
         )
         XCTAssertEqual(keyIDs.first, secondID)
+
+        // Verify processKeyAccess(header:encryptedKey:) works with a parsed v12 header (empty kasPublicKey)
+        await keyStore.store(keyPair: kasPair)
+        let kasPubKeyObj = try P256.KeyAgreement.PublicKey(compressedRepresentation: kasPair.publicKey)
+        let kasRL = try XCTUnwrap(ResourceLocator(protocolEnum: .https, body: "kas.example.com"))
+        let kasMeta = try KasMetadata(
+            resourceLocator: kasRL,
+            publicKey: kasPubKeyObj,
+            curve: .secp256r1,
+        )
+        var policy = Policy(
+            type: .embeddedPlaintext,
+            body: EmbeddedPolicyBody(body: Data("v12-policy".utf8), keyAccess: nil),
+            remote: nil,
+            binding: nil,
+        )
+        let nano = try await createNanoTDF(kas: kasMeta, policy: &policy, plaintext: Data("secret".utf8))
+        let parsedHeader = try BinaryParser(data: nano.toData()).parseHeader()
+        XCTAssertTrue(parsedHeader.payloadKeyAccess.kasPublicKey.isEmpty)
+        let headerKey = try await keyStore.derivePayloadSymmetricKey(header: parsedHeader)
+        let headerEncKey = try AES.GCM.seal(Data(repeating: 0x33, count: 16), using: headerKey).combined!
+        let rewrapped = try await kasService.processKeyAccess(header: parsedHeader, encryptedKey: headerEncKey)
+        XCTAssertFalse(rewrapped.isEmpty)
     }
 
     // MARK: - #13, #14, #31: TDF Policy Binding, Algorithm/Key Size & JSON/CBOR Hardening
@@ -529,6 +660,47 @@ final class SecurityAuditRegressionTests: XCTestCase {
         XCTAssertThrowsError(try TDFDecryptor().decrypt(container: tamperedContainer, symmetricKey: result.symmetricKey)) { error in
             XCTAssertEqual(error as? TDFDecryptError, .policyBindingFailed)
         }
+
+        // Clearing keyAccess after tampering policy MUST NOT bypass policy binding
+        var emptyKAManifest = tamperedManifest
+        emptyKAManifest.encryptionInformation.keyAccess = []
+        let emptyKAContainer = TDFContainer(manifest: emptyKAManifest, payload: result.container.payload)
+        XCTAssertThrowsError(try TDFDecryptor().decrypt(container: emptyKAContainer, symmetricKey: result.symmetricKey)) { error in
+            XCTAssertEqual(error as? TDFDecryptError, .policyBindingFailed)
+        }
+
+        // Injecting a second KAO with a different sid MUST NOT bypass policy binding on bare-DEK decrypt
+        var fakeSplitManifest = tamperedManifest
+        var kao1 = fakeSplitManifest.encryptionInformation.keyAccess[0]
+        kao1.sid = "split-a"
+        var kao2 = kao1
+        kao2.sid = "split-b"
+        fakeSplitManifest.encryptionInformation.keyAccess = [kao1, kao2]
+        let fakeSplitContainer = TDFContainer(manifest: fakeSplitManifest, payload: result.container.payload)
+        XCTAssertThrowsError(try TDFDecryptor().decrypt(container: fakeSplitContainer, symmetricKey: result.symmetricKey)) { error in
+            XCTAssertEqual(error as? TDFDecryptError, .policyBindingFailed)
+        }
+
+        // Legitimate multi-split decryption via decrypt(container:keyShares:) verifies every share's binding
+        let share1Data = Data(repeating: 0xAA, count: 32)
+        let dekData = TDFCrypto.data(from: result.symmetricKey)
+        let share2Data = Data(zip(dekData, share1Data).map { $0 ^ $1 })
+        let share1Key = SymmetricKey(data: share1Data)
+        let share2Key = SymmetricKey(data: share2Data)
+        var realSplitManifest = result.container.manifest
+        var splitKAO1 = realSplitManifest.encryptionInformation.keyAccess[0]
+        splitKAO1.sid = "s1"
+        splitKAO1.policyBinding = TDFCrypto.policyBinding(policy: policy.json, symmetricKey: share1Key)
+        var splitKAO2 = splitKAO1
+        splitKAO2.sid = "s2"
+        splitKAO2.policyBinding = TDFCrypto.policyBinding(policy: policy.json, symmetricKey: share2Key)
+        realSplitManifest.encryptionInformation.keyAccess = [splitKAO1, splitKAO2]
+        let realSplitContainer = TDFContainer(manifest: realSplitManifest, payload: result.container.payload)
+        let decryptedMulti = try TDFDecryptor().decrypt(
+            container: realSplitContainer,
+            keyShares: [TDFKeyShare(sid: "s1", key: share1Key), TDFKeyShare(sid: "s2", key: share2Key)],
+        )
+        XCTAssertEqual(decryptedMulti, Data("hello".utf8))
 
         // Mismatched key size (128-bit key with AES-256-GCM manifest) -> keySizeMismatch
         let key128 = SymmetricKey(size: .bits128)
@@ -557,8 +729,12 @@ final class SecurityAuditRegressionTests: XCTestCase {
             payload: jsonRes.container.envelope.payload,
         )
         let badJSONContainer = TDFJSONContainer(envelope: badJSONEnv, payloadData: jsonRes.container.payloadData)
-        XCTAssertThrowsError(try TDFJSONDecryptor().decrypt(container: badJSONContainer, symmetricKey: jsonRes.symmetricKey))
-        XCTAssertThrowsError(try TDFJSONDecryptor().decrypt(container: badJSONContainer, privateKeyPEM: ecKey.pemRepresentation))
+        XCTAssertThrowsError(try TDFJSONDecryptor().decrypt(container: badJSONContainer, symmetricKey: jsonRes.symmetricKey)) { error in
+            XCTAssertEqual(error as? TDFDecryptError, .policyBindingFailed)
+        }
+        XCTAssertThrowsError(try TDFJSONDecryptor().decrypt(container: badJSONContainer, privateKeyPEM: ecKey.pemRepresentation)) { error in
+            XCTAssertEqual(error as? TDFDecryptError, .policyBindingFailed)
+        }
 
         // TDF-JSON: payload.length mismatch rejected on decodePayloadValue
         var mismatchedPayload = jsonRes.container.envelope.payload
@@ -569,7 +745,11 @@ final class SecurityAuditRegressionTests: XCTestCase {
             manifest: jsonRes.container.manifest,
             payload: mismatchedPayload,
         )
-        XCTAssertThrowsError(try mismatchedEnv.decodePayloadValue())
+        XCTAssertThrowsError(try mismatchedEnv.decodePayloadValue()) { error in
+            guard case TDFJSONError.payloadDecodeError = error else {
+                return XCTFail("Expected payloadDecodeError, got \(error)")
+            }
+        }
 
         // TDF-CBOR: tamper integrity root signature
         let cborRes = try TDFCBORBuilder()
@@ -584,7 +764,9 @@ final class SecurityAuditRegressionTests: XCTestCase {
             manifest: TDFCBORManifest(encryptionInformation: badCBOREncInfo),
             payload: cborRes.container.envelope.payload,
         )
-        XCTAssertThrowsError(try TDFCBORDecryptor().decrypt(container: TDFCBORContainer(envelope: badCBOREnv), symmetricKey: cborRes.symmetricKey))
+        XCTAssertThrowsError(try TDFCBORDecryptor().decrypt(container: TDFCBORContainer(envelope: badCBOREnv), symmetricKey: cborRes.symmetricKey)) { error in
+            XCTAssertEqual(error as? TDFDecryptError, .integrityCheckFailed)
+        }
 
         // TDF-CBOR: reject multi-split manifest
         var splitEncInfo = cborRes.container.encryptionInformation
@@ -594,7 +776,11 @@ final class SecurityAuditRegressionTests: XCTestCase {
         kao2.sid = "split-2"
         splitEncInfo.keyAccess = [kao1, kao2]
         let splitEnv = TDFCBOREnvelope(manifest: TDFCBORManifest(encryptionInformation: splitEncInfo), payload: cborRes.container.envelope.payload)
-        XCTAssertThrowsError(try TDFCBORDecryptor().decrypt(container: TDFCBORContainer(envelope: splitEnv), privateKeyPEM: ecKey.pemRepresentation))
+        XCTAssertThrowsError(try TDFCBORDecryptor().decrypt(container: TDFCBORContainer(envelope: splitEnv), privateKeyPEM: ecKey.pemRepresentation)) { error in
+            guard case TDFCBORError.decryptionFailed = error else {
+                return XCTFail("Expected decryptionFailed, got \(error)")
+            }
+        }
     }
 
     func testECWrapUnwrapSupportsP384AndP521() throws {
@@ -646,6 +832,38 @@ final class SecurityAuditRegressionTests: XCTestCase {
         try inHandle.close()
         try encHandle.close()
 
+        // Missing rootSignature on multi-segment payload must be rejected
+        let readEncMissingRoot = try FileHandle(forReadingFrom: encURL)
+        let outHandleMissingRoot = try FileHandle(forWritingTo: outURL)
+        XCTAssertThrowsError(try StreamingTDFCrypto.decryptPayloadStreamingMultiSegment(
+            inputHandle: readEncMissingRoot,
+            outputHandle: outHandleMissingRoot,
+            segments: encResult.segments,
+            symmetricKey: key,
+            rootSignature: nil,
+        ))
+        try readEncMissingRoot.close()
+        try outHandleMissingRoot.close()
+
+        // Reordered segments + matching swapped payload bytes must be rejected by rootSignature
+        let encBytes = try Data(contentsOf: encURL)
+        let seg0Len = Int(encResult.segments[0].encryptedSize)
+        let swappedBytes = encBytes.dropFirst(seg0Len) + encBytes.prefix(seg0Len)
+        let swappedURL = FileManager.default.temporaryDirectory.appendingPathComponent("stream-swap-\(UUID().uuidString)")
+        try Data(swappedBytes).write(to: swappedURL)
+        defer { try? FileManager.default.removeItem(at: swappedURL) }
+        let readSwapped = try FileHandle(forReadingFrom: swappedURL)
+        let outHandleSwapped = try FileHandle(forWritingTo: outURL)
+        XCTAssertThrowsError(try StreamingTDFCrypto.decryptPayloadStreamingMultiSegment(
+            inputHandle: readSwapped,
+            outputHandle: outHandleSwapped,
+            segments: [encResult.segments[1], encResult.segments[0]],
+            symmetricKey: key,
+            rootSignature: encResult.rootSignature,
+        ))
+        try readSwapped.close()
+        try outHandleSwapped.close()
+
         // Corrupt segment 1's expected hash while leaving segment 0 valid
         var tamperedSegments = encResult.segments
         tamperedSegments[1] = StreamingTDFCrypto.EncryptedSegment(
@@ -662,6 +880,7 @@ final class SecurityAuditRegressionTests: XCTestCase {
             outputHandle: outHandle,
             segments: tamperedSegments,
             symmetricKey: key,
+            rootSignature: encResult.rootSignature,
         ))
         try readEnc.close()
         try outHandle.close()
@@ -669,11 +888,47 @@ final class SecurityAuditRegressionTests: XCTestCase {
         // Output file MUST remain empty (no unverified segment 0 plaintext leaked)
         let written = try Data(contentsOf: outURL)
         XCTAssertTrue(written.isEmpty, "No plaintext should be written to outputHandle when a later segment fails")
+
+        // Valid multi-segment round-trip with rootSignature succeeds
+        let readValid = try FileHandle(forReadingFrom: encURL)
+        let outValid = try FileHandle(forWritingTo: outURL)
+        try StreamingTDFCrypto.decryptPayloadStreamingMultiSegment(
+            inputHandle: readValid,
+            outputHandle: outValid,
+            segments: encResult.segments,
+            symmetricKey: key,
+            rootSignature: encResult.rootSignature,
+        )
+        try readValid.close()
+        try outValid.close()
+        XCTAssertEqual(try Data(contentsOf: outURL), Data("segment-one-data|segment-two-data".utf8))
+
+        // HS256 segment hash verification succeeds when valid and rejects GMAC-tag substitution
+        let seg0Bytes = Data(encBytes.prefix(seg0Len))
+        let seg1Bytes = Data(encBytes.dropFirst(seg0Len))
+        let hs0 = Data(HMAC<SHA256>.authenticationCode(for: seg0Bytes, using: key))
+        let hs1 = Data(HMAC<SHA256>.authenticationCode(for: seg1Bytes, using: key))
+        let hsRoot = Data(HMAC<SHA256>.authenticationCode(for: hs0 + hs1, using: key)).base64EncodedString()
+        let hsSegments = [
+            StreamingTDFCrypto.EncryptedSegment(segmentIndex: 0, plaintextSize: 16, encryptedSize: Int64(seg0Bytes.count), hash: hs0.base64EncodedString()),
+            StreamingTDFCrypto.EncryptedSegment(segmentIndex: 1, plaintextSize: 17, encryptedSize: Int64(seg1Bytes.count), hash: hs1.base64EncodedString()),
+        ]
+        let hsDecrypted = try StreamingTDFCrypto.decryptPayloadMultiSegmentFromMemory(
+            encryptedPayload: encBytes,
+            segments: hsSegments,
+            symmetricKey: key,
+            rootSignature: hsRoot,
+            segmentHashAlg: "HS256",
+        )
+        XCTAssertEqual(hsDecrypted, Data("segment-one-data|segment-two-data".utf8))
     }
 
-    // MARK: - #16: ZIP Archive Caps
+    // MARK: - #16: ZIP Archive Caps & TDFLoader Default vs Explicit nil
 
     func testArchiveReaderWritePayloadEnforcesMaxSize() throws {
+        XCTAssertEqual(TDFLoader().maxPayloadSize, TDFArchiveReader.defaultPayloadMaxSize)
+        XCTAssertNil(TDFLoader(maxPayloadSize: nil).maxPayloadSize)
+
         let manifest = TDFManifest(
             schemaVersion: "4.3.0",
             payload: TDFPayloadDescriptor(type: .reference, url: "0.payload", protocolValue: .zip, isEncrypted: true),
@@ -706,15 +961,46 @@ final class SecurityAuditRegressionTests: XCTestCase {
         XCTAssertGreaterThan(cborSlice.startIndex, 0)
         XCTAssertTrue(TDFCBOREnvelope.hasMagicBytes(cborSlice))
 
-        // #17: Deeply nested CBOR array (depth 100) rejected cleanly without stack overflow
-        var deeplyNested = Data(TDF_CBOR_MAGIC)
-        deeplyNested.append(contentsOf: [UInt8](repeating: 0x81, count: 100))
-        deeplyNested.append(0x00)
-        XCTAssertThrowsError(try TDFCBOREnvelope.fromCBORData(deeplyNested))
+        // #17: Deeply nested single-element CBOR array (depth 100 and 10_000) inside a map root
+        // must trigger the depth limit specifically (not "Expected CBOR map at root").
+        for depth in [100, 10000] {
+            var deeplyNested = Data(TDF_CBOR_MAGIC)
+            deeplyNested.append(0xA1) // 1-entry map
+            deeplyNested.append(0x18)
+            deeplyNested.append(0x63) // key 99
+            deeplyNested.append(contentsOf: [UInt8](repeating: 0x81, count: depth))
+            deeplyNested.append(0x00)
+            XCTAssertThrowsError(try TDFCBOREnvelope.fromCBORData(deeplyNested)) { error in
+                guard case let TDFCBORError.cborDecodingFailed(msg) = error else {
+                    return XCTFail("Expected cborDecodingFailed, got \(error)")
+                }
+                XCTAssertTrue(msg.contains("nesting depth"), "Expected depth-limit failure, got: \(msg)")
+            }
+        }
+
+        // #17: Indefinite byte-string and text-string chunk amplification (> maxItems) rejected
+        for (indefHeader, emptyChunk): (UInt8, UInt8) in [(0x5F, 0x40), (0x7F, 0x60)] {
+            var chunkBomb = Data(TDF_CBOR_MAGIC)
+            chunkBomb.append(0xA1)
+            chunkBomb.append(0x01)
+            chunkBomb.append(indefHeader)
+            chunkBomb.append(contentsOf: [UInt8](repeating: emptyChunk, count: 105_000))
+            chunkBomb.append(0xFF)
+            XCTAssertThrowsError(try TDFCBOREnvelope.fromCBORData(chunkBomb)) { error in
+                guard case let TDFCBORError.cborDecodingFailed(msg) = error else {
+                    return XCTFail("Expected cborDecodingFailed, got \(error)")
+                }
+                XCTAssertTrue(msg.contains("item count"), "Expected item-count failure, got: \(msg)")
+            }
+        }
 
         // #17: Crafted huge byte string length (0x5B + UInt64.max) rejected before SwiftCBOR allocates
         let hugeBstr = Data(TDF_CBOR_MAGIC + [0x5B, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
-        XCTAssertThrowsError(try TDFCBOREnvelope.fromCBORData(hugeBstr))
+        XCTAssertThrowsError(try TDFCBOREnvelope.fromCBORData(hugeBstr)) { error in
+            guard case TDFCBORError.cborDecodingFailed = error else {
+                return XCTFail("Expected cborDecodingFailed, got \(error)")
+            }
+        }
 
         // #29: PEM ephemeralPublicKey, sid, encryptedMetadata preserved; nil encryptedSegmentSizeDefault stays nil
         let pem = P256.KeyAgreement.PrivateKey().publicKey.pemRepresentation

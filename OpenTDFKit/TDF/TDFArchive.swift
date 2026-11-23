@@ -153,14 +153,15 @@ public struct TDFArchiveReader {
     /// Reads the whole payload into memory.
     /// - Parameter maxSize: Largest payload accepted, in bytes; defaults to
     ///   `TDFArchiveReader.defaultPayloadMaxSize` (pass `nil` to opt out of the cap).
-    ///   Checked against the ZIP header and again while extracting, since the
-    ///   header's size is not trusted; initial buffer reservation is capped so
-    ///   spoofed ZIP headers cannot trigger OOM.
+    ///   Enforced against the running extracted byte count because ZIP header
+    ///   sizes are untrusted (and streaming writers such as Go's `archive/zip`
+    ///   may store a ZIP64/data-descriptor placeholder); initial buffer
+    ///   reservation is capped so spoofed or placeholder sizes cannot trigger OOM.
     /// - Throws: `TDFArchiveError.payloadTooLarge` when the payload exceeds `maxSize`.
     public func payloadData(maxSize: Int? = TDFArchiveReader.defaultPayloadMaxSize) throws -> Data {
         let entry = try payloadEntry()
         if let maxSize {
-            guard maxSize >= 0, entry.uncompressedSize <= UInt64(maxSize) else {
+            guard maxSize >= 0 else {
                 throw TDFArchiveError.payloadTooLarge
             }
         }
@@ -191,7 +192,7 @@ public struct TDFArchiveReader {
     ) throws {
         let entry = try payloadEntry()
         if let maxSize {
-            guard maxSize >= 0, entry.uncompressedSize <= UInt64(maxSize) else {
+            guard maxSize >= 0 else {
                 throw TDFArchiveError.payloadTooLarge
             }
         }

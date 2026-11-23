@@ -9,9 +9,9 @@ import Foundation
 /// ## Client-Side Usage
 /// ```swift
 /// // After KAS rewrap provides the symmetric key
-/// let decryptor = NanoTDFCollectionDecryptor.withUnwrappedKey(
-///     symmetricKey: unwrappedKey,
-///     cipher: .aes256GCM128
+/// let decryptor = try NanoTDFCollectionDecryptor.withUnwrappedKey(
+///     header: collectionHeader,
+///     symmetricKey: unwrappedKey
 /// )
 /// let plaintext = try await decryptor.decryptItem(item)
 /// ```
@@ -37,13 +37,14 @@ public actor NanoTDFCollectionDecryptor {
 
     // MARK: - Factory Methods
 
-    /// Creates a decryptor with an already-unwrapped symmetric key.
-    /// Use this for client-side decryption after KAS rewrap.
+    /// Creates a decryptor with an already-unwrapped symmetric key without verifying
+    /// a collection header's policy binding.
     ///
     /// - Parameters:
     ///   - symmetricKey: The unwrapped symmetric key from KAS rewrap
     ///   - cipher: The cipher used for encryption (default: aes256GCM128)
     /// - Returns: A configured decryptor ready for use
+    @available(*, deprecated, message: "Use withUnwrappedKey(header:symmetricKey:) so the collection policy binding is verified before decryption.")
     public static func withUnwrappedKey(
         symmetricKey: SymmetricKey,
         cipher: Cipher = .aes256GCM128,
@@ -182,7 +183,7 @@ public actor NanoTDFCollectionDecryptor {
             }
         }
 
-        // For other tag sizes, use CryptoHelper's CryptoSwift path
+        // For truncated tag sizes, use CryptoHelper's constant-time CommonCrypto CTR + CryptoKit GCM path
         do {
             return try CryptoHelper.decryptNanoTDF(
                 cipher: cipher,

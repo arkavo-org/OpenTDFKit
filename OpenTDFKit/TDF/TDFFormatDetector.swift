@@ -117,12 +117,11 @@ public enum TDFFormatDetector {
             return .nano
         }
 
-        // Speculative JSON detection: bound file size before reading & parsing
+        // Speculative JSON detection: bound bytes read directly to prevent TOCTOU races
         if headerBytes.first == jsonStart {
-            guard let size = try? handle.seekToEnd(),
-                  size <= UInt64(maxJSONDetectionSize),
-                  (try? handle.seek(toOffset: 0)) != nil,
-                  let data = try? handle.readToEnd()
+            guard (try? handle.seek(toOffset: 0)) != nil,
+                  let data = try? handle.read(upToCount: maxJSONDetectionSize + 1),
+                  data.count <= maxJSONDetectionSize
             else {
                 return nil
             }

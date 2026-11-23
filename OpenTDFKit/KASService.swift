@@ -186,7 +186,7 @@ public actor KASService {
             (data, httpResponse) = try await BoundedHTTPClient.send(
                 request,
                 on: urlSession,
-                maxBytes: BoundedHTTPClient.defaultWellKnownMaxBytes,
+                maxBytes: BoundedHTTPClient.defaultKASRewrapServiceMaxBytes,
             )
         } catch BoundedHTTPError.nonHTTPResponse {
             throw KASServiceError.networkError("Invalid response type")
@@ -341,22 +341,20 @@ public actor KASService {
         return (rewrappedKey: result, newKeyPair: newKeyPair)
     }
 
-    /// Process key access request locally (server-side KAS implementation).
-    /// When `policyBody` or `policyBinding` is provided, verifies the binding before rewrapping.
+    /// Process key access request locally (server-side KAS implementation), always verifying
+    /// the policy binding before rewrapping.
     public func processKeyAccess(
         ephemeralPublicKey: Data,
         encryptedKey: Data,
         kasPublicKey: Data,
-        policyBody: Data? = nil,
-        policyBinding: Data? = nil,
+        policyBody: Data,
+        policyBinding: Data,
     ) async throws -> Data {
-        // Get the KAS private key corresponding to the KAS public key
         guard var privateKeyData = await keyStore.getPrivateKey(forPublicKey: kasPublicKey) else {
             throw KASServiceError.keyNotFound
         }
         defer { privateKeyData.secureZero() }
 
-        // Use the internal helper to perform the rewrapping
         let (rewrappedKey, _) = try await rewrapKeyInternal(
             ephemeralPublicKey: ephemeralPublicKey,
             encryptedKey: encryptedKey,
@@ -368,30 +366,49 @@ public actor KASService {
         return rewrappedKey
     }
 
-    /// Process a NanoTDF key access request locally, always verifying the header's policy binding.
+    /// Process key access request locally without policy binding verification.
+    @available(*, deprecated, message: "Use processKeyAccess(ephemeralPublicKey:encryptedKey:kasPublicKey:policyBody:policyBinding:) or processKeyAccess(header:encryptedKey:kasPublicKey:) to enforce policy binding verification.")
+    public func processKeyAccess(
+        ephemeralPublicKey: Data,
+        encryptedKey: Data,
+        kasPublicKey: Data,
+    ) async throws -> Data {
+        guard var privateKeyData = await keyStore.getPrivateKey(forPublicKey: kasPublicKey) else {
+            throw KASServiceError.keyNotFound
+        }
+        defer { privateKeyData.secureZero() }
+
+        let (rewrappedKey, _) = try await rewrapKeyInternal(
+            ephemeralPublicKey: ephemeralPublicKey,
+            encryptedKey: encryptedKey,
+            privateKeyData: privateKeyData,
+        )
+
+        return rewrappedKey
+    }
+
+    /// Process a NanoTDF key access request locally, resolving v12 headers (which omit `kasPublicKey`
+    /// on the wire) and always verifying the header's policy binding before rewrapping.
     public func processKeyAccess(
         header: Header,
         encryptedKey: Data,
         kasPublicKey: Data? = nil,
     ) async throws -> Data {
-        let lookupKey = kasPublicKey ?? header.payloadKeyAccess.kasPublicKey
-        let symmetricKey: SymmetricKey = if !lookupKey.isEmpty {
-            try await keyStore.derivePayloadSymmetricKey(
-                kasPublicKey: lookupKey,
-                tdfEphemeralPublicKey: header.ephemeralPublicKey,
-            )
-        } else {
-            try await keyStore.derivePayloadSymmetricKey(header: header)
+        guard let resolved = await keyStore.resolveKeyPair(for: header, explicitPublicKey: kasPublicKey) else {
+            throw KASServiceError.keyNotFound
         }
+        var privateKeyData = resolved.privateKey
+        defer { privateKeyData.secureZero() }
+
+        let symmetricKey = try keyStore.derivePayloadSymmetricKey(
+            kasPrivateKeyData: privateKeyData,
+            tdfEphemeralPublicKey: header.ephemeralPublicKey,
+        )
         do {
             try header.verifyPolicyBinding(symmetricKey: symmetricKey)
         } catch {
             throw KASServiceError.accessDenied
         }
-        guard var privateKeyData = await keyStore.getPrivateKey(forPublicKey: lookupKey) else {
-            throw KASServiceError.keyNotFound
-        }
-        defer { privateKeyData.secureZero() }
         let (rewrappedKey, _) = try await rewrapKeyInternal(
             ephemeralPublicKey: header.ephemeralPublicKey,
             encryptedKey: encryptedKey,
@@ -434,23 +451,50 @@ public actor KASService {
         return result == 0
     }
 
-    /// Process a key access request and report which key was used
-    /// - Parameters:
-    ///   - ephemeralPublicKey: The ephemeral public key from the requester
-    ///   - encryptedKey: The encrypted session key that needs to be rewrapped
-    ///   - kasPublicKey: The KAS public key
-    /// - Returns: A tuple containing the rewrapped key data and the ID of the key that was used
-    /// - Throws: KAS errors
-    /// Process a key access request atomically (one-time key) and report a deterministic UUID
-    /// derived from `kasPublicKey`.
+    /// Atomically processes a one-time key access request, verifies the policy binding,
+    /// and reports a deterministic RFC 9562 v8 UUID derived from `kasPublicKey`.
+    /// Restores the key to the store if validation or decryption fails so malformed
+    /// requests cannot permanently consume a one-time key.
     public func processKeyAccessWithKeyIdentifier(
         ephemeralPublicKey: Data,
         encryptedKey: Data,
         kasPublicKey: Data,
-        policyBody: Data? = nil,
-        policyBinding: Data? = nil,
+        policyBody: Data,
+        policyBinding: Data,
     ) async throws -> (rewrappedKey: Data, keyID: UUID) {
-        // Atomically pop the one-time key so concurrent callers cannot race and reuse it
+        try await processKeyAccessWithKeyIdentifierInternal(
+            ephemeralPublicKey: ephemeralPublicKey,
+            encryptedKey: encryptedKey,
+            kasPublicKey: kasPublicKey,
+            policyBody: policyBody,
+            policyBinding: policyBinding,
+        )
+    }
+
+    /// Atomically processes a one-time key access request without policy binding verification.
+    @available(*, deprecated, message: "Use processKeyAccessWithKeyIdentifier(ephemeralPublicKey:encryptedKey:kasPublicKey:policyBody:policyBinding:) to enforce policy binding verification.")
+    public func processKeyAccessWithKeyIdentifier(
+        ephemeralPublicKey: Data,
+        encryptedKey: Data,
+        kasPublicKey: Data,
+    ) async throws -> (rewrappedKey: Data, keyID: UUID) {
+        try await processKeyAccessWithKeyIdentifierInternal(
+            ephemeralPublicKey: ephemeralPublicKey,
+            encryptedKey: encryptedKey,
+            kasPublicKey: kasPublicKey,
+            policyBody: nil,
+            policyBinding: nil,
+        )
+    }
+
+    private func processKeyAccessWithKeyIdentifierInternal(
+        ephemeralPublicKey: Data,
+        encryptedKey: Data,
+        kasPublicKey: Data,
+        policyBody: Data?,
+        policyBinding: Data?,
+    ) async throws -> (rewrappedKey: Data, keyID: UUID) {
+        // Atomically pop the one-time key so concurrent valid callers cannot reuse it.
         guard var privateKeyData = await keyStore.popPrivateKey(forPublicKey: kasPublicKey) else {
             throw KASServiceError.keyNotFound
         }
@@ -458,22 +502,27 @@ public actor KASService {
 
         let keyID = Self.deterministicUUID(for: kasPublicKey)
 
-        let (rewrappedKey, _) = try await rewrapKeyInternal(
-            ephemeralPublicKey: ephemeralPublicKey,
-            encryptedKey: encryptedKey,
-            privateKeyData: privateKeyData,
-            policyBody: policyBody,
-            policyBinding: policyBinding,
-        )
-
-        return (rewrappedKey: rewrappedKey, keyID: keyID)
+        do {
+            let (rewrappedKey, _) = try await rewrapKeyInternal(
+                ephemeralPublicKey: ephemeralPublicKey,
+                encryptedKey: encryptedKey,
+                privateKeyData: privateKeyData,
+                policyBody: policyBody,
+                policyBinding: policyBinding,
+            )
+            return (rewrappedKey: rewrappedKey, keyID: keyID)
+        } catch {
+            // Restore the key so a malformed or unauthorized request cannot burn a one-time key.
+            await keyStore.store(keyPair: StoredKeyPair(publicKey: kasPublicKey, privateKey: privateKeyData))
+            throw error
+        }
     }
 
-    /// Derives a deterministic RFC 4122 (version 5 / SHA-256 truncated) UUID from the KAS public key bytes.
+    /// Derives a deterministic RFC 9562 version 8 (custom SHA-256) UUID from the KAS public key bytes.
     private static func deterministicUUID(for publicKey: Data) -> UUID {
         var digest = Array(SHA256.hash(data: publicKey).prefix(16))
-        digest[6] = (digest[6] & 0x0F) | 0x50 // version 5 marker
-        digest[8] = (digest[8] & 0x3F) | 0x80 // RFC 4122 variant
+        digest[6] = (digest[6] & 0x0F) | 0x80 // RFC 9562 version 8 marker
+        digest[8] = (digest[8] & 0x3F) | 0x80 // RFC 4122/9562 variant
         return UUID(uuid: (
             digest[0], digest[1], digest[2], digest[3],
             digest[4], digest[5], digest[6], digest[7],

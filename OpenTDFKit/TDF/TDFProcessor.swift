@@ -566,7 +566,12 @@ public struct TDFDecryptor {
             encryptionInformation: container.manifest.encryptionInformation,
             privateKeyPEM: privateKeyPEM,
         )
-        try decrypt(container: container, symmetricKey: symmetricKey).write(to: outputURL)
+        try decryptEncryptionInfo(
+            container.manifest.encryptionInformation,
+            payload: container.payload,
+            symmetricKey: symmetricKey,
+            policyBindingAlreadyVerified: true,
+        ).write(to: outputURL)
     }
 
     public func decryptFileMultiSegment(
@@ -584,7 +589,81 @@ public struct TDFDecryptor {
             encryptionInformation: container.manifest.encryptionInformation,
             privateKeyPEM: privateKeyPEM,
         )
-        return try decrypt(container: container, symmetricKey: symmetricKey)
+        return try decryptEncryptionInfo(
+            container.manifest.encryptionInformation,
+            payload: container.payload,
+            symmetricKey: symmetricKey,
+            policyBindingAlreadyVerified: true,
+        )
+    }
+
+    /// Decrypts a Standard TDF (single- or multi-split) using unwrapped per-split key shares.
+    /// Verifies each split's `policyBinding` against its matching key access object(s) in the
+    /// manifest, requires every manifest split to be satisfied, XOR-combines the verified shares
+    /// into the DEK, and verifies payload integrity before returning plaintext.
+    public func decrypt(container: TDFContainer, keyShares: [TDFKeyShare]) throws -> Data {
+        let encryptionInfo = container.manifest.encryptionInformation
+        let keyAccess = encryptionInfo.keyAccess
+        guard !keyAccess.isEmpty else {
+            throw TDFDecryptError.policyBindingFailed
+        }
+
+        let policyBase64 = encryptionInfo.policy
+        var kaBySplit: [String: [TDFKeyAccessObject]] = [:]
+        var splitOrder: [String] = []
+        for kao in keyAccess {
+            let sid = kao.sid ?? ""
+            if kaBySplit[sid] == nil {
+                splitOrder.append(sid)
+            }
+            kaBySplit[sid, default: []].append(kao)
+        }
+
+        var verifiedShares: [String: Data] = [:]
+        defer {
+            for sid in verifiedShares.keys {
+                verifiedShares[sid]?.secureZero()
+            }
+        }
+
+        for share in keyShares {
+            let sid = share.sid ?? ""
+            guard verifiedShares[sid] == nil, let candidates = kaBySplit[sid] else {
+                continue
+            }
+            let bindingValid = candidates.contains { kao in
+                TDFCrypto.verifyPolicyBinding(
+                    kao.policyBinding,
+                    policyBase64: policyBase64,
+                    symmetricKey: share.key,
+                )
+            }
+            guard bindingValid else {
+                throw TDFDecryptError.policyBindingFailed
+            }
+            verifiedShares[sid] = TDFCrypto.data(from: share.key)
+        }
+
+        guard verifiedShares.count == splitOrder.count else {
+            throw TDFDecryptError.policyBindingFailed
+        }
+
+        var dek = try Self.combineKeyShares(splitOrder.map { sid in
+            (sid: sid, unwrap: {
+                guard let share = verifiedShares[sid] else {
+                    throw TDFDecryptError.missingKeyAccess
+                }
+                return share
+            })
+        })
+        defer { dek.secureZero() }
+
+        return try decryptEncryptionInfo(
+            encryptionInfo,
+            payload: container.payload,
+            symmetricKey: SymmetricKey(data: dek),
+            policyBindingAlreadyVerified: true,
+        )
     }
 
     /// Payload algorithms `decrypt` accepts. AES-128-GCM is only written by
@@ -699,6 +778,7 @@ public struct TDFDecryptor {
         _ encryptionInformation: TDFEncryptionInformation,
         payload: Data,
         symmetricKey: SymmetricKey,
+        policyBindingAlreadyVerified: Bool = false,
     ) throws -> Data {
         let expectedBits = try Self.expectedKeyBitCount(for: encryptionInformation.method.algorithm)
         guard symmetricKey.bitCount == expectedBits else {
@@ -713,10 +793,16 @@ public struct TDFDecryptor {
         // Decrypt and verify all segments + root signature before verifying policy binding and returning
         var plaintext = try decryptSegments(payload: payload, integrity: integrity, symmetricKey: symmetricKey)
 
-        // Verify policy binding for single-split manifests (in multi-split manifests each KAO binds its own share)
-        let keyAccess = encryptionInformation.keyAccess
-        let distinctSplits = Set(keyAccess.map { $0.sid ?? "" })
-        if !keyAccess.isEmpty, distinctSplits.count <= 1 {
+        if !policyBindingAlreadyVerified {
+            // Bare-DEK decryption must fail closed if KAOs are absent or multi-split
+            // (in multi-split manifests each KAO binds its own share, so callers must
+            // use `decrypt(container:privateKeyPEM:)` or `decrypt(container:keyShares:)`).
+            let keyAccess = encryptionInformation.keyAccess
+            let distinctSplits = Set(keyAccess.map { $0.sid ?? "" })
+            guard !keyAccess.isEmpty, distinctSplits.count == 1 else {
+                plaintext.secureZero()
+                throw TDFDecryptError.policyBindingFailed
+            }
             let bindingValid = keyAccess.contains { kao in
                 TDFCrypto.verifyPolicyBinding(
                     kao.policyBinding,

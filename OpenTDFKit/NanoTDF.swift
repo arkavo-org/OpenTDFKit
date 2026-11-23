@@ -562,9 +562,14 @@ public struct Payload: Sendable {
     }
 
     /// Serializes the Payload into its binary `Data` representation, validating that `length`
-    /// fits within the 24-bit wire format limit (`0xFFFFFF`).
+    /// matches `iv.count + ciphertext.count + mac.count` and fits within the 24-bit wire limit (`0xFFFFFF`).
     public func serializedData() throws -> Data {
+        let actualLength = iv.count + ciphertext.count + mac.count
         try NanoTDF.validatePayloadLength(Int(length))
+        try NanoTDF.validatePayloadLength(actualLength)
+        guard Int(length) == actualLength else {
+            throw NanoTDFError.payloadTooLarge(actualLength)
+        }
         return toData()
     }
 

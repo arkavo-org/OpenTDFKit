@@ -614,15 +614,28 @@ extension TDFCBOREnvelope {
         maxDepth: Int = 32,
         maxItems: Int = 100_000,
     ) throws {
-        enum Frame {
+        enum FrameKind {
             case definite(remaining: Int)
             case indefiniteContainer
             case indefiniteString(major: UInt8)
         }
 
+        struct Frame {
+            let kind: FrameKind
+            let depth: Int
+        }
+
         var offset = 0
         var itemCount = 0
-        var stack: [Frame] = [.definite(remaining: 1)]
+        var stack: [Frame] = [Frame(kind: .definite(remaining: 1), depth: 0)]
+
+        func pushChild(_ kind: FrameKind, parentDepth: Int) throws {
+            let childDepth = parentDepth + 1
+            guard childDepth <= maxDepth else {
+                throw TDFCBORError.cborDecodingFailed("CBOR nesting depth exceeds limit")
+            }
+            stack.append(Frame(kind: kind, depth: childDepth))
+        }
 
         func readArgument(ai: UInt8) throws -> UInt64 {
             switch ai {
@@ -672,21 +685,27 @@ extension TDFCBOREnvelope {
                 throw TDFCBORError.cborDecodingFailed("Truncated CBOR input")
             }
 
-            switch frame {
+            let currentDepth = frame.depth
+
+            switch frame.kind {
             case let .definite(remaining):
                 if remaining > 1 {
-                    stack.append(.definite(remaining: remaining - 1))
+                    stack.append(Frame(kind: .definite(remaining: remaining - 1), depth: currentDepth))
                 }
             case .indefiniteContainer:
                 if bytes[offset] == 0xFF {
                     offset += 1
                     continue
                 }
-                stack.append(.indefiniteContainer)
+                stack.append(Frame(kind: .indefiniteContainer, depth: currentDepth))
             case let .indefiniteString(expectedMajor):
                 if bytes[offset] == 0xFF {
                     offset += 1
                     continue
+                }
+                itemCount += 1
+                guard itemCount <= maxItems else {
+                    throw TDFCBORError.cborDecodingFailed("CBOR item count exceeds safety limit")
                 }
                 let initial = bytes[offset]
                 offset += 1
@@ -700,7 +719,7 @@ extension TDFCBOREnvelope {
                     throw TDFCBORError.cborDecodingFailed("CBOR string chunk length exceeds remaining input")
                 }
                 offset += Int(chunkLen)
-                stack.append(.indefiniteString(major: expectedMajor))
+                stack.append(Frame(kind: .indefiniteString(major: expectedMajor), depth: currentDepth))
                 continue
             }
 
@@ -722,10 +741,7 @@ extension TDFCBOREnvelope {
                 _ = try readArgument(ai: ai)
             case 2, 3:
                 if ai == 31 {
-                    guard stack.count < maxDepth else {
-                        throw TDFCBORError.cborDecodingFailed("CBOR nesting depth exceeds limit")
-                    }
-                    stack.append(.indefiniteString(major: major))
+                    try pushChild(.indefiniteString(major: major), parentDepth: currentDepth)
                 } else {
                     let length = try readArgument(ai: ai)
                     guard length <= UInt64(bytes.count - offset) else {
@@ -735,38 +751,26 @@ extension TDFCBOREnvelope {
                 }
             case 4:
                 if ai == 31 {
-                    guard stack.count < maxDepth else {
-                        throw TDFCBORError.cborDecodingFailed("CBOR nesting depth exceeds limit")
-                    }
-                    stack.append(.indefiniteContainer)
+                    try pushChild(.indefiniteContainer, parentDepth: currentDepth)
                 } else {
                     let count = try readArgument(ai: ai)
                     guard count <= UInt64(bytes.count - offset) else {
                         throw TDFCBORError.cborDecodingFailed("CBOR array length \(count) exceeds remaining input")
                     }
                     if count > 0 {
-                        guard stack.count < maxDepth else {
-                            throw TDFCBORError.cborDecodingFailed("CBOR nesting depth exceeds limit")
-                        }
-                        stack.append(.definite(remaining: Int(count)))
+                        try pushChild(.definite(remaining: Int(count)), parentDepth: currentDepth)
                     }
                 }
             case 5:
                 if ai == 31 {
-                    guard stack.count < maxDepth else {
-                        throw TDFCBORError.cborDecodingFailed("CBOR nesting depth exceeds limit")
-                    }
-                    stack.append(.indefiniteContainer)
+                    try pushChild(.indefiniteContainer, parentDepth: currentDepth)
                 } else {
                     let pairs = try readArgument(ai: ai)
                     guard pairs <= UInt64((bytes.count - offset) / 2) else {
                         throw TDFCBORError.cborDecodingFailed("CBOR map length \(pairs) exceeds remaining input")
                     }
                     if pairs > 0 {
-                        guard stack.count < maxDepth else {
-                            throw TDFCBORError.cborDecodingFailed("CBOR nesting depth exceeds limit")
-                        }
-                        stack.append(.definite(remaining: Int(pairs) * 2))
+                        try pushChild(.definite(remaining: Int(pairs) * 2), parentDepth: currentDepth)
                     }
                 }
             case 6:
@@ -774,10 +778,7 @@ extension TDFCBOREnvelope {
                     throw TDFCBORError.cborDecodingFailed("Invalid indefinite length for CBOR tag")
                 }
                 _ = try readArgument(ai: ai)
-                guard stack.count < maxDepth else {
-                    throw TDFCBORError.cborDecodingFailed("CBOR nesting depth exceeds limit")
-                }
-                stack.append(.definite(remaining: 1))
+                try pushChild(.definite(remaining: 1), parentDepth: currentDepth)
             case 7:
                 guard ai != 31 else {
                     throw TDFCBORError.cborDecodingFailed("Unexpected CBOR break byte")
@@ -800,10 +801,11 @@ extension TDFCBOREnvelope {
             throw TDFCBORError.invalidMagicBytes
         }
 
-        // Skip self-describe tag, validate CBOR structure iteratively, then decode
+        // Skip self-describe tag, validate CBOR structure iteratively, then decode with bounded depth
         let cborBytes = Array(data.dropFirst(3))
-        try validateCBORStructure(cborBytes)
-        guard let decoded = try? CBOR.decode(cborBytes) else {
+        let maxCBORDepth = 32
+        try validateCBORStructure(cborBytes, maxDepth: maxCBORDepth)
+        guard let decoded = try? CBOR.decode(cborBytes, options: CBOROptions(maximumDepth: maxCBORDepth)) else {
             throw TDFCBORError.cborDecodingFailed("Failed to decode CBOR")
         }
 

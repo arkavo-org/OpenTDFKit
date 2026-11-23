@@ -275,10 +275,10 @@ public actor KeyStore {
         recalculateTotalBytesStored()
     }
 
-    /// Resolves the private key for a parsed v12 NanoTDF header (whose wire format omits `kasPublicKey`).
+    /// Resolves the key pair for a parsed v12 NanoTDF header (whose wire format omits `kasPublicKey`).
     /// Matches by optional `ResourceLocator.identifier` (exact public key, public key prefix, or SHA-256 prefix),
     /// or falls back to the sole stored key when the store contains exactly one key.
-    private func resolveV12PrivateKey(identifier: Data?) -> Data? {
+    private func resolveV12KeyPair(identifier: Data?) -> (publicKey: Data, privateKey: Data)? {
         if let identifier, !identifier.isEmpty {
             var matches: [StoredKeyPair] = []
             for (keyID, pair) in keyPairs {
@@ -294,13 +294,27 @@ public actor KeyStore {
                 }
             }
             if let unique = matches.first {
-                return unique.privateKey
+                return (unique.publicKey, unique.privateKey)
             }
         }
         if keyPairs.count == 1, let sole = keyPairs.values.first {
-            return sole.privateKey
+            return (sole.publicKey, sole.privateKey)
         }
         return nil
+    }
+
+    /// Resolves the stored key pair for a NanoTDF header, handling both explicit KAS public keys
+    /// and parsed v12 headers (whose wire format omits `kasPublicKey`).
+    func resolveKeyPair(for header: Header, explicitPublicKey: Data? = nil) -> (publicKey: Data, privateKey: Data)? {
+        let lookupKey = explicitPublicKey ?? header.payloadKeyAccess.kasPublicKey
+        if !lookupKey.isEmpty {
+            let identifier = KeyPairIdentifier(publicKey: lookupKey)
+            guard let pair = keyPairs[identifier] else {
+                return nil
+            }
+            return (pair.publicKey, pair.privateKey)
+        }
+        return resolveV12KeyPair(identifier: header.kas.identifier)
     }
 
     /// Derives the symmetric key for NanoTDF payload decryption using ECDH.
@@ -319,9 +333,10 @@ public actor KeyStore {
         }
 
         // v12 NanoTDF headers omit the KAS public key on the wire; resolve via identifier or sole key.
-        guard var kasPrivateKeyData = await resolveV12PrivateKey(identifier: header.kas.identifier) else {
+        guard let resolved = await resolveV12KeyPair(identifier: header.kas.identifier) else {
             throw KeyStoreError.keyNotFound("Private key for v12 NanoTDF header not found in this KeyStore.")
         }
+        var kasPrivateKeyData = resolved.privateKey
         defer { kasPrivateKeyData.secureZero() }
         return try derivePayloadSymmetricKey(
             kasPrivateKeyData: kasPrivateKeyData,
@@ -357,7 +372,7 @@ public actor KeyStore {
         )
     }
 
-    private nonisolated func derivePayloadSymmetricKey(
+    nonisolated func derivePayloadSymmetricKey(
         kasPrivateKeyData: Data,
         tdfEphemeralPublicKey: Data,
     ) throws -> SymmetricKey {
