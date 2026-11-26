@@ -88,9 +88,9 @@ public struct EphemeralKeyPair: Sendable {
 
 public actor KeyStore {
     public let curve: Curve
-    public private(set) var keyPairs: [KeyPairIdentifier: StoredKeyPair]
+    public var keyPairs: [KeyPairIdentifier: StoredKeyPair]
     /// Track total memory used
-    public private(set) var totalBytesStored: Int = 0
+    public var totalBytesStored: Int = 0
 
     public init(curve: Curve, capacity: Int = 1000) {
         self.curve = curve

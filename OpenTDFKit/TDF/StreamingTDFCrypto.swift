@@ -463,9 +463,11 @@ public enum StreamingTDFCrypto {
 
     /// Single-pass streaming multi-segment decryption directly to `outputURL`.
     /// Decrypts and verifies each segment's GCM tag and manifest hash into a private (`0600`)
-    /// staging file beside `outputURL`, then verifies the HS256 root signature before atomically
-    /// moving the staging file into place. Removes the staging file on any failure, cutting disk
-    /// I/O and AES-GCM CPU in half compared to two-pass `FileHandle` decryption.
+    /// staging file beside `outputURL` (peak memory is O(largest segment)), then verifies the
+    /// HS256 root signature before atomically moving the staging file into place. The parent
+    /// directory of `outputURL` must be writable, and existing directories at `outputURL` are
+    /// rejected. Removes the staging file on any failure, cutting disk I/O and AES-GCM CPU in
+    /// half compared to two-pass `FileHandle` decryption.
     public static func decryptPayloadStreamingMultiSegment(
         inputHandle: FileHandle,
         outputURL: URL,
@@ -478,6 +480,11 @@ public enum StreamingTDFCrypto {
         guard chunkSize > 0 else { throw StreamingCryptoError.invalidChunkSize }
         guard !segments.isEmpty else { throw StreamingCryptoError.malformedSegment(0) }
 
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: outputURL.path, isDirectory: &isDir), isDir.boolValue {
+            throw CocoaError(.fileWriteUnknown)
+        }
+
         let startOffset = try inputHandle.offset()
         let endOffset = try inputHandle.seekToEnd()
         guard endOffset >= startOffset else { throw StreamingCryptoError.segmentReadFailed }
@@ -487,7 +494,7 @@ public enum StreamingTDFCrypto {
             .appendingPathComponent(".\(outputURL.lastPathComponent).\(UUID().uuidString).partial")
         let fd = open(stagingURL.path, O_CREAT | O_EXCL | O_WRONLY, 0o600)
         guard fd >= 0 else {
-            throw StreamingCryptoError.segmentReadFailed
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EACCES)
         }
         let stagingHandle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
         var stagingClosed = false
@@ -556,7 +563,12 @@ public enum StreamingTDFCrypto {
 
                 let nonce = try AES.GCM.Nonce(data: ivData)
                 let sealed = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertextAccumulator, tag: tagData)
-                var plaintext = try AES.GCM.open(sealed, using: symmetricKey)
+                var plaintext: Data
+                do {
+                    plaintext = try AES.GCM.open(sealed, using: symmetricKey)
+                } catch {
+                    throw StreamingCryptoError.integrityCheckFailed
+                }
                 defer { plaintext.secureZero() }
                 try stagingHandle.write(contentsOf: plaintext)
 

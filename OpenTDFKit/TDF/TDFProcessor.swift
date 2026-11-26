@@ -216,6 +216,9 @@ public struct TDFEncryptor {
 
     /// Encrypts `inputURL` directly to a TDF archive at `outputURL` using bounded O(segmentSize)
     /// memory without holding the full encrypted payload in RAM.
+    ///
+    /// To decrypt archives whose encrypted payload exceeds `TDFArchiveReader.defaultPayloadMaxSize`
+    /// (512 MiB), pass an explicit `maxPayloadSize` (or `nil`) to `TDFDecryptor.decryptFile`.
     public func encryptFileStreaming(
         inputURL: URL,
         outputURL: URL,
@@ -246,30 +249,63 @@ public struct TDFEncryptor {
         let inputHandle = try FileHandle(forReadingFrom: inputURL)
         defer { try? inputHandle.close() }
 
-        let streamingResult = try StreamingTDFCrypto.encryptPayloadStreamingMultiSegment(
-            inputHandle: inputHandle,
-            outputHandle: tempHandle,
-            symmetricKey: symmetricKey,
-            segmentSizes: [segmentSize],
-        )
+        let inputSize = try inputHandle.seekToEnd()
+        try inputHandle.seek(toOffset: 0)
+
+        let segments: [TDFSegment]
+        let rawSegmentSigs: [Data]
+        let firstIV: Data
+        let lastTag: Data
+
+        if inputSize == 0 {
+            // Emit one authenticated empty segment so zero-byte files round-trip identically
+            // to `encryptFile` and in-memory segmented encryption.
+            let (iv, ciphertext, tag) = try TDFCrypto.encryptPayload(plaintext: Data(), symmetricKey: symmetricKey)
+            var emptySegmentPayload = Data(capacity: iv.count + ciphertext.count + tag.count)
+            emptySegmentPayload.append(iv)
+            emptySegmentPayload.append(ciphertext)
+            emptySegmentPayload.append(tag)
+            try tempHandle.write(contentsOf: emptySegmentPayload)
+            try tempHandle.synchronize()
+            firstIV = iv
+            lastTag = tag
+            rawSegmentSigs = [tag]
+            segments = [
+                TDFSegment(
+                    hash: tag.base64EncodedString(),
+                    segmentSize: 0,
+                    encryptedSegmentSize: Int64(emptySegmentPayload.count),
+                ),
+            ]
+        } else {
+            let streamingResult = try StreamingTDFCrypto.encryptPayloadStreamingMultiSegment(
+                inputHandle: inputHandle,
+                outputHandle: tempHandle,
+                symmetricKey: symmetricKey,
+                segmentSizes: [segmentSize],
+            )
+            firstIV = streamingResult.iv
+            lastTag = streamingResult.tag
+            segments = streamingResult.segments.map { seg in
+                TDFSegment(
+                    hash: seg.hash,
+                    segmentSize: seg.plaintextSize,
+                    encryptedSegmentSize: seg.encryptedSize,
+                )
+            }
+            rawSegmentSigs = segments.compactMap { Data(base64Encoded: $0.hash) }
+        }
+
         try tempHandle.close()
         tempHandleClosed = true
 
-        let segments = streamingResult.segments.map { seg in
-            TDFSegment(
-                hash: seg.hash,
-                segmentSize: seg.plaintextSize,
-                encryptedSegmentSize: seg.encryptedSize,
-            )
-        }
-        let rawSegmentSigs = segments.compactMap { Data(base64Encoded: $0.hash) }
         let manifest = try makeManifest(
             segments: segments,
             rawSegmentSignatures: rawSegmentSigs,
             segmentSizeDefault: Int64(segmentSize),
             symmetricKey: symmetricKey,
             configuration: configuration,
-            iv: streamingResult.iv,
+            iv: firstIV,
         )
 
         try TDFArchiveWriter(compressionMethod: .none)
@@ -278,8 +314,8 @@ public struct TDFEncryptor {
         return TDFStreamingFileEncryptionResult(
             manifest: manifest,
             symmetricKey: symmetricKey,
-            iv: streamingResult.iv,
-            tag: streamingResult.tag,
+            iv: firstIV,
+            tag: lastTag,
         )
     }
 
@@ -561,12 +597,19 @@ public struct TDFStreamingFileEncryptionResult: Sendable {
 public struct TDFDecryptor {
     public init() {}
 
+    /// Streams a TDF archive from `inputURL` to `outputURL`, authenticating every segment and
+    /// the root signature before atomically publishing `outputURL` (peak memory is O(largest
+    /// segment)). Staging uses a private (`0600`) temporary file in `outputURL`'s parent
+    /// directory, which must be writable; existing directories at `outputURL` are rejected.
+    /// - Parameter maxPayloadSize: Upper bound on extracted encrypted payload bytes; defaults to
+    ///   `TDFArchiveReader.defaultPayloadMaxSize` (512 MiB) to guard against zip bombs. Pass a
+    ///   higher value or `nil` when decrypting trusted archives over 512 MiB.
     public func decryptFile(
         inputURL: URL,
         outputURL: URL,
         symmetricKey: SymmetricKey,
         chunkSize: Int = StreamingTDFCrypto.defaultChunkSize,
-        maxPayloadSize: Int? = nil,
+        maxPayloadSize: Int? = TDFArchiveReader.defaultPayloadMaxSize,
     ) throws {
         try decryptFileStreaming(
             inputURL: inputURL,
@@ -582,7 +625,7 @@ public struct TDFDecryptor {
         outputURL: URL,
         privateKeyPEM: String,
         chunkSize: Int = StreamingTDFCrypto.defaultChunkSize,
-        maxPayloadSize: Int? = nil,
+        maxPayloadSize: Int? = TDFArchiveReader.defaultPayloadMaxSize,
     ) throws {
         try decryptFileStreaming(
             inputURL: inputURL,
@@ -601,7 +644,7 @@ public struct TDFDecryptor {
         outputURL: URL,
         symmetricKey: SymmetricKey,
         chunkSize: Int = StreamingTDFCrypto.defaultChunkSize,
-        maxPayloadSize: Int? = nil,
+        maxPayloadSize: Int? = TDFArchiveReader.defaultPayloadMaxSize,
     ) throws {
         try decryptFile(
             inputURL: inputURL,
@@ -684,12 +727,17 @@ public struct TDFDecryptor {
             extractionCap = nil
         }
 
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: outputURL.path, isDirectory: &isDir), isDir.boolValue {
+            throw CocoaError(.fileWriteUnknown)
+        }
+
         // Stream encrypted payload out of ZIP into a private temp file, then decrypt in a single pass.
         let tempEncryptedURL = outputURL.deletingLastPathComponent()
             .appendingPathComponent(".\(outputURL.lastPathComponent).\(UUID().uuidString).enc.tmp")
         let fd = open(tempEncryptedURL.path, O_CREAT | O_EXCL | O_RDWR, 0o600)
         guard fd >= 0 else {
-            throw StreamingCryptoError.segmentReadFailed
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EACCES)
         }
         let tempHandle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
         defer {
@@ -738,7 +786,7 @@ public struct TDFDecryptor {
             )
         } catch StreamingCryptoError.integrityCheckFailed {
             throw TDFDecryptError.integrityCheckFailed
-        } catch StreamingCryptoError.malformedSegment {
+        } catch StreamingCryptoError.malformedSegment, StreamingCryptoError.segmentReadFailed {
             throw TDFDecryptError.malformedPayload
         }
     }
@@ -950,14 +998,16 @@ public struct TDFDecryptor {
         return SymmetricKey(data: dek)
     }
 
-    /// Unwraps a single-split EC-wrapped DEK from `encryptionInfo` and verifies its policy binding.
-    /// Shared by `TDFCBORDecryptor` and `TDFJSONDecryptor`.
-    static func unwrapSingleSplitECKey(
+    /// Unwraps and decrypts a single-split EC-wrapped container, trying each same-split
+    /// EC key access object through policy-binding and payload decryption before falling back
+    /// to subsequent candidates. Shared by `TDFCBORDecryptor` and `TDFJSONDecryptor`.
+    static func decryptSingleSplitEC(
         encryptionInfo: TDFEncryptionInformation,
         privateKeyPEM: String,
         formatLabel: String,
         makeError: (String) -> Error,
-    ) throws -> SymmetricKey {
+        decryptWithKey: (SymmetricKey) throws -> Data,
+    ) throws -> Data {
         let keyAccess = encryptionInfo.keyAccess
         guard !keyAccess.isEmpty else {
             throw makeError("No key access objects found")
@@ -993,7 +1043,7 @@ public struct TDFDecryptor {
                     lastError = TDFDecryptError.policyBindingFailed
                     continue
                 }
-                return symmetricKey
+                return try decryptWithKey(symmetricKey)
             } catch {
                 lastError = error
             }

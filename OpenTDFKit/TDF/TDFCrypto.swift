@@ -122,9 +122,11 @@ public enum TDFCrypto {
 
     /// Encrypt payload using AES-CBC with PKCS7 padding via hardware-accelerated CommonCrypto.
     /// This mode is compatible with FairPlay Streaming.
+    /// - Important: AES-CBC is unauthenticated. Callers must authenticate the IV and ciphertext
+    ///   (e.g., via Encrypt-then-MAC) before calling `decryptPayloadCBC`.
     /// - Parameters:
     ///   - plaintext: Data to encrypt
-    ///   - symmetricKey: Symmetric key (16 or 32 bytes)
+    ///   - symmetricKey: Symmetric key (16, 24, or 32 bytes)
     /// - Returns: Tuple of (iv, ciphertext)
     public static func encryptPayloadCBC(plaintext: Data, symmetricKey: SymmetricKey) throws -> (iv: Data, cipherText: Data) {
         let bitCount = symmetricKey.bitCount
@@ -143,10 +145,12 @@ public enum TDFCrypto {
     }
 
     /// Decrypt payload using AES-CBC with PKCS7 padding via hardware-accelerated CommonCrypto.
+    /// - Important: AES-CBC is unauthenticated. Callers must verify an authentication tag
+    ///   covering the IV and ciphertext before decryption to prevent padding-oracle attacks.
     /// - Parameters:
     ///   - ciphertext: Encrypted data
     ///   - iv: Initialization vector (16 bytes)
-    ///   - symmetricKey: Symmetric key (16 or 32 bytes)
+    ///   - symmetricKey: Symmetric key (16, 24, or 32 bytes)
     /// - Returns: Decrypted plaintext
     public static func decryptPayloadCBC(ciphertext: Data, iv: Data, symmetricKey: SymmetricKey) throws -> Data {
         guard iv.count == kCCBlockSizeAES128 else {
@@ -175,7 +179,7 @@ public enum TDFCrypto {
         symmetricKey: SymmetricKey,
     ) throws -> Data {
         let isEncrypt = operation == CCOperation(kCCEncrypt)
-        // Use CommonCrypto PKCS7 padding on encrypt; on decrypt use raw CBC + constant-time
+        // Use CommonCrypto PKCS7 padding on encrypt; on decrypt use raw CBC + branchless
         // PKCS7 validation so malformed padding is deterministically rejected across all OS versions.
         let options: CCOptions = isEncrypt ? CCOptions(kCCOptionPKCS7Padding) : 0
         let outputCapacity = isEncrypt ? (input.count + kCCBlockSizeAES128) : input.count
@@ -209,7 +213,7 @@ public enum TDFCrypto {
             if isEncrypt {
                 throw TDFCryptoError.cbcEncryptionFailed("CommonCrypto status \(status)")
             } else {
-                throw TDFCryptoError.cbcDecryptionFailed("CommonCrypto status \(status)")
+                throw TDFCryptoError.cbcDecryptionFailed("Decryption failed")
             }
         }
 
@@ -220,10 +224,10 @@ public enum TDFCrypto {
 
         guard bytesMoved == input.count, bytesMoved >= kCCBlockSizeAES128 else {
             output.secureZero()
-            throw TDFCryptoError.cbcDecryptionFailed("Unexpected decrypted byte count")
+            throw TDFCryptoError.cbcDecryptionFailed("Decryption failed")
         }
 
-        // Constant-time PKCS7 padding verification over the final 16-byte block.
+        // Branchless PKCS7 padding check over the final 16-byte block.
         let padByte = output[bytesMoved - 1]
         let padLen = Int(padByte)
         var bad: UInt8 = (padLen >= 1 && padLen <= kCCBlockSizeAES128) ? 0 : 1
@@ -235,7 +239,7 @@ public enum TDFCrypto {
         }
         guard bad == 0 else {
             output.secureZero()
-            throw TDFCryptoError.cbcDecryptionFailed("Invalid PKCS7 padding")
+            throw TDFCryptoError.cbcDecryptionFailed("Decryption failed")
         }
 
         output.removeSubrange((bytesMoved - padLen) ..< bytesMoved)

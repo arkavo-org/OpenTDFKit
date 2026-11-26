@@ -300,12 +300,12 @@ public struct TDFCBORDecryptor: Sendable {
     /// Decrypt a TDF-CBOR container with an EC private key (unwraps the symmetric key first).
     /// Explicitly rejects split-key containers and non-EC-wrapped key access objects.
     public func decrypt(container: TDFCBORContainer, privateKeyPEM: String) throws -> Data {
-        let symmetricKey = try TDFDecryptor.unwrapSingleSplitECKey(
+        try TDFDecryptor.decryptSingleSplitEC(
             encryptionInfo: container.encryptionInformation,
             privateKeyPEM: privateKeyPEM,
             formatLabel: "TDF-CBOR",
             makeError: { TDFCBORError.decryptionFailed($0) },
+            decryptWithKey: { try decrypt(container: container, symmetricKey: $0) },
         )
-        return try decrypt(container: container, symmetricKey: symmetricKey)
     }
 }

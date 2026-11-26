@@ -13,23 +13,22 @@ enum StrictJSON {
     /// `true` when any object in `data` repeats a member name, or when the
     /// input can't be scanned.
     static func hasDuplicateMembers(_ data: Data) -> Bool {
-        data.withUnsafeBytes { rawBuffer in
-            let bytes = rawBuffer.bindMemory(to: UInt8.self)
-            var scanner = Scanner(bytes: bytes)
-            guard let duplicate = try? scanner.scanValue(depth: 0) else {
-                return true
-            }
-            return duplicate
+        // Keep bounds-checked `[UInt8]` storage even in `-O` release builds because
+        // `StrictJSON` scans untrusted Rewrap JWTs (capped at 64 KiB).
+        var scanner = Scanner(bytes: Array(data))
+        guard let duplicate = try? scanner.scanValue(depth: 0) else {
+            return true
         }
+        return duplicate
     }
 
     private struct ScanError: Error {}
 
     private struct Scanner {
-        let bytes: UnsafeBufferPointer<UInt8>
+        let bytes: [UInt8]
         var index = 0
 
-        init(bytes: UnsafeBufferPointer<UInt8>) {
+        init(bytes: [UInt8]) {
             self.bytes = bytes
         }
 

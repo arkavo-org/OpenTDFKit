@@ -93,7 +93,7 @@ public enum TDFKAS {
         let sessionPrivateKey = P256.KeyAgreement.PrivateKey()
         let sealed = try AES.GCM.seal(share, using: TDFCrypto.deriveKASWrapKey(sessionPrivateKey, receiverPublicKey))
         guard let combined = sealed.combined else {
-            throw TDFKASError.keyUnwrapFailed
+            throw CryptoKitError.incorrectParameterSize
         }
         return RewrapResult(wrappedKey: combined, sessionPublicKey: sessionPrivateKey.publicKey)
     }

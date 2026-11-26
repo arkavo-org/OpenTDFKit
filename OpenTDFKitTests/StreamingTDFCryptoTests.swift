@@ -288,6 +288,164 @@ final class StreamingTDFCryptoTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
+    func testEncryptFileStreamingSupportsEmptyInput() throws {
+        let inputURL = try temporaryFile(data: Data())
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-empty-\(UUID().uuidString).tdf")
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-empty-out-\(UUID().uuidString).bin")
+        defer {
+            try? FileManager.default.removeItem(at: inputURL)
+            try? FileManager.default.removeItem(at: archiveURL)
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        let kasKey = P256.KeyAgreement.PrivateKey()
+        let kas = TDFKasInfo(
+            url: URL(string: "https://kas.example.com")!,
+            publicKeyPEM: kasKey.publicKey.pemRepresentation,
+            kid: "ec-kid-empty",
+            keyType: .ecP256,
+        )
+        let policy = try TDFPolicy(json: Data(#"{"uuid":"1234","body":{"dataAttributes":[]}}"#.utf8))
+        let config = TDFEncryptionConfiguration(kas: kas, policy: policy)
+
+        let result = try TDFEncryptor().encryptFileStreaming(
+            inputURL: inputURL,
+            outputURL: archiveURL,
+            configuration: config,
+            segmentSize: 32768,
+        )
+        XCTAssertEqual(result.manifest.encryptionInformation.integrityInformation?.segments.count, 1)
+        XCTAssertEqual(result.manifest.encryptionInformation.integrityInformation?.segments.first?.segmentSize, 0)
+
+        try TDFDecryptor().decryptFile(
+            inputURL: archiveURL,
+            outputURL: outputURL,
+            symmetricKey: result.symmetricKey,
+        )
+        XCTAssertEqual(try Data(contentsOf: outputURL), Data())
+    }
+
+    func testECContainerDecryptFallsBackAcrossSameSplitKAOs() throws {
+        let kasKey = P256.KeyAgreement.PrivateKey()
+        let policy = try TDFPolicy(json: Data(#"{"uuid":"fallback-test","body":{"dataAttributes":[]}}"#.utf8))
+        let plaintext = Data("secret payload".utf8)
+        let kasURL = URL(string: "https://kas.example.com")!
+
+        // Build a valid TDF-JSON container, then prepend a decoy KAO wrapped to the same
+        // recipient & policy with a different DEK (so unwrap + policyBinding succeed,
+        // but payload decryption must fall through to the second KAO).
+        let validResult = try TDFJSONBuilder()
+            .kasURL(kasURL)
+            .kasPublicKey(kasKey.publicKey.pemRepresentation)
+            .policy(policy)
+            .encrypt(plaintext: plaintext)
+
+        let wrongDEK = SymmetricKey(size: .bits256)
+        let decoyWrap = try TDFCrypto.wrapSymmetricKeyWithEC(
+            publicKeyPEM: kasKey.publicKey.pemRepresentation,
+            symmetricKey: wrongDEK,
+        )
+        let decoyKAO = TDFKeyAccessObject(
+            type: .ecWrapped,
+            url: kasURL.absoluteString,
+            protocolValue: .kas,
+            wrappedKey: decoyWrap.wrappedKey,
+            policyBinding: TDFCrypto.policyBinding(policy: policy.json, symmetricKey: wrongDEK),
+            kid: nil,
+            sid: nil,
+            schemaVersion: "1.0",
+            ephemeralPublicKey: decoyWrap.ephemeralPublicKey,
+        )
+
+        var encInfo = validResult.container.encryptionInformation
+        encInfo.keyAccess = [decoyKAO] + encInfo.keyAccess
+        let modifiedEnvelope = TDFJSONEnvelope(
+            tdf: validResult.container.envelope.tdf,
+            version: validResult.container.envelope.version,
+            created: validResult.container.envelope.created,
+            manifest: TDFJSONManifest(encryptionInformation: encInfo, assertions: nil),
+            payload: validResult.container.envelope.payload,
+        )
+        let modifiedContainer = TDFJSONContainer(
+            envelope: modifiedEnvelope,
+            payloadData: validResult.container.payloadData,
+        )
+
+        let recovered = try TDFJSONDecryptor().decrypt(
+            container: modifiedContainer,
+            privateKeyPEM: kasKey.pemRepresentation,
+        )
+        XCTAssertEqual(recovered, plaintext)
+    }
+
+    func testDecryptFileTamperedCiphertextThrowsIntegrityCheckFailedAndRejectsDirectoryOutput() throws {
+        let plaintext = Data(repeating: 0x55, count: 40000)
+        let inputURL = try temporaryFile(data: plaintext)
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-ct-src-\(UUID().uuidString).tdf")
+        let tamperedArchiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-ct-bad-\(UUID().uuidString).tdf")
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-ct-out-\(UUID().uuidString).bin")
+        let existingDirURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-dir-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: existingDirURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: inputURL)
+            try? FileManager.default.removeItem(at: archiveURL)
+            try? FileManager.default.removeItem(at: tamperedArchiveURL)
+            try? FileManager.default.removeItem(at: outputURL)
+            try? FileManager.default.removeItem(at: existingDirURL)
+        }
+
+        let kasKey = P256.KeyAgreement.PrivateKey()
+        let kas = TDFKasInfo(
+            url: URL(string: "https://kas.example.com")!,
+            publicKeyPEM: kasKey.publicKey.pemRepresentation,
+            kid: "ec-kid-ct",
+            keyType: .ecP256,
+        )
+        let policy = try TDFPolicy(json: Data(#"{"uuid":"ct-tamper","body":{"dataAttributes":[]}}"#.utf8))
+        let config = TDFEncryptionConfiguration(kas: kas, policy: policy)
+
+        let result = try TDFEncryptor().encryptFileStreaming(
+            inputURL: inputURL,
+            outputURL: archiveURL,
+            configuration: config,
+            segmentSize: 16384,
+        )
+
+        // Flip a ciphertext byte (leaving GMAC tag intact so AES.GCM.open catches it)
+        let loaded = try TDFLoader().load(from: archiveURL)
+        var tamperedPayload = loaded.payload
+        tamperedPayload[12] ^= 0x01
+        try TDFArchiveWriter().buildArchiveToFile(
+            manifest: loaded.manifest,
+            payload: tamperedPayload,
+            outputURL: tamperedArchiveURL,
+        )
+
+        XCTAssertThrowsError(try TDFDecryptor().decryptFile(
+            inputURL: tamperedArchiveURL,
+            outputURL: outputURL,
+            symmetricKey: result.symmetricKey,
+        )) { error in
+            XCTAssertEqual(error as? TDFDecryptError, .integrityCheckFailed)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+
+        // Reject existing directory as outputURL without touching it
+        XCTAssertThrowsError(try TDFDecryptor().decryptFile(
+            inputURL: archiveURL,
+            outputURL: existingDirURL,
+            symmetricKey: result.symmetricKey,
+        ))
+        var isDir: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: existingDirURL.path, isDirectory: &isDir) && isDir.boolValue)
+    }
+
     func testPublicKeyStoreFIFODrainWithCompaction() async throws {
         let store = PublicKeyStore(curve: .secp256r1)
         let keys = (0 ..< 200).map { i -> Data in

@@ -312,12 +312,12 @@ public struct TDFJSONDecryptor: Sendable {
     /// Decrypt a TDF-JSON container with an EC private key (unwraps the symmetric key first).
     /// Explicitly rejects split-key manifests and non-EC-wrapped key access objects.
     public func decrypt(container: TDFJSONContainer, privateKeyPEM: String) throws -> Data {
-        let symmetricKey = try TDFDecryptor.unwrapSingleSplitECKey(
+        try TDFDecryptor.decryptSingleSplitEC(
             encryptionInfo: container.encryptionInformation,
             privateKeyPEM: privateKeyPEM,
             formatLabel: "TDF-JSON",
             makeError: { TDFJSONError.decryptionFailed($0) },
+            decryptWithKey: { try decrypt(container: container, symmetricKey: $0) },
         )
-        return try decrypt(container: container, symmetricKey: symmetricKey)
     }
 }
