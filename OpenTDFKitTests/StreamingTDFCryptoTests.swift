@@ -127,6 +127,117 @@ final class StreamingTDFCryptoTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: outputURL), plaintext)
     }
 
+    func testEncryptFileStreamingAndDecryptFileRoundTrip() throws {
+        let plaintext = Data((0 ..< 150_000).map { UInt8($0 & 0xFF) })
+        let inputURL = try temporaryFile(data: plaintext)
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-tdf-\(UUID().uuidString).tdf")
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-out-\(UUID().uuidString).bin")
+        defer {
+            try? FileManager.default.removeItem(at: inputURL)
+            try? FileManager.default.removeItem(at: archiveURL)
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        let kasKey = P256.KeyAgreement.PrivateKey()
+        let kas = TDFKasInfo(
+            url: URL(string: "https://kas.example.com")!,
+            publicKeyPEM: kasKey.publicKey.pemRepresentation,
+            kid: "ec-kid-1",
+            keyType: .ecP256,
+        )
+        let policy = try TDFPolicy(json: Data(#"{"uuid":"1234","body":{"dataAttributes":[]}}"#.utf8))
+        let config = TDFEncryptionConfiguration(kas: kas, policy: policy)
+
+        let result = try TDFEncryptor().encryptFileStreaming(
+            inputURL: inputURL,
+            outputURL: archiveURL,
+            configuration: config,
+            segmentSize: 32768,
+        )
+        XCTAssertEqual(result.manifest.encryptionInformation.integrityInformation?.segments.count, 5)
+
+        try TDFDecryptor().decryptFile(
+            inputURL: archiveURL,
+            outputURL: outputURL,
+            symmetricKey: result.symmetricKey,
+            chunkSize: 8192,
+        )
+        XCTAssertEqual(try Data(contentsOf: outputURL), plaintext)
+    }
+
+    func testDecryptFileSinglePassDoesNotCreateOutputOnTamperedRoot() throws {
+        let plaintext = Data(repeating: 0x42, count: 80000)
+        let inputURL = try temporaryFile(data: plaintext)
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-tamper-\(UUID().uuidString).tdf")
+        let tamperedArchiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-tamper-bad-\(UUID().uuidString).tdf")
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-tamper-out-\(UUID().uuidString).bin")
+        defer {
+            try? FileManager.default.removeItem(at: inputURL)
+            try? FileManager.default.removeItem(at: archiveURL)
+            try? FileManager.default.removeItem(at: tamperedArchiveURL)
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        let kasKey = P256.KeyAgreement.PrivateKey()
+        let kas = TDFKasInfo(
+            url: URL(string: "https://kas.example.com")!,
+            publicKeyPEM: kasKey.publicKey.pemRepresentation,
+            kid: "ec-kid-1",
+            keyType: .ecP256,
+        )
+        let policy = try TDFPolicy(json: Data(#"{"uuid":"1234","body":{"dataAttributes":[]}}"#.utf8))
+        let config = TDFEncryptionConfiguration(kas: kas, policy: policy)
+
+        let result = try TDFEncryptor().encryptFileStreaming(
+            inputURL: inputURL,
+            outputURL: archiveURL,
+            configuration: config,
+            segmentSize: 32768,
+        )
+
+        let loaded = try TDFLoader().load(from: archiveURL)
+        var badManifest = loaded.manifest
+        badManifest.encryptionInformation.integrityInformation?.rootSignature.sig = Data(repeating: 0, count: 32).base64EncodedString()
+        try TDFArchiveWriter().buildArchiveToFile(manifest: badManifest, payload: loaded.payload, outputURL: tamperedArchiveURL)
+
+        XCTAssertThrowsError(try TDFDecryptor().decryptFile(
+            inputURL: tamperedArchiveURL,
+            outputURL: outputURL,
+            symmetricKey: result.symmetricKey,
+            chunkSize: 4096,
+        ))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
+    func testPublicKeyStoreFIFODrainWithCompaction() async throws {
+        let store = PublicKeyStore(curve: .secp256r1)
+        let keys = (0 ..< 200).map { i -> Data in
+            var d = Data(count: 33)
+            d[0] = 0x02
+            d[32] = UInt8(i)
+            return d
+        }
+        await store.addPublicKeys(keys)
+
+        for expected in keys {
+            let popped = try await store.getAndRemovePublicKey()
+            XCTAssertEqual(popped, expected)
+        }
+        let remaining = await store.publicKeys
+        XCTAssertTrue(remaining.isEmpty)
+        do {
+            _ = try await store.getAndRemovePublicKey()
+            XCTFail("Expected noKeysAvailable")
+        } catch PublicKeyStoreError.noKeysAvailable {
+            // expected
+        }
+    }
+
     private func temporaryFile(data: Data) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("streaming-crypto-\(UUID().uuidString)")

@@ -1299,4 +1299,46 @@ final class StandardTDFTests: XCTestCase {
         XCTAssertNil((obj["payload"] as! [String: Any])["tdf_spec_version"])
         XCTAssertEqual(obj["schemaVersion"] as? String, "1.0.0")
     }
+
+    func testAESCBCRoundTripAndEdgeCases() throws {
+        let keys = [
+            SymmetricKey(size: .bits128),
+            SymmetricKey(size: .bits192),
+            SymmetricKey(size: .bits256),
+        ]
+        let payloads = [
+            Data(),
+            Data("A".utf8),
+            Data(repeating: 0xAB, count: 16), // exact block boundary (adds full padding block)
+            Data(repeating: 0xCD, count: 31),
+            Data(repeating: 0xEF, count: 1024),
+        ]
+
+        for key in keys {
+            for plaintext in payloads {
+                let (iv, ciphertext) = try TDFCrypto.encryptPayloadCBC(plaintext: plaintext, symmetricKey: key)
+                XCTAssertEqual(iv.count, 16)
+                XCTAssertGreaterThanOrEqual(ciphertext.count, 16)
+                XCTAssertEqual(ciphertext.count % 16, 0)
+
+                let decrypted = try TDFCrypto.decryptPayloadCBC(ciphertext: ciphertext, iv: iv, symmetricKey: key)
+                XCTAssertEqual(decrypted, plaintext)
+            }
+        }
+
+        // Invalid IV length rejected
+        let key256 = SymmetricKey(size: .bits256)
+        let (iv, ciphertext) = try TDFCrypto.encryptPayloadCBC(plaintext: Data("hello".utf8), symmetricKey: key256)
+        XCTAssertThrowsError(try TDFCrypto.decryptPayloadCBC(ciphertext: ciphertext, iv: Data(count: 12), symmetricKey: key256))
+
+        // Unaligned / empty ciphertext rejected
+        XCTAssertThrowsError(try TDFCrypto.decryptPayloadCBC(ciphertext: Data(), iv: iv, symmetricKey: key256))
+        XCTAssertThrowsError(try TDFCrypto.decryptPayloadCBC(ciphertext: Data([1, 2, 3]), iv: iv, symmetricKey: key256))
+
+        // Corrupted padding deterministically rejected (CBC: P_0 = D_K(C_0) XOR IV,
+        // so flipping IV[15] turns the final PKCS#7 padding byte 0x0B into 0xF4 > 16).
+        var tamperedIV = iv
+        tamperedIV[tamperedIV.count - 1] ^= 0xFF
+        XCTAssertThrowsError(try TDFCrypto.decryptPayloadCBC(ciphertext: ciphertext, iv: tamperedIV, symmetricKey: key256))
+    }
 }

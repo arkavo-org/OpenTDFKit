@@ -59,11 +59,14 @@ public struct NanoTDF: Sendable {
     /// Serializes the entire NanoTDF object (header, payload, and optional signature) into a single `Data` object.
     /// - Returns: A `Data` object representing the serialized NanoTDF.
     public func toData() -> Data {
-        var data = Data()
-        data.append(header.toData())
-        data.append(payload.toData())
-        if let signature {
-            data.append(signature.toData())
+        let headerData = header.toData()
+        let payloadData = payload.toData()
+        let signatureData = signature?.toData()
+        var data = Data(capacity: headerData.count + payloadData.count + (signatureData?.count ?? 0))
+        data.append(headerData)
+        data.append(payloadData)
+        if let signatureData {
+            data.append(signatureData)
         }
         return data
     }
@@ -582,7 +585,7 @@ public struct Payload: Sendable {
     /// - Returns: A `Data` object representing the serialized payload.
     public func toData() -> Data {
         let clampedLength = min(length, 0xFFFFFF)
-        var data = Data()
+        var data = Data(capacity: 3 + iv.count + ciphertext.count + mac.count)
         // Serialize length as UInt24 (3 bytes)
         data.append(UInt8((clampedLength >> 16) & 0xFF))
         data.append(UInt8((clampedLength >> 8) & 0xFF))

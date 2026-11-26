@@ -106,10 +106,8 @@ public class BinaryParser {
         else {
             throw ParsingError.invalidPolicy
         }
-        let plaintextCiphertextLengthData = contentLengthData.prefix(2)
-
-        let bytes = Array(plaintextCiphertextLengthData)
-        let contentLength = (UInt16(bytes[0]) << 8) | UInt16(bytes[1])
+        let i0 = contentLengthData.startIndex
+        let contentLength = (UInt16(contentLengthData[i0]) << 8) | UInt16(contentLengthData[contentLengthData.index(after: i0)])
 
         // Note 3.4.2.3.2 Body for Embedded Policy states Minimum Length is 1
         if contentLength == 0 {
@@ -265,11 +263,10 @@ public class BinaryParser {
         guard let lengthData = read(length: FieldSize.payloadLengthSize), lengthData.count == FieldSize.payloadLengthSize else {
             throw ParsingError.invalidFormat
         }
-        let b = Array(lengthData)
-        let byte1 = UInt32(b[0]) << 16
-        let byte2 = UInt32(b[1]) << 8
-        let byte3 = UInt32(b[2])
-        let length: UInt32 = byte1 | byte2 | byte3
+        let i0 = lengthData.startIndex
+        let i1 = lengthData.index(after: i0)
+        let i2 = lengthData.index(after: i1)
+        let length: UInt32 = (UInt32(lengthData[i0]) << 16) | (UInt32(lengthData[i1]) << 8) | UInt32(lengthData[i2])
 
         // IV nonce
         guard let iv = read(length: FieldSize.payloadIvSize)

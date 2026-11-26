@@ -229,34 +229,39 @@ public actor KASService {
         privateKeyData: Data,
         policyBody: Data? = nil,
         policyBinding: Data? = nil,
+        precomputedPrimaryKey: SymmetricKey? = nil,
     ) async throws -> (rewrappedKey: Data, newKeyPair: StoredKeyPair) {
-        // 1. Derive shared secret using the client's ephemeral public key and KAS private key
-        let sharedSecret: SharedSecret
+        // 1-2. Derive symmetric key for decryption (using v12 salt) unless already computed by caller
+        let primaryKey: SymmetricKey
+        if let precomputedPrimaryKey {
+            primaryKey = precomputedPrimaryKey
+        } else {
+            let sharedSecret: SharedSecret
 
-        switch keyStore.curve {
-        case .secp256r1:
-            let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData)
-            let publicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
-            sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
+            switch keyStore.curve {
+            case .secp256r1:
+                let privateKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData)
+                let publicKey = try P256.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
+                sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
 
-        case .secp384r1:
-            let privateKey = try P384.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData)
-            let publicKey = try P384.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
-            sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
+            case .secp384r1:
+                let privateKey = try P384.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData)
+                let publicKey = try P384.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
+                sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
 
-        case .secp521r1:
-            let privateKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData)
-            let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
-            sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
+            case .secp521r1:
+                let privateKey = try P521.KeyAgreement.PrivateKey(rawRepresentation: privateKeyData)
+                let publicKey = try P521.KeyAgreement.PublicKey(compressedRepresentation: ephemeralPublicKey)
+                sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
+            }
+
+            primaryKey = sharedSecret.hkdfDerivedSymmetricKey(
+                using: SHA256.self,
+                salt: CryptoConstants.hkdfSaltV12,
+                sharedInfo: Data(), // Empty per spec section 4
+                outputByteCount: 32,
+            )
         }
-
-        // 2. Derive symmetric key for decryption using v12 salt only
-        let primaryKey = sharedSecret.hkdfDerivedSymmetricKey(
-            using: SHA256.self,
-            salt: CryptoConstants.hkdfSaltV12,
-            sharedInfo: Data(), // Empty per spec section 4
-            outputByteCount: 32,
-        )
 
         // 2b. Verify policy binding when provided (if either is set, both must be present and valid)
         if policyBody != nil || policyBinding != nil {
@@ -328,13 +333,10 @@ public actor KASService {
         let newSealedBox = try AES.GCM.seal(decryptedKey, using: newSymmetricKey, nonce: newNonce)
 
         // 8. Combine the new ephemeral public key with the encrypted data
-        var result = Data()
-        result.append(newKeyPair.publicKey)
-
-        // Add nonce, ciphertext, and tag separately for compatibility with our test format
-        var nonceBytes = Data()
-        newNonce.withUnsafeBytes { nonceBytes.append(contentsOf: $0) }
-        result.append(nonceBytes)
+        let newPublicKey = newKeyPair.publicKey
+        var result = Data(capacity: newPublicKey.count + 12 + newSealedBox.ciphertext.count + newSealedBox.tag.count)
+        result.append(newPublicKey)
+        newNonce.withUnsafeBytes { result.append(contentsOf: $0) }
         result.append(newSealedBox.ciphertext)
         result.append(newSealedBox.tag)
 
@@ -413,6 +415,7 @@ public actor KASService {
             ephemeralPublicKey: header.ephemeralPublicKey,
             encryptedKey: encryptedKey,
             privateKeyData: privateKeyData,
+            precomputedPrimaryKey: symmetricKey,
         )
         return rewrappedKey
     }
@@ -436,19 +439,7 @@ public actor KASService {
             return false
         }
         let expectedTag = Data(fullTag.prefix(policyBinding.count))
-        return constantTimeEquals(policyBinding, expectedTag)
-    }
-
-    /// Compares two byte collections in constant time to mitigate timing attacks.
-    /// Returns `true` if the collections are equal, `false` otherwise.
-    /// The length comparison is intentionally not constant-time: the tag length is public.
-    private func constantTimeEquals(_ lhs: Data, _ rhs: Data) -> Bool {
-        guard lhs.count == rhs.count else { return false }
-        var result: UInt8 = 0
-        for (a, b) in zip(lhs, rhs) {
-            result |= a ^ b
-        }
-        return result == 0
+        return CryptoHelper.constantTimeEquals(policyBinding, expectedTag)
     }
 
     /// Atomically processes a one-time key access request, verifies the policy binding,

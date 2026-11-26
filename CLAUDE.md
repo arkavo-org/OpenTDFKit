@@ -321,7 +321,7 @@ The KAS rewrap protocol enables secure key distribution with policy enforcement:
 - **Algorithm**: AES-256-GCM
 - **Supported Tag Sizes**: 64, 96, 104, 112, 120, 128 bits
   - 128-bit tags use CryptoKit (optimized)
-  - Other tag sizes use CryptoSwift
+  - Other tag sizes use CommonCrypto AES-CTR + CryptoKit GCM tag verification
 - **IV Size**: 12 bytes (96 bits)
 - **Nonce Handling**: 3-byte NanoTDF nonce + 9-byte zero padding
 

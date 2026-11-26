@@ -441,8 +441,8 @@ public enum StreamingTDFCrypto {
     }
 
     private static func computeSegmentSignature(
-        ivData: Data,
-        ciphertext: Data,
+        ivData: some DataProtocol,
+        ciphertext: some DataProtocol,
         tagData: Data,
         algorithm: String,
         symmetricKey: SymmetricKey,
@@ -459,6 +459,135 @@ public enum StreamingTDFCrypto {
         default:
             throw StreamingCryptoError.integrityCheckFailed
         }
+    }
+
+    /// Single-pass streaming multi-segment decryption directly to `outputURL`.
+    /// Decrypts and verifies each segment's GCM tag and manifest hash into a private (`0600`)
+    /// staging file beside `outputURL`, then verifies the HS256 root signature before atomically
+    /// moving the staging file into place. Removes the staging file on any failure, cutting disk
+    /// I/O and AES-GCM CPU in half compared to two-pass `FileHandle` decryption.
+    public static func decryptPayloadStreamingMultiSegment(
+        inputHandle: FileHandle,
+        outputURL: URL,
+        segments: [EncryptedSegment],
+        symmetricKey: SymmetricKey,
+        chunkSize: Int = defaultChunkSize,
+        rootSignature: String,
+        segmentHashAlg: String = "GMAC",
+    ) throws {
+        guard chunkSize > 0 else { throw StreamingCryptoError.invalidChunkSize }
+        guard !segments.isEmpty else { throw StreamingCryptoError.malformedSegment(0) }
+
+        let startOffset = try inputHandle.offset()
+        let endOffset = try inputHandle.seekToEnd()
+        guard endOffset >= startOffset else { throw StreamingCryptoError.segmentReadFailed }
+        try inputHandle.seek(toOffset: startOffset)
+
+        let stagingURL = outputURL.deletingLastPathComponent()
+            .appendingPathComponent(".\(outputURL.lastPathComponent).\(UUID().uuidString).partial")
+        let fd = open(stagingURL.path, O_CREAT | O_EXCL | O_WRONLY, 0o600)
+        guard fd >= 0 else {
+            throw StreamingCryptoError.segmentReadFailed
+        }
+        let stagingHandle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
+        var stagingClosed = false
+        var committed = false
+        defer {
+            if !stagingClosed {
+                try? stagingHandle.close()
+            }
+            if !committed {
+                try? FileManager.default.removeItem(at: stagingURL)
+            }
+        }
+
+        var currentOffset = startOffset
+        var segmentSignatures: [Data] = []
+        segmentSignatures.reserveCapacity(segments.count)
+
+        for segment in segments {
+            try autoreleasepool {
+                guard segment.encryptedSize >= 28,
+                      let segmentSizeInt = Int(exactly: segment.encryptedSize)
+                else {
+                    throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
+                }
+                let segmentSize = UInt64(segment.encryptedSize)
+                guard currentOffset <= endOffset, segmentSize <= endOffset - currentOffset else {
+                    throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
+                }
+
+                let ivData = try inputHandle.read(upToCount: 12) ?? Data()
+                guard ivData.count == 12 else {
+                    throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
+                }
+
+                let ciphertextSize = segmentSizeInt - 28
+                var ciphertextAccumulator = Data()
+                ciphertextAccumulator.reserveCapacity(ciphertextSize)
+                var totalRead = 0
+                while totalRead < ciphertextSize {
+                    let remaining = ciphertextSize - totalRead
+                    let readSize = min(remaining, chunkSize)
+                    guard let chunk = try inputHandle.read(upToCount: readSize), !chunk.isEmpty else {
+                        throw StreamingCryptoError.segmentReadFailed
+                    }
+                    ciphertextAccumulator.append(chunk)
+                    totalRead += chunk.count
+                }
+
+                let tagData = try inputHandle.read(upToCount: 16) ?? Data()
+                guard tagData.count == 16 else {
+                    throw StreamingCryptoError.malformedSegment(segment.segmentIndex)
+                }
+
+                let computedSig = try computeSegmentSignature(
+                    ivData: ivData,
+                    ciphertext: ciphertextAccumulator,
+                    tagData: tagData,
+                    algorithm: segmentHashAlg,
+                    symmetricKey: symmetricKey,
+                )
+                guard let expectedHash = Data(base64Encoded: segment.hash),
+                      CryptoHelper.constantTimeEquals(expectedHash, computedSig)
+                else {
+                    throw StreamingCryptoError.integrityCheckFailed
+                }
+
+                let nonce = try AES.GCM.Nonce(data: ivData)
+                let sealed = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertextAccumulator, tag: tagData)
+                var plaintext = try AES.GCM.open(sealed, using: symmetricKey)
+                defer { plaintext.secureZero() }
+                try stagingHandle.write(contentsOf: plaintext)
+
+                segmentSignatures.append(computedSig)
+                currentOffset += segmentSize
+            }
+        }
+
+        guard currentOffset == endOffset else {
+            throw StreamingCryptoError.malformedSegment(segments.last?.segmentIndex ?? 0)
+        }
+
+        let computedRoot = Data(HMAC<SHA256>.authenticationCode(
+            for: Data(segmentSignatures.joined()),
+            using: symmetricKey,
+        ))
+        guard let expectedRoot = Data(base64Encoded: rootSignature),
+              CryptoHelper.constantTimeEquals(expectedRoot, computedRoot)
+        else {
+            throw StreamingCryptoError.integrityCheckFailed
+        }
+
+        try stagingHandle.close()
+        stagingClosed = true
+
+        if FileManager.default.fileExists(atPath: outputURL.path) {
+            _ = try FileManager.default.replaceItemAt(outputURL, withItemAt: stagingURL)
+        } else {
+            try FileManager.default.moveItem(at: stagingURL, to: outputURL)
+        }
+        committed = true
     }
 
     public static func decryptPayloadStreamingMultiSegment(
@@ -645,14 +774,15 @@ public enum StreamingTDFCrypto {
             }
 
             let start = encryptedPayload.startIndex + offset
-            let ivData = Data(encryptedPayload[start ..< start + 12])
+            let ivSlice = encryptedPayload[start ..< start + 12]
             let ciphertextSize = segmentSize - 28
-            let ciphertextData = Data(encryptedPayload[start + 12 ..< start + 12 + ciphertextSize])
-            let tagData = Data(encryptedPayload[start + 12 + ciphertextSize ..< start + segmentSize])
+            let ciphertextSlice = encryptedPayload[start + 12 ..< start + 12 + ciphertextSize]
+            let tagSlice = encryptedPayload[start + 12 + ciphertextSize ..< start + segmentSize]
+            let tagData = Data(tagSlice)
 
             let computedSig = try computeSegmentSignature(
-                ivData: ivData,
-                ciphertext: ciphertextData,
+                ivData: ivSlice,
+                ciphertext: ciphertextSlice,
                 tagData: tagData,
                 algorithm: segmentHashAlg,
                 symmetricKey: symmetricKey,
@@ -663,8 +793,8 @@ public enum StreamingTDFCrypto {
                 throw StreamingCryptoError.integrityCheckFailed
             }
 
-            let nonce = try AES.GCM.Nonce(data: ivData)
-            let sealed = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertextData, tag: tagData)
+            let nonce = try AES.GCM.Nonce(data: ivSlice)
+            let sealed = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertextSlice, tag: tagSlice)
             let segmentPlaintext = try AES.GCM.open(sealed, using: symmetricKey)
 
             plaintext.append(segmentPlaintext)

@@ -369,10 +369,10 @@ final class GCMEncryptionTests: XCTestCase {
         }
     }
 
-    func testCryptoSwiftBackedModes() throws {
-        let cryptoSwiftModes: [Cipher] = [.aes256GCM64, .aes256GCM96, .aes256GCM104, .aes256GCM112, .aes256GCM120]
+    func testTruncatedTagModes() throws {
+        let truncatedModes: [Cipher] = [.aes256GCM64, .aes256GCM96, .aes256GCM104, .aes256GCM112, .aes256GCM120]
 
-        for cipher in cryptoSwiftModes {
+        for cipher in truncatedModes {
             let (ciphertext, tag) = try CryptoHelper.encryptNanoTDF(
                 cipher: cipher,
                 key: testKey,
@@ -388,7 +388,7 @@ final class GCMEncryptionTests: XCTestCase {
                 tag: tag,
             )
 
-            XCTAssertEqual(decrypted, testPlaintext, "CryptoSwift-backed mode \(cipher) should work correctly")
+            XCTAssertEqual(decrypted, testPlaintext, "Truncated-tag mode \(cipher) should work correctly")
         }
     }
 

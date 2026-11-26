@@ -24,7 +24,6 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/krzyzanowskim/CryptoSwift", from: "1.10.0"),
         // A version requirement, not a revision: SwiftPM refuses a stable-version
         // dependency on a package that pins a revision, so a revision here makes
         // OpenTDFKit unresolvable for every consumer that requires it by version.
@@ -35,7 +34,6 @@ let package = Package(
         .target(
             name: "OpenTDFKit",
             dependencies: [
-                "CryptoSwift",
                 .product(name: "ZIPFoundation", package: "ZIPFoundation"),
                 .product(name: "SwiftCBOR", package: "SwiftCBOR"),
             ],

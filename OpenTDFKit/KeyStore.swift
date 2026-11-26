@@ -55,6 +55,14 @@ public struct StoredKeyPair: Sendable {
         }
     }
 
+    /// Appends `publicKey || privateKey` directly from contiguous zero-on-deinit storage
+    /// without allocating intermediate `Data` copies of the private key.
+    func appendSerializedBytes(to destination: inout Data) {
+        storage.bytes.withUnsafeBytes { buffer in
+            destination.append(contentsOf: buffer)
+        }
+    }
+
     init(publicKey: Data, privateKey: Data) {
         storage = SecureKeyPairStorage(publicKey: publicKey, privateKey: privateKey)
         publicKeyLength = publicKey.count
@@ -80,9 +88,9 @@ public struct EphemeralKeyPair: Sendable {
 
 public actor KeyStore {
     public let curve: Curve
-    public var keyPairs: [KeyPairIdentifier: StoredKeyPair]
+    public private(set) var keyPairs: [KeyPairIdentifier: StoredKeyPair]
     /// Track total memory used
-    public var totalBytesStored: Int = 0
+    public private(set) var totalBytesStored: Int = 0
 
     public init(curve: Curve, capacity: Int = 1000) {
         self.curve = curve
@@ -133,25 +141,35 @@ public actor KeyStore {
 
     /// Batch generation method
     public func generateAndStoreKeyPairs(count: Int) async throws {
+        guard count > 0 else { return }
         // Capture immutable state before leaving the actor context
         let curveSnapshot = curve
 
-        // Pre-allocate space for results
+        // Chunk work across available CPU cores rather than spawning `count` individual tasks.
+        let workerCount = min(count, max(1, ProcessInfo.processInfo.activeProcessorCount))
+        let baseChunk = count / workerCount
+        let remainder = count % workerCount
+
         var tempPairs: [(KeyPairIdentifier, StoredKeyPair)] = []
         tempPairs.reserveCapacity(count)
 
-        // Generate keys concurrently in detached tasks outside the actor
-        try await withThrowingTaskGroup(of: StoredKeyPair.self) { group in
-            for _ in 0 ..< count {
+        try await withThrowingTaskGroup(of: [(KeyPairIdentifier, StoredKeyPair)].self) { group in
+            for worker in 0 ..< workerCount {
+                let batchSize = baseChunk + (worker < remainder ? 1 : 0)
                 group.addTask {
-                    KeyStore.makeKeyPair(curve: curveSnapshot)
+                    var localPairs: [(KeyPairIdentifier, StoredKeyPair)] = []
+                    localPairs.reserveCapacity(batchSize)
+                    for _ in 0 ..< batchSize {
+                        let keyPair = KeyStore.makeKeyPair(curve: curveSnapshot)
+                        let identifier = KeyPairIdentifier(publicKey: keyPair.publicKey)
+                        localPairs.append((identifier, keyPair))
+                    }
+                    return localPairs
                 }
             }
 
-            // Collect all generated key pairs
-            for try await keyPair in group {
-                let identifier = KeyPairIdentifier(publicKey: keyPair.publicKey)
-                tempPairs.append((identifier, keyPair))
+            for try await batch in group {
+                tempPairs.append(contentsOf: batch)
             }
         }
 
@@ -215,10 +233,9 @@ public actor KeyStore {
         withUnsafeBytes(of: count.bigEndian) { data.append(contentsOf: $0) }
         // Append the big-endian representation of the key pair count to the data.
 
-        // Store key pairs - no need for length prefixes since sizes are fixed per curve
+        // Store key pairs directly from contiguous storage (no unzeroed intermediate copies)
         for keyPair in keyPairs.values {
-            data.append(keyPair.publicKey)
-            data.append(keyPair.privateKey)
+            keyPair.appendSerializedBytes(to: &data)
         }
 
         return data
@@ -506,7 +523,17 @@ public enum KeyStoreError: Error, Equatable {
 /// Helper extension for Data to hex string (for debugging/errors)
 public extension Data {
     var hexString: String {
-        map { String(format: "%02x", $0) }.joined()
+        let hexDigits: [UInt8] = [
+            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+            0x38, 0x39, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+        ]
+        var utf8 = [UInt8]()
+        utf8.reserveCapacity(count * 2)
+        for byte in self {
+            utf8.append(hexDigits[Int(byte >> 4)])
+            utf8.append(hexDigits[Int(byte & 0x0F)])
+        }
+        return String(decoding: utf8, as: UTF8.self)
     }
 }
 
