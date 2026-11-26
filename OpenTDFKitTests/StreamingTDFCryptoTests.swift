@@ -214,6 +214,80 @@ final class StreamingTDFCryptoTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
+    func testDecryptFileHonorsMaxPayloadSizeAndManifestDeclaredBound() throws {
+        let plaintext = Data((0 ..< 150_000).map { UInt8($0 & 0xFF) })
+        let inputURL = try temporaryFile(data: plaintext)
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-cap-\(UUID().uuidString).tdf")
+        let bloatedArchiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-bloated-\(UUID().uuidString).tdf")
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-cap-out-\(UUID().uuidString).bin")
+        defer {
+            try? FileManager.default.removeItem(at: inputURL)
+            try? FileManager.default.removeItem(at: archiveURL)
+            try? FileManager.default.removeItem(at: bloatedArchiveURL)
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        let kasKey = P256.KeyAgreement.PrivateKey()
+        let kas = TDFKasInfo(
+            url: URL(string: "https://kas.example.com")!,
+            publicKeyPEM: kasKey.publicKey.pemRepresentation,
+            kid: "ec-kid-1",
+            keyType: .ecP256,
+        )
+        let policy = try TDFPolicy(json: Data(#"{"uuid":"1234","body":{"dataAttributes":[]}}"#.utf8))
+        let config = TDFEncryptionConfiguration(kas: kas, policy: policy)
+
+        let result = try TDFEncryptor().encryptFileStreaming(
+            inputURL: inputURL,
+            outputURL: archiveURL,
+            configuration: config,
+            segmentSize: 32768,
+        )
+
+        // Smaller caller-provided maxPayloadSize rejects extraction before writing output
+        XCTAssertThrowsError(try TDFDecryptor().decryptFile(
+            inputURL: archiveURL,
+            outputURL: outputURL,
+            symmetricKey: result.symmetricKey,
+            maxPayloadSize: 100_000,
+        )) { error in
+            XCTAssertEqual(error as? TDFArchiveError, .payloadTooLarge)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+
+        // Uncapped default (bounded by manifest's declared segment sum) succeeds
+        try TDFDecryptor().decryptFile(
+            inputURL: archiveURL,
+            outputURL: outputURL,
+            symmetricKey: result.symmetricKey,
+            maxPayloadSize: nil,
+        )
+        XCTAssertEqual(try Data(contentsOf: outputURL), plaintext)
+        try? FileManager.default.removeItem(at: outputURL)
+
+        // Archive whose ZIP payload expands past the manifest's declared segment sum is aborted
+        // during extraction with payloadTooLarge rather than filling disk.
+        let loaded = try TDFLoader().load(from: archiveURL)
+        var bloatedPayload = loaded.payload
+        bloatedPayload.append(Data(repeating: 0xAA, count: 65536))
+        try TDFArchiveWriter().buildArchiveToFile(
+            manifest: loaded.manifest,
+            payload: bloatedPayload,
+            outputURL: bloatedArchiveURL,
+        )
+        XCTAssertThrowsError(try TDFDecryptor().decryptFile(
+            inputURL: bloatedArchiveURL,
+            outputURL: outputURL,
+            symmetricKey: result.symmetricKey,
+        )) { error in
+            XCTAssertEqual(error as? TDFArchiveError, .payloadTooLarge)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
     func testPublicKeyStoreFIFODrainWithCompaction() async throws {
         let store = PublicKeyStore(curve: .secp256r1)
         let keys = (0 ..< 200).map { i -> Data in

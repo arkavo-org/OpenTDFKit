@@ -566,11 +566,13 @@ public struct TDFDecryptor {
         outputURL: URL,
         symmetricKey: SymmetricKey,
         chunkSize: Int = StreamingTDFCrypto.defaultChunkSize,
+        maxPayloadSize: Int? = nil,
     ) throws {
         try decryptFileStreaming(
             inputURL: inputURL,
             outputURL: outputURL,
             chunkSize: chunkSize,
+            maxPayloadSize: maxPayloadSize,
             resolveKey: { _ in (symmetricKey, false) },
         )
     }
@@ -580,11 +582,13 @@ public struct TDFDecryptor {
         outputURL: URL,
         privateKeyPEM: String,
         chunkSize: Int = StreamingTDFCrypto.defaultChunkSize,
+        maxPayloadSize: Int? = nil,
     ) throws {
         try decryptFileStreaming(
             inputURL: inputURL,
             outputURL: outputURL,
             chunkSize: chunkSize,
+            maxPayloadSize: maxPayloadSize,
             resolveKey: { encryptionInfo in
                 let dek = try unwrapDEK(encryptionInformation: encryptionInfo, privateKeyPEM: privateKeyPEM)
                 return (dek, true)
@@ -597,18 +601,29 @@ public struct TDFDecryptor {
         outputURL: URL,
         symmetricKey: SymmetricKey,
         chunkSize: Int = StreamingTDFCrypto.defaultChunkSize,
+        maxPayloadSize: Int? = nil,
     ) throws {
-        try decryptFile(inputURL: inputURL, outputURL: outputURL, symmetricKey: symmetricKey, chunkSize: chunkSize)
+        try decryptFile(
+            inputURL: inputURL,
+            outputURL: outputURL,
+            symmetricKey: symmetricKey,
+            chunkSize: chunkSize,
+            maxPayloadSize: maxPayloadSize,
+        )
     }
 
     private func decryptFileStreaming(
         inputURL: URL,
         outputURL: URL,
         chunkSize: Int,
+        maxPayloadSize: Int?,
         resolveKey: (TDFEncryptionInformation) throws -> (SymmetricKey, Bool),
     ) throws {
         guard chunkSize > 0 else {
             throw StreamingCryptoError.invalidChunkSize
+        }
+        if let maxPayloadSize, maxPayloadSize < 0 {
+            throw TDFArchiveError.payloadTooLarge
         }
         let reader = try TDFArchiveReader(url: inputURL)
         let manifest = try reader.manifest()
@@ -649,6 +664,26 @@ public struct TDFDecryptor {
             }
         }
 
+        // Compute an exact upper bound from the manifest when every segment declares an
+        // encrypted size (or default for non-last segments), using overflow-checked arithmetic.
+        // This allows streaming payloads larger than `TDFArchiveReader.defaultPayloadMaxSize`
+        // (512 MiB) while still stopping zip-bomb extraction past the manifest's declared total.
+        let manifestDeclaredSize = try Self.declaredPayloadSize(for: integrity)
+        let extractionCap: Int?
+        switch (maxPayloadSize, manifestDeclaredSize) {
+        case let (callerCap?, manifestSize?):
+            guard manifestSize <= callerCap else {
+                throw TDFArchiveError.payloadTooLarge
+            }
+            extractionCap = manifestSize
+        case let (callerCap?, nil):
+            extractionCap = callerCap
+        case let (nil, manifestSize?):
+            extractionCap = manifestSize
+        case (nil, nil):
+            extractionCap = nil
+        }
+
         // Stream encrypted payload out of ZIP into a private temp file, then decrypt in a single pass.
         let tempEncryptedURL = outputURL.deletingLastPathComponent()
             .appendingPathComponent(".\(outputURL.lastPathComponent).\(UUID().uuidString).enc.tmp")
@@ -662,7 +697,7 @@ public struct TDFDecryptor {
             try? FileManager.default.removeItem(at: tempEncryptedURL)
         }
 
-        try reader.writePayload(to: tempHandle)
+        try reader.writePayload(to: tempHandle, maxSize: extractionCap)
         let payloadSize = try tempHandle.seekToEnd()
         try tempHandle.seek(toOffset: 0)
 
@@ -706,6 +741,35 @@ public struct TDFDecryptor {
         } catch StreamingCryptoError.malformedSegment {
             throw TDFDecryptError.malformedPayload
         }
+    }
+
+    /// Sums the manifest's declared encrypted segment sizes with overflow checking.
+    /// Returns `nil` only when the final segment omits `encryptedSegmentSize` (whose size
+    /// defaults to the remaining payload bytes).
+    private static func declaredPayloadSize(for integrity: TDFIntegrityInformation) throws -> Int? {
+        var total: Int64 = 0
+        for (index, segment) in integrity.segments.enumerated() {
+            let isLast = index == integrity.segments.count - 1
+            let resolvedSize = segment.encryptedSegmentSize ?? (isLast ? nil : integrity.encryptedSegmentSizeDefault)
+            guard let segmentSize = resolvedSize else {
+                if isLast {
+                    return nil
+                }
+                throw TDFDecryptError.malformedPayload
+            }
+            guard segmentSize >= 28 else {
+                throw TDFDecryptError.malformedPayload
+            }
+            let (nextTotal, overflow) = total.addingReportingOverflow(segmentSize)
+            guard !overflow else {
+                throw TDFDecryptError.malformedPayload
+            }
+            total = nextTotal
+        }
+        guard let exact = Int(exactly: total) else {
+            throw TDFDecryptError.malformedPayload
+        }
+        return exact
     }
 
     public func decrypt(container: TDFContainer, privateKeyPEM: String) throws -> Data {
