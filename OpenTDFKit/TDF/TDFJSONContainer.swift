@@ -121,7 +121,10 @@ public struct TDFJSONBuilder: Sendable {
         )
 
         // Combine IV + ciphertext + tag for the payload
-        let payloadData = iv + ciphertext + tag
+        var payloadData = Data(capacity: iv.count + ciphertext.count + tag.count)
+        payloadData.append(iv)
+        payloadData.append(ciphertext)
+        payloadData.append(tag)
 
         // Wrap the symmetric key using EC (ECDH + HKDF + AES-GCM)
         let ecWrapped = try TDFCrypto.wrapSymmetricKeyWithEC(
@@ -204,7 +207,7 @@ public struct TDFJSONBuilder: Sendable {
         )
 
         // Create envelope
-        let created = includeCreated ? ISO8601DateFormatter().string(from: Date()) : nil
+        let created = includeCreated ? Date().formatted(.iso8601) : nil
         let envelope = TDFJSONEnvelope(
             tdf: "json",
             version: "1.0.0",
@@ -309,46 +312,12 @@ public struct TDFJSONDecryptor: Sendable {
     /// Decrypt a TDF-JSON container with an EC private key (unwraps the symmetric key first).
     /// Explicitly rejects split-key manifests and non-EC-wrapped key access objects.
     public func decrypt(container: TDFJSONContainer, privateKeyPEM: String) throws -> Data {
-        let keyAccess = container.encryptionInformation.keyAccess
-        guard !keyAccess.isEmpty else {
-            throw TDFJSONError.decryptionFailed("No key access objects found")
-        }
-
-        let distinctSplits = Set(keyAccess.map { $0.sid ?? "" })
-        guard distinctSplits.count == 1 else {
-            throw TDFJSONError.decryptionFailed("Split-key TDF-JSON containers with multiple split IDs are not supported by single-key decrypt")
-        }
-
-        let ecObjects = keyAccess.filter { $0.type == .ecWrapped }
-        guard !ecObjects.isEmpty else {
-            throw TDFJSONError.decryptionFailed("No ec-wrapped key access object found")
-        }
-
-        var lastError: Error?
-        for kao in ecObjects {
-            guard let ephemeralPublicKey = kao.ephemeralPublicKey else {
-                lastError = TDFJSONError.decryptionFailed("EC-wrapped key missing ephemeral public key")
-                continue
-            }
-            do {
-                let symmetricKey = try TDFCrypto.unwrapSymmetricKeyWithEC(
-                    privateKeyPEM: privateKeyPEM,
-                    wrappedKey: kao.wrappedKey,
-                    ephemeralPublicKey: ephemeralPublicKey,
-                )
-                guard TDFCrypto.verifyPolicyBinding(
-                    kao.policyBinding,
-                    policyBase64: container.encryptionInformation.policy,
-                    symmetricKey: symmetricKey,
-                ) else {
-                    lastError = TDFDecryptError.policyBindingFailed
-                    continue
-                }
-                return try decrypt(container: container, symmetricKey: symmetricKey)
-            } catch {
-                lastError = error
-            }
-        }
-        throw lastError ?? TDFJSONError.decryptionFailed("Failed to unwrap EC key access object")
+        try TDFDecryptor.decryptSingleSplitEC(
+            encryptionInfo: container.encryptionInformation,
+            privateKeyPEM: privateKeyPEM,
+            formatLabel: "TDF-JSON",
+            makeError: { TDFJSONError.decryptionFailed($0) },
+            decryptWithKey: { try decrypt(container: container, symmetricKey: $0) },
+        )
     }
 }

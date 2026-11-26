@@ -32,9 +32,6 @@ public actor NanoTDFCollectionDecryptor {
     /// The cipher used for encryption
     private let cipher: Cipher
 
-    /// Pre-allocated 12-byte nonce buffer (reused for each decryption)
-    private var nonceBuffer: ContiguousArray<UInt8>
-
     // MARK: - Factory Methods
 
     /// Creates a decryptor with an already-unwrapped symmetric key without verifying
@@ -149,29 +146,33 @@ public actor NanoTDFCollectionDecryptor {
     private init(symmetricKey: SymmetricKey, cipher: Cipher) {
         self.symmetricKey = symmetricKey
         self.cipher = cipher
-        nonceBuffer = ContiguousArray<UInt8>(repeating: 0, count: 12)
     }
 
     // MARK: - Decryption
 
-    /// Decrypts a single collection item
+    /// Decrypts a single collection item without serializing on the actor executor.
     ///
     /// - Parameter item: The CollectionItem to decrypt
     /// - Returns: The decrypted plaintext data
     /// - Throws: `NanoTDFCollectionError.decryptionFailed` if decryption fails
-    public func decryptItem(_ item: CollectionItem) throws -> Data {
-        // Update nonce buffer with item's IV (first 3 bytes)
-        let iv = item.ivCounter
-        nonceBuffer[0] = UInt8((iv >> 16) & 0xFF)
-        nonceBuffer[1] = UInt8((iv >> 8) & 0xFF)
-        nonceBuffer[2] = UInt8(iv & 0xFF)
+    public nonisolated func decryptItem(_ item: CollectionItem) async throws -> Data {
+        try decryptItemSync(item)
+    }
 
-        // Use CryptoKit for 128-bit tags (fastest path)
+    /// Synchronous, nonisolated decryption path for callers that do not need `async`.
+    public nonisolated func decryptItemSync(_ item: CollectionItem) throws -> Data {
+        let iv = item.ivCounter
+        let nonceTuple: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) = (
+            UInt8((iv >> 16) & 0xFF),
+            UInt8((iv >> 8) & 0xFF),
+            UInt8(iv & 0xFF),
+            0, 0, 0, 0, 0, 0, 0, 0, 0,
+        )
+
+        // Use CryptoKit for 128-bit tags (fastest path, zero heap allocation for nonce)
         if cipher == .aes256GCM128 {
             do {
-                let nonce = try nonceBuffer.withUnsafeBufferPointer { buffer in
-                    try AES.GCM.Nonce(data: Data(buffer))
-                }
+                let nonce = try withUnsafeBytes(of: nonceTuple) { try AES.GCM.Nonce(data: $0) }
                 let sealedBox = try AES.GCM.SealedBox(
                     nonce: nonce,
                     ciphertext: item.ciphertext,
@@ -185,10 +186,11 @@ public actor NanoTDFCollectionDecryptor {
 
         // For truncated tag sizes, use CryptoHelper's constant-time CommonCrypto CTR + CryptoKit GCM path
         do {
+            let ivData = withUnsafeBytes(of: nonceTuple) { Data($0) }
             return try CryptoHelper.decryptNanoTDF(
                 cipher: cipher,
                 key: symmetricKey,
-                iv: Data(nonceBuffer),
+                iv: ivData,
                 ciphertext: item.ciphertext,
                 tag: item.tag,
             )
@@ -197,17 +199,17 @@ public actor NanoTDFCollectionDecryptor {
         }
     }
 
-    /// Decrypts multiple collection items efficiently
+    /// Decrypts multiple collection items efficiently without serializing on the actor executor.
     ///
     /// - Parameter items: Array of CollectionItems to decrypt
     /// - Returns: Array of decrypted plaintext data in the same order as input
     /// - Throws: `NanoTDFCollectionError.decryptionFailed` if any decryption fails
-    public func decryptBatch(_ items: [CollectionItem]) throws -> [Data] {
+    public nonisolated func decryptBatch(_ items: [CollectionItem]) async throws -> [Data] {
         var results = [Data]()
         results.reserveCapacity(items.count)
 
         for item in items {
-            try results.append(decryptItem(item))
+            try results.append(decryptItemSync(item))
         }
 
         return results
@@ -217,7 +219,7 @@ public actor NanoTDFCollectionDecryptor {
     ///
     /// - Parameter item: The CollectionItem to decrypt
     /// - Returns: The decrypted plaintext data, or nil if decryption fails
-    public func tryDecryptItem(_ item: CollectionItem) -> Data? {
-        try? decryptItem(item)
+    public nonisolated func tryDecryptItem(_ item: CollectionItem) async -> Data? {
+        try? decryptItemSync(item)
     }
 }

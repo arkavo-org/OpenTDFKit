@@ -13,6 +13,8 @@ enum StrictJSON {
     /// `true` when any object in `data` repeats a member name, or when the
     /// input can't be scanned.
     static func hasDuplicateMembers(_ data: Data) -> Bool {
+        // Keep bounds-checked `[UInt8]` storage even in `-O` release builds because
+        // `StrictJSON` scans untrusted Rewrap JWTs (capped at 64 KiB).
         var scanner = Scanner(bytes: Array(data))
         guard let duplicate = try? scanner.scanValue(depth: 0) else {
             return true
@@ -159,7 +161,7 @@ enum StrictJSON {
                         guard let unicode = Unicode.Scalar(scalar) else {
                             throw ScanError()
                         }
-                        utf8.append(contentsOf: Array(String(Character(unicode)).utf8))
+                        utf8.append(contentsOf: unicode.utf8)
                     default:
                         throw ScanError()
                     }
@@ -171,18 +173,33 @@ enum StrictJSON {
         }
 
         mutating func scanHex4() throws -> UInt32 {
-            guard index + 4 <= bytes.count,
-                  let value = UInt32(String(decoding: bytes[index ..< index + 4], as: UTF8.self), radix: 16)
-            else {
+            guard index + 4 <= bytes.count else {
                 throw ScanError()
+            }
+            var value: UInt32 = 0
+            for offset in 0 ..< 4 {
+                let b = bytes[index + offset]
+                let digit: UInt32
+                switch b {
+                case 0x30 ... 0x39: digit = UInt32(b - 0x30)
+                case 0x41 ... 0x46: digit = UInt32(b - 0x41 + 10)
+                case 0x61 ... 0x66: digit = UInt32(b - 0x61 + 10)
+                default: throw ScanError()
+                }
+                value = (value << 4) | digit
             }
             index += 4
             return value
         }
 
         mutating func skipWhitespace() {
-            while index < bytes.count, [0x20, 0x09, 0x0A, 0x0D].contains(bytes[index]) {
-                index += 1
+            while index < bytes.count {
+                switch bytes[index] {
+                case 0x20, 0x09, 0x0A, 0x0D:
+                    index += 1
+                default:
+                    return
+                }
             }
         }
 
@@ -191,7 +208,12 @@ enum StrictJSON {
         }
 
         static func isDelimiter(_ byte: UInt8) -> Bool {
-            [UInt8(ascii: ","), UInt8(ascii: "}"), UInt8(ascii: "]"), 0x20, 0x09, 0x0A, 0x0D].contains(byte)
+            switch byte {
+            case UInt8(ascii: ","), UInt8(ascii: "}"), UInt8(ascii: "]"), 0x20, 0x09, 0x0A, 0x0D:
+                true
+            default:
+                false
+            }
         }
     }
 }

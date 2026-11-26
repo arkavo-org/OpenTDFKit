@@ -1,5 +1,5 @@
+import CommonCrypto
 import CryptoKit
-import CryptoSwift
 import Foundation
 import Security
 
@@ -120,59 +120,130 @@ public enum TDFCrypto {
 
     // MARK: - AES-CBC Encryption (FairPlay Compatible)
 
-    /// Encrypt payload using AES-CBC with PKCS7 padding.
+    /// Encrypt payload using AES-CBC with PKCS7 padding via hardware-accelerated CommonCrypto.
     /// This mode is compatible with FairPlay Streaming.
+    /// - Important: AES-CBC is unauthenticated. Callers must authenticate the IV and ciphertext
+    ///   (e.g., via Encrypt-then-MAC) before calling `decryptPayloadCBC`.
     /// - Parameters:
     ///   - plaintext: Data to encrypt
-    ///   - symmetricKey: Symmetric key (16 or 32 bytes)
+    ///   - symmetricKey: Symmetric key (16, 24, or 32 bytes)
     /// - Returns: Tuple of (iv, ciphertext)
     public static func encryptPayloadCBC(plaintext: Data, symmetricKey: SymmetricKey) throws -> (iv: Data, cipherText: Data) {
-        let ivData = try randomBytes(count: 16) // CBC uses 16-byte IV
-        var keyBytes = symmetricKey.withUnsafeBytes { Array($0) }
-        defer {
-            keyBytes.withUnsafeMutableBytes { buffer in
-                guard let baseAddress = buffer.baseAddress else { return }
-                memset_s(baseAddress, buffer.count, 0, buffer.count)
-            }
+        let bitCount = symmetricKey.bitCount
+        guard bitCount == 128 || bitCount == 192 || bitCount == 256 else {
+            throw TDFCryptoError.cbcEncryptionFailed("Unsupported AES key size: \(bitCount) bits")
         }
 
-        let aes = try CryptoSwift.AES(
-            key: keyBytes,
-            blockMode: CryptoSwift.CBC(iv: Array(ivData)),
-            padding: .pkcs7,
+        let ivData = try randomBytes(count: kCCBlockSizeAES128) // CBC uses 16-byte IV
+        let ciphertext = try aesCBCTransform(
+            operation: CCOperation(kCCEncrypt),
+            input: plaintext,
+            iv: ivData,
+            symmetricKey: symmetricKey,
         )
-
-        let ciphertext = try aes.encrypt(Array(plaintext))
-        return (ivData, Data(ciphertext))
+        return (ivData, ciphertext)
     }
 
-    /// Decrypt payload using AES-CBC with PKCS7 padding.
+    /// Decrypt payload using AES-CBC with PKCS7 padding via hardware-accelerated CommonCrypto.
+    /// - Important: AES-CBC is unauthenticated. Callers must verify an authentication tag
+    ///   covering the IV and ciphertext before decryption to prevent padding-oracle attacks.
     /// - Parameters:
     ///   - ciphertext: Encrypted data
     ///   - iv: Initialization vector (16 bytes)
-    ///   - symmetricKey: Symmetric key
+    ///   - symmetricKey: Symmetric key (16, 24, or 32 bytes)
     /// - Returns: Decrypted plaintext
     public static func decryptPayloadCBC(ciphertext: Data, iv: Data, symmetricKey: SymmetricKey) throws -> Data {
-        guard iv.count == 16 else {
-            throw TDFCryptoError.invalidIVSize(expected: 16, actual: iv.count)
+        guard iv.count == kCCBlockSizeAES128 else {
+            throw TDFCryptoError.invalidIVSize(expected: kCCBlockSizeAES128, actual: iv.count)
+        }
+        let bitCount = symmetricKey.bitCount
+        guard bitCount == 128 || bitCount == 192 || bitCount == 256 else {
+            throw TDFCryptoError.cbcDecryptionFailed("Unsupported AES key size: \(bitCount) bits")
+        }
+        guard !ciphertext.isEmpty, ciphertext.count % kCCBlockSizeAES128 == 0 else {
+            throw TDFCryptoError.cbcDecryptionFailed("Ciphertext length must be a non-zero multiple of 16 bytes")
         }
 
-        var keyBytes = symmetricKey.withUnsafeBytes { Array($0) }
-        defer {
-            keyBytes.withUnsafeMutableBytes { buffer in
-                guard let baseAddress = buffer.baseAddress else { return }
-                memset_s(baseAddress, buffer.count, 0, buffer.count)
+        return try aesCBCTransform(
+            operation: CCOperation(kCCDecrypt),
+            input: ciphertext,
+            iv: iv,
+            symmetricKey: symmetricKey,
+        )
+    }
+
+    private static func aesCBCTransform(
+        operation: CCOperation,
+        input: Data,
+        iv: Data,
+        symmetricKey: SymmetricKey,
+    ) throws -> Data {
+        let isEncrypt = operation == CCOperation(kCCEncrypt)
+        // Use CommonCrypto PKCS7 padding on encrypt; on decrypt use raw CBC + branchless
+        // PKCS7 validation so malformed padding is deterministically rejected across all OS versions.
+        let options: CCOptions = isEncrypt ? CCOptions(kCCOptionPKCS7Padding) : 0
+        let outputCapacity = isEncrypt ? (input.count + kCCBlockSizeAES128) : input.count
+        var output = Data(count: outputCapacity)
+        var bytesMoved = 0
+
+        let status: CCCryptorStatus = symmetricKey.withUnsafeBytes { keyBytes in
+            iv.withUnsafeBytes { ivBytes in
+                input.withUnsafeBytes { inBytes in
+                    output.withUnsafeMutableBytes { outBytes in
+                        CCCrypt(
+                            operation,
+                            CCAlgorithm(kCCAlgorithmAES),
+                            options,
+                            keyBytes.baseAddress,
+                            keyBytes.count,
+                            ivBytes.baseAddress,
+                            inBytes.baseAddress,
+                            input.count,
+                            outBytes.baseAddress,
+                            outputCapacity,
+                            &bytesMoved,
+                        )
+                    }
+                }
             }
         }
 
-        let aes = try CryptoSwift.AES(
-            key: keyBytes,
-            blockMode: CryptoSwift.CBC(iv: Array(iv)),
-            padding: .pkcs7,
-        )
+        guard status == kCCSuccess else {
+            output.secureZero()
+            if isEncrypt {
+                throw TDFCryptoError.cbcEncryptionFailed("CommonCrypto status \(status)")
+            } else {
+                throw TDFCryptoError.cbcDecryptionFailed("Decryption failed")
+            }
+        }
 
-        let plaintext = try aes.decrypt(Array(ciphertext))
-        return Data(plaintext)
+        if isEncrypt {
+            output.removeSubrange(bytesMoved ..< output.count)
+            return output
+        }
+
+        guard bytesMoved == input.count, bytesMoved >= kCCBlockSizeAES128 else {
+            output.secureZero()
+            throw TDFCryptoError.cbcDecryptionFailed("Decryption failed")
+        }
+
+        // Branchless PKCS7 padding check over the final 16-byte block.
+        let padByte = output[bytesMoved - 1]
+        let padLen = Int(padByte)
+        var bad: UInt8 = (padLen >= 1 && padLen <= kCCBlockSizeAES128) ? 0 : 1
+        let clampedPadLen = min(max(padLen, 0), kCCBlockSizeAES128)
+        for offset in 0 ..< kCCBlockSizeAES128 {
+            let mask = UInt8(truncatingIfNeeded: (offset &- clampedPadLen) >> (Int.bitWidth - 1))
+            let diff = output[bytesMoved - 1 - offset] ^ padByte
+            bad |= diff & mask
+        }
+        guard bad == 0 else {
+            output.secureZero()
+            throw TDFCryptoError.cbcDecryptionFailed("Decryption failed")
+        }
+
+        output.removeSubrange((bytesMoved - padLen) ..< bytesMoved)
+        return output
     }
 
     /// Compute the Standard TDF policy binding: `Base64(HMAC-SHA256(DEK, Base64(policyJSON)))`,
@@ -312,16 +383,10 @@ public enum TDFCrypto {
     }
 
     public static func loadRSAPublicKey(fromPEM pem: String) throws -> SecKey {
-        let stripped = pem
-            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-            .replacingOccurrences(of: "\r", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let data = Data(base64Encoded: stripped) else {
-            throw TDFCryptoError.invalidPEM
-        }
+        let data = try decodePEMBody(pem, markers: [
+            "-----BEGIN PUBLIC KEY-----",
+            "-----END PUBLIC KEY-----",
+        ])
 
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
@@ -338,18 +403,12 @@ public enum TDFCrypto {
     }
 
     public static func loadRSAPrivateKey(fromPEM pem: String) throws -> SecKey {
-        let stripped = pem
-            .replacingOccurrences(of: "-----BEGIN RSA PRIVATE KEY-----", with: "")
-            .replacingOccurrences(of: "-----END RSA PRIVATE KEY-----", with: "")
-            .replacingOccurrences(of: "-----BEGIN PRIVATE KEY-----", with: "")
-            .replacingOccurrences(of: "-----END PRIVATE KEY-----", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-            .replacingOccurrences(of: "\r", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let data = Data(base64Encoded: stripped) else {
-            throw TDFCryptoError.invalidPEM
-        }
+        let data = try decodePEMBody(pem, markers: [
+            "-----BEGIN RSA PRIVATE KEY-----",
+            "-----END RSA PRIVATE KEY-----",
+            "-----BEGIN PRIVATE KEY-----",
+            "-----END PRIVATE KEY-----",
+        ])
 
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
@@ -363,6 +422,22 @@ public enum TDFCrypto {
 
         try validateRSAKeySize(key, minimumBits: 2048)
         return key
+    }
+
+    private static func decodePEMBody(_ pem: String, markers: [String]) throws -> Data {
+        var stripped = pem
+        for marker in markers {
+            stripped = stripped.replacingOccurrences(of: marker, with: "")
+        }
+        stripped = stripped
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let data = Data(base64Encoded: stripped) else {
+            throw TDFCryptoError.invalidPEM
+        }
+        return data
     }
 
     private static func validateRSAKeySize(_ key: SecKey, minimumBits: Int) throws {
@@ -545,8 +620,11 @@ public enum TDFCrypto {
         let wrapKey = try deriveKASWrapKey(ephemeralPrivateKey, kasPublicKey)
         // Seal straight from the key's own storage, so no copy of the share is left behind.
         let sealed = try symmetricKey.withUnsafeBytes { try AES.GCM.seal($0, using: wrapKey) }
+        guard let combined = sealed.combined else {
+            throw TDFCryptoError.keyWrapFailed(nil)
+        }
         return KASECWrappedKey(
-            wrappedKey: sealed.combined!.base64EncodedString(),
+            wrappedKey: combined.base64EncodedString(),
             ephemeralPublicKeyPEM: ephemeralPrivateKey.publicKey.pemRepresentation,
         )
     }
@@ -566,110 +644,75 @@ public enum TDFCrypto {
         )
     }
 
-    // MARK: - P-256 EC Wrapping
+    // MARK: - EC Wrapping Helpers (TDF-JSON / TDF-CBOR draft scheme)
 
-    private static func wrapWithP256(publicKeyPEM: String, symmetricKey: SymmetricKey) throws -> ECWrappedKeyResult {
-        // Load recipient's public key
-        let recipientPublicKey = try loadECPublicKeyP256(fromPEM: publicKeyPEM)
-
-        // Generate ephemeral key pair
-        let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
-        let ephemeralPublicKey = ephemeralPrivateKey.publicKey
-
-        // Perform ECDH to get shared secret
-        let sharedSecret = try ephemeralPrivateKey.sharedSecretFromKeyAgreement(with: recipientPublicKey)
-
-        // Derive wrapping key using HKDF-SHA256 (empty salt and info for TDF compatibility)
+    private static func sealECWrappedKey(
+        sharedSecret: SharedSecret,
+        ephemeralCompressedPublicKey: Data,
+        symmetricKey: SymmetricKey,
+    ) throws -> ECWrappedKeyResult {
+        // Derive wrapping key using HKDF-SHA256 (empty salt and info for TDF-JSON / TDF-CBOR compatibility)
         let wrapKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
             salt: Data(),
             sharedInfo: Data(),
             outputByteCount: 32,
         )
-
         // Seal directly from symmetricKey storage so no unzeroed copy is left behind
         let nonce = try AES.GCM.Nonce(data: randomBytes(count: 12))
         let sealed = try symmetricKey.withUnsafeBytes { try AES.GCM.seal($0, using: wrapKey, nonce: nonce) }
-
-        // Combined format: nonce + ciphertext + tag
-        let wrappedKey = sealed.combined!.base64EncodedString()
-
-        // Convert ephemeral public key to compressed SEC1 format (33 bytes for P-256)
-        // Much smaller than PEM (~140 bytes) or uncompressed (65 bytes)
-        let ephemeralCompressed = ephemeralPublicKey.compressedRepresentation.base64EncodedString()
-
-        return ECWrappedKeyResult(wrappedKey: wrappedKey, ephemeralPublicKey: ephemeralCompressed)
+        guard let combined = sealed.combined else {
+            throw TDFCryptoError.keyWrapFailed(nil)
+        }
+        return ECWrappedKeyResult(
+            wrappedKey: combined.base64EncodedString(),
+            ephemeralPublicKey: ephemeralCompressedPublicKey.base64EncodedString(),
+        )
     }
 
-    // MARK: - P-384 EC Wrapping
+    private static func wrapWithP256(publicKeyPEM: String, symmetricKey: SymmetricKey) throws -> ECWrappedKeyResult {
+        let recipientPublicKey = try loadECPublicKeyP256(fromPEM: publicKeyPEM)
+        let ephemeralPrivateKey = P256.KeyAgreement.PrivateKey()
+        let sharedSecret = try ephemeralPrivateKey.sharedSecretFromKeyAgreement(with: recipientPublicKey)
+        return try sealECWrappedKey(
+            sharedSecret: sharedSecret,
+            ephemeralCompressedPublicKey: ephemeralPrivateKey.publicKey.compressedRepresentation,
+            symmetricKey: symmetricKey,
+        )
+    }
 
     private static func wrapWithP384(publicKeyPEM: String, symmetricKey: SymmetricKey) throws -> ECWrappedKeyResult {
         let recipientPublicKey = try loadECPublicKeyP384(fromPEM: publicKeyPEM)
-
         let ephemeralPrivateKey = P384.KeyAgreement.PrivateKey()
-        let ephemeralPublicKey = ephemeralPrivateKey.publicKey
-
         let sharedSecret = try ephemeralPrivateKey.sharedSecretFromKeyAgreement(with: recipientPublicKey)
-
-        let wrapKey = sharedSecret.hkdfDerivedSymmetricKey(
-            using: SHA256.self,
-            salt: Data(),
-            sharedInfo: Data(),
-            outputByteCount: 32,
+        return try sealECWrappedKey(
+            sharedSecret: sharedSecret,
+            ephemeralCompressedPublicKey: ephemeralPrivateKey.publicKey.compressedRepresentation,
+            symmetricKey: symmetricKey,
         )
-
-        let nonce = try AES.GCM.Nonce(data: randomBytes(count: 12))
-        let sealed = try symmetricKey.withUnsafeBytes { try AES.GCM.seal($0, using: wrapKey, nonce: nonce) }
-
-        let wrappedKey = sealed.combined!.base64EncodedString()
-        // Compressed SEC1 format (49 bytes for P-384)
-        let ephemeralCompressed = ephemeralPublicKey.compressedRepresentation.base64EncodedString()
-
-        return ECWrappedKeyResult(wrappedKey: wrappedKey, ephemeralPublicKey: ephemeralCompressed)
     }
-
-    // MARK: - P-521 EC Wrapping
 
     private static func wrapWithP521(publicKeyPEM: String, symmetricKey: SymmetricKey) throws -> ECWrappedKeyResult {
         let recipientPublicKey = try loadECPublicKeyP521(fromPEM: publicKeyPEM)
-
         let ephemeralPrivateKey = P521.KeyAgreement.PrivateKey()
-        let ephemeralPublicKey = ephemeralPrivateKey.publicKey
-
         let sharedSecret = try ephemeralPrivateKey.sharedSecretFromKeyAgreement(with: recipientPublicKey)
-
-        let wrapKey = sharedSecret.hkdfDerivedSymmetricKey(
-            using: SHA256.self,
-            salt: Data(),
-            sharedInfo: Data(),
-            outputByteCount: 32,
+        return try sealECWrappedKey(
+            sharedSecret: sharedSecret,
+            ephemeralCompressedPublicKey: ephemeralPrivateKey.publicKey.compressedRepresentation,
+            symmetricKey: symmetricKey,
         )
-
-        let nonce = try AES.GCM.Nonce(data: randomBytes(count: 12))
-        let sealed = try symmetricKey.withUnsafeBytes { try AES.GCM.seal($0, using: wrapKey, nonce: nonce) }
-
-        let wrappedKey = sealed.combined!.base64EncodedString()
-        // Compressed SEC1 format (67 bytes for P-521)
-        let ephemeralCompressed = ephemeralPublicKey.compressedRepresentation.base64EncodedString()
-
-        return ECWrappedKeyResult(wrappedKey: wrappedKey, ephemeralPublicKey: ephemeralCompressed)
     }
 
     // MARK: - EC Public Key Loading
 
+    private static let publicKeyPEMMarkers = [
+        "-----BEGIN PUBLIC KEY-----",
+        "-----END PUBLIC KEY-----",
+    ]
+
     /// Load a P-256 EC public key from PEM format
     public static func loadECPublicKeyP256(fromPEM pem: String) throws -> P256.KeyAgreement.PublicKey {
-        let stripped = pem
-            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-            .replacingOccurrences(of: "\r", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let data = Data(base64Encoded: stripped) else {
-            throw TDFCryptoError.invalidPEM
-        }
-
+        let data = try decodePEMBody(pem, markers: publicKeyPEMMarkers)
         do {
             return try P256.KeyAgreement.PublicKey(derRepresentation: data)
         } catch {
@@ -679,17 +722,7 @@ public enum TDFCrypto {
 
     /// Load a P-384 EC public key from PEM format
     public static func loadECPublicKeyP384(fromPEM pem: String) throws -> P384.KeyAgreement.PublicKey {
-        let stripped = pem
-            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-            .replacingOccurrences(of: "\r", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let data = Data(base64Encoded: stripped) else {
-            throw TDFCryptoError.invalidPEM
-        }
-
+        let data = try decodePEMBody(pem, markers: publicKeyPEMMarkers)
         do {
             return try P384.KeyAgreement.PublicKey(derRepresentation: data)
         } catch {
@@ -699,17 +732,7 @@ public enum TDFCrypto {
 
     /// Load a P-521 EC public key from PEM format
     public static func loadECPublicKeyP521(fromPEM pem: String) throws -> P521.KeyAgreement.PublicKey {
-        let stripped = pem
-            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-            .replacingOccurrences(of: "\r", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let data = Data(base64Encoded: stripped) else {
-            throw TDFCryptoError.invalidPEM
-        }
-
+        let data = try decodePEMBody(pem, markers: publicKeyPEMMarkers)
         do {
             return try P521.KeyAgreement.PublicKey(derRepresentation: data)
         } catch {

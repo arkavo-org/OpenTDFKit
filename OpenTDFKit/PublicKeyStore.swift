@@ -5,7 +5,8 @@ import Foundation
 public final class PublicKeyStore: Sendable {
     public let curve: Curve
     private actor InternalStore {
-        var keys: [Data] = []
+        private var keys: [Data] = []
+        private var head: Int = 0
 
         func addKey(_ key: Data) {
             keys.append(key)
@@ -16,22 +17,34 @@ public final class PublicKeyStore: Sendable {
         }
 
         func getAndRemoveKey() throws -> Data {
-            guard !keys.isEmpty else {
+            guard head < keys.count else {
                 throw PublicKeyStoreError.noKeysAvailable
             }
-            return keys.removeFirst()
+            let key = keys[head]
+            head += 1
+            // Amortized O(1) FIFO pop: compact only when at least half the buffer is consumed.
+            if head >= keys.count {
+                keys.removeAll(keepingCapacity: true)
+                head = 0
+            } else if head >= 64, head * 2 >= keys.count {
+                keys.removeFirst(head)
+                head = 0
+            }
+            return key
         }
 
         func getKeys() -> [Data] {
-            keys
+            head == 0 ? keys : Array(keys[head...])
         }
 
         func clear() {
             keys.removeAll()
+            head = 0
         }
 
         func replaceAll(_ newKeys: [Data]) {
             keys = newKeys
+            head = 0
         }
     }
 

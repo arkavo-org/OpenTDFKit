@@ -319,10 +319,10 @@ public actor NanoTDFCollection {
         nonceBuffer[1] = UInt8((iv >> 8) & 0xFF)
         nonceBuffer[2] = UInt8(iv & 0xFF)
 
-        // Use CryptoKit for 128-bit tags (fastest path)
+        // Use CryptoKit for 128-bit tags (fastest path, zero heap allocation for nonce)
         if configuration.cipher == .aes256GCM128 {
-            let nonce = try nonceBuffer.withUnsafeBufferPointer { buffer in
-                try AES.GCM.Nonce(data: Data(buffer))
+            let nonce = try nonceBuffer.withUnsafeBytes { buffer in
+                try AES.GCM.Nonce(data: buffer)
             }
             let sealed = try AES.GCM.seal(plaintext, using: symmetricKey, nonce: nonce)
             return CollectionItem(ivCounter: iv, ciphertext: sealed.ciphertext, tag: sealed.tag)
@@ -376,13 +376,17 @@ public actor NanoTDFCollection {
     /// - Throws: `NanoTDFCollectionError.frameTooLarge` if the length field cannot represent the item.
     public func serialize(item: CollectionItem, format: CollectionWireFormat? = nil) throws -> Data {
         let wireFormat = format ?? configuration.wireFormat
-        var data = Data()
+        let contentLength = item.ciphertextWithTag.count
+        let headerSize = wireFormat == .containerFraming ? 6 : 7
+        var data = Data(capacity: headerSize + contentLength)
 
-        // Write IV (3 bytes)
-        data.append(contentsOf: item.iv)
+        // Write IV (3 bytes) directly from counter without intermediate Data allocation
+        let iv = item.ivCounter
+        data.append(UInt8((iv >> 16) & 0xFF))
+        data.append(UInt8((iv >> 8) & 0xFF))
+        data.append(UInt8(iv & 0xFF))
 
         // Write length
-        let contentLength = item.ciphertextWithTag.count
         switch wireFormat {
         case .containerFraming:
             guard contentLength <= 0xFFFFFF else {
